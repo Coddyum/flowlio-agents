@@ -487,3 +487,91 @@ func TestDatabaseRejectsUnknownStatus(t *testing.T) {
 		t.Fatal("un statut hors enum a été accepté par la base")
 	}
 }
+
+// LE SCÉNARIO QUI MOTIVE L'IDEMPOTENCE (FLWL-14) NE SE PRODUIT PAS TEL QU'IL EST DÉCRIT.
+//
+// « L'agent appelle create_task, la réponse se perd, il rejoue » suppose que la première
+// création a abouti. Or quand le client abandonne — délai de 15 s dépassé, session tuée, agent
+// interrompu — le contexte de la requête est annulé, et la transaction l'est avec lui : aucune
+// ligne, aucun numéro consommé. Le rejeu crée alors la seule tâche qui existera.
+//
+// La fenêtre où un rejeu duplique réellement est l'intervalle entre le COMMIT réussi et
+// l'arrivée des octets chez le client. Ce test la borne en prouvant tout ce qui est en amont.
+func TestCancelledRequestCreatesNothing(t *testing.T) {
+	st, db := newStore(t)
+	sc := newProject(t, db, "CORE")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	err := st.WithTx(ctx, func(tx store.Store) error {
+		number, err := tx.ClaimNumber(ctx, sc.teamID, sc.projectID)
+		if err != nil {
+			return err
+		}
+		if number != 1 {
+			t.Errorf("numéro réservé = %d, attendu 1", number)
+		}
+
+		// Le client abandonne ici, la réservation déjà faite : c'est le pire moment possible.
+		cancel()
+
+		_, err = tx.CreateTask(ctx, store.NewTask{
+			TeamID:    sc.teamID,
+			ProjectID: sc.projectID,
+			Number:    number,
+			Title:     "tâche dont la réponse se perdra",
+			Status:    "todo",
+			Priority:  "normal",
+		})
+		return err
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("erreur = %v, attendu context.Canceled", err)
+	}
+
+	live := context.Background()
+	tasks, err := st.ListTasks(live, store.TaskFilter{
+		TeamID: sc.teamID, ProjectID: sc.projectID, IncludeArchived: true, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("lecture du backlog: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("%d tâche(s) créée(s) par une requête annulée, attendu 0", len(tasks))
+	}
+
+	// Le rejeu de l'agent : c'est lui qui crée la tâche, et il prend bien le numéro 1.
+	replayed := createTask(t, st, sc, "tâche dont la réponse se perdra")
+	if replayed.Number != 1 {
+		t.Errorf("numéro = %d après annulation, attendu 1 (aucun numéro consommé)", replayed.Number)
+	}
+}
+
+// Un numéro servi deux fois est une incohérence du compteur, jamais une faute de l'appelant :
+// le numéro n'est pas un paramètre d'API, il est tiré de projects.next_number. Le rendre en
+// « conflit » ferait répondre 409 à un agent qui n'a rien fait de mal et qui réessaierait
+// indéfiniment. Décision #23 de docs/DESIGN-M3.md, portée depuis issue/store/errors.go.
+func TestDuplicateNumberIsCorruptionNotConflict(t *testing.T) {
+	st, db := newStore(t)
+	ctx := context.Background()
+	sc := newProject(t, db, "CORE")
+
+	first := createTask(t, st, sc, "première tâche")
+
+	err := st.WithTx(ctx, func(tx store.Store) error {
+		_, err := tx.CreateTask(ctx, store.NewTask{
+			TeamID:    sc.teamID,
+			ProjectID: sc.projectID,
+			Number:    first.Number,
+			Title:     "même numéro que la première",
+			Status:    "todo",
+			Priority:  "normal",
+		})
+		return err
+	})
+	if !errors.Is(err, store.ErrCorrupted) {
+		t.Fatalf("erreur = %v, attendu ErrCorrupted", err)
+	}
+	if errors.Is(err, store.ErrConflict) {
+		t.Error("un compteur corrompu est remonté comme un conflit d'appelant")
+	}
+}

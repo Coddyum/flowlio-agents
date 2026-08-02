@@ -4,14 +4,14 @@ package store
 //
 // | Élément    | Résumé                                                             | Ligne |
 // |------------|--------------------------------------------------------------------|-------|
-// | Task       | Une tâche telle que persistée, dans le scope de son projet           | 40    |
-// | Note       | Une note de progression attachée à une tâche                         | 57    |
-// | NewTask    | Données d'insertion d'une tâche, numéro déjà réservé                 | 65    |
-// | TaskFilter | Critères de lecture du backlog d'un projet                           | 78    |
-// | TaskPatch  | Patch partiel d'une tâche : un champ nil laisse la valeur en place   | 90    |
-// | Store      | Contrat de persistance de la feature task                            | 108   |
-// | store      | Implémentation adossée aux queries générées par sqlc                 | 129   |
-// | New        | Crée le store task                                                   | 138   |
+// | Task       | Une tâche telle que persistée, dans le scope de son projet           | 42    |
+// | Note       | Une note de progression attachée à une tâche                         | 59    |
+// | NewTask    | Données d'insertion d'une tâche, numéro déjà réservé                 | 67    |
+// | TaskFilter | Critères de lecture du backlog d'un projet                           | 80    |
+// | TaskPatch  | Patch partiel d'une tâche : un champ nil laisse la valeur en place   | 92    |
+// | Store      | Contrat de persistance de la feature task                            | 110   |
+// | store      | Implémentation adossée aux queries générées par sqlc                 | 131   |
+// | New        | Crée le store task                                                   | 140   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -29,10 +29,12 @@ import (
 )
 
 // ErrNotFound signale une ligne absente ou hors scope — les deux cas sont volontairement
-// indiscernables. ErrConflict couvre les violations de contrainte.
+// indiscernables. ErrConflict couvre les violations de contrainte ; ErrCorrupted signale une
+// incohérence interne, qui n'est jamais la faute de l'appelant.
 var (
-	ErrNotFound = errors.New("task store: not found")
-	ErrConflict = errors.New("task store: conflict")
+	ErrNotFound  = errors.New("task store: not found")
+	ErrConflict  = errors.New("task store: conflict")
+	ErrCorrupted = errors.New("task store: corrupted state")
 )
 
 // Task est une tâche du backlog d'un projet. TeamID et ProjectID ne sont pas décoratifs : ils

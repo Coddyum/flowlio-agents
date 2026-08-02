@@ -485,3 +485,49 @@ func TestNestedTransactionIsRefused(t *testing.T) {
 		t.Errorf("erreur = %v, attendu un refus explicite d'imbrication", err)
 	}
 }
+
+// Miroir de TestCancelledRequestCreatesNothing côté issue, sur le chemin le plus coûteux : une
+// issue dupliquée pollue l'inbox d'un AUTRE repo. Quand le client abandonne, le contexte est
+// annulé et la transaction avec lui — aucune issue, et surtout aucun numéro consommé chez le
+// destinataire, dont le compteur n'appartient pas à l'émetteur.
+func TestCancelledRequestOpensNothing(t *testing.T) {
+	st, db := newStore(t)
+	teamID := newTeam(t, db)
+	frnt := newProject(t, db, teamID, "FRNT")
+	core := newProject(t, db, teamID, "CORE")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	err := st.WithTx(ctx, func(tx store.Store) error {
+		created, err := tx.CreateIssue(ctx, store.NewIssue{
+			TeamID:          teamID,
+			AuthorProjectID: frnt.id,
+			ToProjectKey:    core.key,
+			Title:           "question dont la réponse se perdra",
+		})
+		if err != nil {
+			return err
+		}
+
+		// Le client abandonne une fois le numéro du destinataire réservé.
+		cancel()
+
+		return tx.AddFirstMessage(ctx, created.ID, frnt.id, "corps de la question")
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("erreur = %v, attendu context.Canceled", err)
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM issues WHERE team_id = $1", teamID).Scan(&count); err != nil {
+		t.Fatalf("comptage des issues: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("%d issue(s) créée(s) par une requête annulée, attendu 0", count)
+	}
+
+	// Le rejeu de l'agent prend le numéro 1 : le compteur du destinataire n'a pas bougé.
+	replayed := open(t, st, frnt, core, "question dont la réponse se perdra")
+	if replayed.Number != 1 {
+		t.Errorf("numéro = %d après annulation, attendu 1 (compteur du destinataire intact)", replayed.Number)
+	}
+}

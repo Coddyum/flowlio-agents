@@ -58,8 +58,8 @@ type Issue struct {
 	// UUID jusqu'à une couche qui n'en manipule pas.
 	Incoming  bool
 	CreatedAt time.Time
-	UpdatedAt        time.Time
-	ClosedAt         *time.Time
+	UpdatedAt time.Time
+	ClosedAt  *time.Time
 }
 
 // Message est une entrée du fil. L'auteur est un PROJET, pas une personne : c'est un dialogue

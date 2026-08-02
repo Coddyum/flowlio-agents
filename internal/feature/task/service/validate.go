@@ -11,7 +11,7 @@ package service
 // | validateDeadline | Refuse une échéance dont l'année n'est pas sérialisable       | 105   |
 // | validateScope    | Refuse un scope de tenancy incomplet                          | 118   |
 // | clampLimit       | Ramène une limite de listing dans les bornes                  | 128   |
-// | translateStore   | Traduit une erreur de store en erreur domaine                 | 140   |
+// | translateStore   | Traduit une erreur de store en erreur domaine                 | 144   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -137,6 +137,10 @@ func clampLimit(limit int) int32 {
 
 // translateStore ramène les erreurs du store aux erreurs domaine du service, en conservant la
 // cause pour le log.
+//
+// ErrCorrupted n'est PAS traduit en erreur domaine : un numéro servi deux fois est une panne
+// serveur, pas une faute de l'appelant. Il remonte tel quel et le handler en fera un 500 —
+// répondre 409 ferait réessayer indéfiniment un agent qui n'a rien fait de mal.
 func translateStore(err error, op string) error {
 	// Le succès traverse cette fonction sans dommage : sans ce cas, fmt.Errorf envelopperait nil
 	// et fabriquerait une erreur là où il n'y en a pas.
@@ -147,6 +151,8 @@ func translateStore(err error, op string) error {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return fmt.Errorf("%w: %s", ErrNotFound, op)
+	case errors.Is(err, store.ErrCorrupted):
+		return fmt.Errorf("task service: %s: %w", op, err)
 	case errors.Is(err, store.ErrConflict):
 		return fmt.Errorf("%w: %s", ErrConflict, op)
 	default:

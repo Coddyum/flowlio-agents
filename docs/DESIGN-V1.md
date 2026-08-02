@@ -75,6 +75,8 @@ Un seul port `Auth()` dans `CoreServices`, deux adaptateurs. `buildModules()` ne
   sans valeur réelle.
 - Rate limiting sur la résolution de token — calibré ci-dessous.
 - Révocation : `revoked_at`, vérifiée à chaque requête.
+- Rejeu d'une création interrompue : aucune déduplication, décision argumentée et vérifiée par
+  exécution dans `docs/DECISION-idempotence.md`.
 
 ### Calibrage du rate limiting
 
