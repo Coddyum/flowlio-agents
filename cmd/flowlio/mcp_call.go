@@ -4,17 +4,19 @@ package main
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | callParams         | Corps d'un appel tools/call                                  | 32    |
-// | mcpServer.callTool | Exécute un outil et emballe son résultat                     | 42    |
-// | mcpServer.invoke   | Route vers l'implémentation de l'outil demandé               | 65    |
-// | textResult         | Emballe un résultat d'outil pour le client MCP               | 92    |
-// | errText            | Emballe une erreur d'outil, lisible par l'agent              | 103   |
-// | parseDeadline      | Lit une échéance RFC 3339, absente si la chaîne est vide      | 124   |
+// | callParams         | Corps d'un appel tools/call                                  | 34    |
+// | mcpServer.callTool | Exécute un outil et emballe son résultat                     | 44    |
+// | mcpServer.invoke   | Route vers l'implémentation de l'outil demandé               | 67    |
+// | writeResult        | Emballe un retour d'écriture sous la forme {ref, objet}      | 96    |
+// | textResult         | Emballe un résultat d'outil pour le client MCP               | 102   |
+// | errText            | Emballe une erreur d'outil, lisible par l'agent              | 113   |
+// | parseDeadline      | Lit une échéance RFC 3339, absente si la chaîne est vide      | 134   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Plomberie de tools/call. Les implémentations des six outils sont dans mcp_task_tools.go.
+// Plomberie de tools/call. Les implémentations des huit outils sont dans mcp_task_tools.go et
+// mcp_issue_tools.go.
 
 import (
 	"context"
@@ -72,8 +74,6 @@ func (s *mcpServer) invoke(ctx context.Context, name string, args json.RawMessag
 		return s.createTask(ctx, args)
 	case "update_task":
 		return s.updateTask(ctx, args)
-	case "add_task_note":
-		return s.addNote(ctx, args)
 	case "create_issue":
 		return s.createIssue(ctx, args)
 	case "list_issues":
@@ -85,6 +85,16 @@ func (s *mcpServer) invoke(ctx context.Context, name string, args json.RawMessag
 	default:
 		return nil, fmt.Errorf("outil inconnu: %s", name)
 	}
+}
+
+// writeResult emballe le retour d'une écriture, sous la SEULE forme que le serveur produit :
+// {"ref": "CORE-34", "<kind>": {…}}.
+//
+// C'est la raison d'être de cette fonction : sans elle, chaque outil composait son enveloppe, et
+// un agent devait deviner où lire la référence selon celui qu'il venait d'appeler — sous "key"
+// pour une tâche, à l'intérieur de l'objet pour une issue. Une seule forme, un seul endroit.
+func writeResult(kind, ref string, value any) map[string]any {
+	return map[string]any{"ref": ref, kind: value}
 }
 
 // textResult emballe un résultat d'outil. Le contenu est du JSON : un agent le reparse sans

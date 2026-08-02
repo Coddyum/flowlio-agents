@@ -54,7 +54,7 @@ func (s *mcpServer) createIssue(ctx context.Context, args json.RawMessage) (any,
 	if err := s.api.Do(ctx, http.MethodPost, issueAPI+"/", in, &issue); err != nil {
 		return nil, err
 	}
-	return issue, nil
+	return writeResult("issue", issue.Ref, issue), nil
 }
 
 // listIssues renvoie les questions échangées avec les projets frères.
@@ -117,7 +117,7 @@ func (s *mcpServer) answerIssue(ctx context.Context, args json.RawMessage) (any,
 	if err := s.api.Do(ctx, http.MethodPost, path, payload, &issue); err != nil {
 		return nil, err
 	}
-	return issue, nil
+	return writeResult("issue", issue.Ref, issue), nil
 }
 
 // checkInbox renvoie ce qui attend l'agent. Aucun paramètre : tout vient du token.

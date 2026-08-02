@@ -4,22 +4,21 @@ package service
 //
 // | Élément         | Résumé                                                        | Ligne |
 // |-----------------|---------------------------------------------------------------|-------|
-// | Service         | Contrat consommé par le handler task                            | 45    |
-// | service         | Implémentation, dépendante de l'interface store                 | 62    |
-// | New             | Crée le service task                                            | 67    |
-// | Task            | Une tâche telle qu'exposée par l'API                            | 73    |
-// | Note            | Une note de progression exposée par l'API                       | 86    |
-// | TaskDetail      | Une tâche et son fil de notes                                   | 92    |
-// | CreateTaskInput | Entrée de création d'une tâche                                  | 99    |
-// | ListTasksInput  | Critères de lecture du backlog                                  | 114   |
-// | UpdateTaskInput | Patch partiel d'une tâche                                       | 127   |
-// | AddNoteInput    | Entrée d'ajout d'une note de progression                        | 142   |
+// | Service         | Contrat consommé par le handler task                            | 44    |
+// | service         | Implémentation, dépendante de l'interface store                 | 63    |
+// | New             | Crée le service task                                            | 68    |
+// | Task            | Une tâche telle qu'exposée par l'API                            | 74    |
+// | Note            | Une note de progression exposée par l'API                       | 87    |
+// | TaskDetail      | Une tâche et son fil de notes                                   | 93    |
+// | CreateTaskInput | Entrée de création d'une tâche                                  | 100   |
+// | ListTasksInput  | Critères de lecture du backlog                                  | 115   |
+// | UpdateTaskInput | Patch partiel d'une tâche, note de progression comprise         | 128   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
 // CONTRAT UNIQUEMENT — les implémentations sont dans create_task.go, list_tasks.go,
-// get_task.go, update_task.go, add_note.go et archive_task.go.
+// get_task.go, update_task.go et archive_task.go.
 
 import (
 	"context"
@@ -50,8 +49,10 @@ type Service interface {
 	// deux, et deux allers-retours coûteraient un tour d'agent de plus.
 	GetTask(ctx context.Context, teamID, projectID uuid.UUID, number int64) (TaskDetail, error)
 
+	// UpdateTask applique un patch et, si Note est fourni, écrit la note de progression dans la
+	// MÊME transaction : « passer en done et dire pourquoi » est une seule intention, donc une
+	// seule écriture, qui réussit ou échoue d'un bloc.
 	UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, error)
-	AddNote(ctx context.Context, in AddNoteInput) (Note, error)
 
 	// ArchiveTask sort une tâche du backlog actif sans la supprimer : l'historique d'un repo se
 	// range, il ne s'efface pas.
@@ -136,13 +137,12 @@ type UpdateTaskInput struct {
 
 	Deadline      *time.Time `json:"deadline"`
 	ClearDeadline bool       `json:"clear_deadline"`
-}
 
-// AddNoteInput porte une note de progression à ajouter au fil d'une tâche.
-type AddNoteInput struct {
-	TeamID    uuid.UUID `json:"-"`
-	ProjectID uuid.UUID `json:"-"`
-	Number    int64     `json:"-"`
-
-	Body string `json:"body"`
+	// Note ajoute une note de progression au fil, dans la même transaction que le patch.
+	//
+	// C'est un champ et non une opération séparée parce que l'intention réelle d'un agent est
+	// « passer en done ET dire pourquoi » : deux écritures rendaient possible un statut changé
+	// sans son motif, et coûtaient un aller-retour de plus à chaque tour.
+	// Une chaîne vide est refusée : une note sans contenu n'apprend rien à la session suivante.
+	Note *string `json:"note"`
 }

@@ -7,8 +7,9 @@ pour se poser des questions entre repos — sans que vous serviez de messager.
 Tout passe par la CLI et par MCP. Pas d'interface web, pas d'IA embarquée : le produit est
 déterministe de bout en bout.
 
-> **État : M3 livré.** Teams, projets, tokens et authentification (M1) ; backlog de tâches et
-> serveur MCP (M2) ; issues inter-projets et inbox d'état (M3). La surface MCP fait neuf outils.
+> **État : M4 livré.** Teams, projets, tokens et authentification (M1) ; backlog de tâches et
+> serveur MCP (M2) ; issues inter-projets et inbox d'état (M3) ; démarrage en une commande et
+> release par tag (M4). La surface MCP fait huit outils.
 > Voir [docs/DESIGN-V1.md](docs/DESIGN-V1.md) pour le périmètre et les décisions.
 
 ## Le problème

@@ -816,15 +816,14 @@ inbox.NewModule(base),   // store.New(cfg.DB)  — pas de RawDB, pas de transact
 
 ## Surface MCP M3
 
-Neuf outils. Le budget est réinjecté à **chaque tour** de chaque session : tout ajout se paie indéfiniment.
+**Huit** outils depuis FLWL-15 (neuf à la livraison de M3 : voir la note sur `add_task_note` plus bas). Le budget est réinjecté à **chaque tour** de chaque session : tout ajout se paie indéfiniment.
 
 | Outil | Paramètres |
 | ----- | ---------- |
 | `list_tasks` | `status?` ∈ todo\|in_progress\|blocked\|done, `limit?` (déf. 50, max 200), `archived?` |
 | `get` | **`ref`** (requis) — `CORE-34`, ou numéro nu résolu dans le projet du token |
 | `create_task` | `title` (requis), `body?`, `status?`, `priority?`, `deadline?` (RFC 3339) |
-| `update_task` | **`ref`** (requis), `title?`, `body?`, `status?`, `priority?`, `deadline?`, `clear_deadline?`, `archive?` |
-| `add_task_note` | **`ref`** (requis), `body` (requis) |
+| `update_task` | **`ref`** (requis), `title?`, `body?`, `status?`, `priority?`, `deadline?`, `clear_deadline?`, `note?`, `archive?` |
 | `create_issue` | `to_project` (requis), `title` (requis), `body` (requis) |
 | `list_issues` | `role?` ∈ incoming\|outgoing (omis = les deux), `state?` ∈ open\|answered\|closed (omis = open + answered), `limit?` (déf. 20, max 100) |
 | `answer_issue` | `ref` (requis), `body` (requis), `close?` (déf. false) |
@@ -852,7 +851,32 @@ Neuf outils. Le budget est réinjecté à **chaque tour** de chaque session : to
 | `archive_task` | Déjà absorbé en M2 par `update_task(archive=true)`. |
 | `update_issue` | **Jamais ajouté** — le titre d'une issue est immuable (décision #12). |
 
-`add_task_note` est **conservé** : le fusionner dans `update_task` exigerait de rouvrir le chemin d'écriture de `task` (service + handler + store) pour gagner un schéma. Hors périmètre M3 ; tâche de backlog.
+`add_task_note` a été **conservé en M3**, puis **replié dans `update_task` en champ `note?`** (FLWL-15, 2026-08-02) — la tâche de backlog annoncée ici. Ce que le repli a coûté, et pourquoi il valait le coup :
+
+| | Avant | Après |
+| --- | --- | --- |
+| Outils exposés | 9 | **8** |
+| « passer en done et dire pourquoi » | 2 appels, 2 transactions | **1 appel, 1 transaction** |
+| État « statut changé, motif perdu » | atteignable | **impossible** |
+
+Le gain n'est pas seulement un schéma économisé. Deux écritures séparées laissaient exister l'état où le `done` est en base et la note est tombée : la session suivante lisait un `done` que rien n'expliquait. La note voyage donc DANS le patch, écrite par `service.UpdateTask` dans un `WithTx` avec lui.
+
+> Conséquence côté API : la route `POST /api/task/{number}/notes` **n'existe plus**, et `service.AddNote` / `handler.AddNote` non plus. Il ne reste qu'un seul chemin d'écriture vers le fil d'une tâche, emprunté à l'identique par la CLI (`flowlio task note`) et par MCP. `store.AddNote` subsiste : c'est lui qu'appelle `UpdateTask` dans la transaction.
+
+### Forme des retours d'écriture (FLWL-15)
+
+Toute écriture rend `{ref, <objet>}`, et rien d'autre :
+
+```
+create_task  → {"ref": "CORE-34", "task":  {…}}
+update_task  → {"ref": "CORE-34", "task":  {…}}
+create_issue → {"ref": "FRNT-12", "issue": {…}}
+answer_issue → {"ref": "FRNT-12", "issue": {…}}
+list_tasks   → [{"ref": "CORE-7", "task": {…}}, …]
+get          → {"kind": "task"|"issue", "ref": …, "task"|"issue": {…}}
+```
+
+Avant, un agent devait deviner où lire la référence selon l'outil qu'il venait d'appeler : sous `key` pour une tâche, à l'intérieur de l'objet pour une issue. `list_issues` garde `[]Issue` sans enveloppe — chaque ligne porte déjà son `ref`, et l'envelopper le dupliquerait sur chaque ligne d'un listing.
 
 ---
 

@@ -9,10 +9,10 @@ package main
 // | taskShow     | Affiche une tâche et son fil de notes                             | 101   |
 // | taskCreate   | Ouvre une tâche et affiche sa clé                                 | 130    |
 // | taskSetStatus| Change le statut d'une tâche                                      | 153    |
-// | taskNote     | Ajoute une note de progression                                    | 172    |
-// | taskArchive  | Sort une tâche du backlog actif                                   | 190    |
-// | taskNumber   | Résout une clé lisible en numéro                                  | 208    |
-// | taskPathFor  | Compose le chemin d'API d'une tâche                               | 222    |
+// | taskNote     | Ajoute une note de progression                                    | 175    |
+// | taskArchive  | Sort une tâche du backlog actif                                   | 194    |
+// | taskNumber   | Résout une clé lisible en numéro                                  | 212    |
+// | taskPathFor  | Compose le chemin d'API d'une tâche                               | 226    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -169,6 +169,9 @@ func taskSetStatus(ctx context.Context, c *client.Client, args []string) error {
 }
 
 // taskNote ajoute une note de progression.
+//
+// C'est un PATCH sans autre champ que la note : l'API n'a qu'un seul chemin d'écriture vers le
+// fil d'une tâche, et la CLI l'emprunte comme le serveur MCP.
 func taskNote(ctx context.Context, c *client.Client, args []string) error {
 	if len(args) < 2 {
 		return errors.New("usage: flowlio task note <CLÉ> <texte>")
@@ -178,8 +181,9 @@ func taskNote(ctx context.Context, c *client.Client, args []string) error {
 		return err
 	}
 
-	in := taskservice.AddNoteInput{Body: strings.Join(args[1:], " ")}
-	if err := c.Do(ctx, http.MethodPost, taskPathFor(number)+"/notes", in, nil); err != nil {
+	note := strings.Join(args[1:], " ")
+	in := taskservice.UpdateTaskInput{Note: &note}
+	if err := c.Do(ctx, http.MethodPatch, taskPathFor(number), in, nil); err != nil {
 		return err
 	}
 	fmt.Printf("note ajoutée à la tâche #%d\n", number)

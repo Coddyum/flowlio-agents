@@ -23,11 +23,17 @@ type fakeStore struct {
 	lastFiler store.TaskFilter
 	lastNote  string
 
+	// txCalls compte les ouvertures de transaction. C'est ce qui prouve qu'une écriture composée
+	// en ouvre une, et qu'une écriture simple n'en paie pas le coût.
+	txCalls int
+
 	claimErr error
 	writeErr error
+	noteErr  error
 }
 
 func (f *fakeStore) WithTx(ctx context.Context, fn func(store.Store) error) error {
+	f.txCalls++
 	return fn(f)
 }
 
@@ -82,6 +88,9 @@ func (f *fakeStore) ArchiveTask(_ context.Context, _, _ uuid.UUID, number int64)
 }
 
 func (f *fakeStore) AddNote(_ context.Context, _, _ uuid.UUID, _ int64, body string) (store.Note, error) {
+	if f.noteErr != nil {
+		return store.Note{}, f.noteErr
+	}
 	if f.writeErr != nil {
 		return store.Note{}, f.writeErr
 	}
@@ -157,8 +166,9 @@ func TestScopeIsRequiredEverywhere(t *testing.T) {
 			_, err := s.UpdateTask(ctx, service.UpdateTaskInput{TeamID: id, Number: 1})
 			return err
 		},
-		"AddNote": func(s service.Service) error {
-			_, err := s.AddNote(ctx, service.AddNoteInput{ProjectID: id, Number: 1, Body: "x"})
+		"UpdateTask avec note": func(s service.Service) error {
+			note := "x"
+			_, err := s.UpdateTask(ctx, service.UpdateTaskInput{ProjectID: id, Number: 1, Note: &note})
 			return err
 		},
 		"ArchiveTask": func(s service.Service) error {
@@ -300,18 +310,103 @@ func TestUpdateTaskValidation(t *testing.T) {
 	}
 }
 
-func TestAddNoteRejectsEmptyBody(t *testing.T) {
+// Une note explicitement vide est une erreur, pas un no-op : l'agent croirait avoir laissé une
+// trace là où la session suivante ne lira rien. Un champ ABSENT, lui, veut dire « pas de note ».
+func TestUpdateTaskRejectsEmptyNote(t *testing.T) {
 	svc, _, teamID, projectID := newService()
 
 	for _, body := range []string{"", "   ", "\n\t "} {
-		if _, err := svc.AddNote(context.Background(), service.AddNoteInput{
+		note := body
+		if _, err := svc.UpdateTask(context.Background(), service.UpdateTaskInput{
 			TeamID:    teamID,
 			ProjectID: projectID,
 			Number:    1,
-			Body:      body,
+			Note:      &note,
 		}); !errors.Is(err, service.ErrInvalidInput) {
 			t.Errorf("note %q: erreur = %v, attendu ErrInvalidInput", body, err)
 		}
+	}
+}
+
+// « Passer en done et dire pourquoi » est UNE écriture. Si le patch et la note partaient
+// séparément, l'état « statut changé, motif perdu » resterait atteignable : la note tombe alors
+// que le done est déjà en base, et la session suivante lit un done que rien n'explique.
+//
+// MUTATION : remplacer le WithTx d'update_task.go par deux appels directs au store fait tomber
+// ce test sur txCalls == 0.
+func TestUpdateTaskWritesNoteInTheSameTransaction(t *testing.T) {
+	svc, fake, teamID, projectID := newService()
+
+	status, note := "done", "  migration appliquée, reste la doc  "
+	task, err := svc.UpdateTask(context.Background(), service.UpdateTaskInput{
+		TeamID:    teamID,
+		ProjectID: projectID,
+		Number:    7,
+		Status:    &status,
+		Note:      &note,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+
+	if fake.txCalls != 1 {
+		t.Errorf("%d transaction(s) ouverte(s), attendu 1 : le patch et la note doivent être atomiques",
+			fake.txCalls)
+	}
+	if fake.lastPatch.Status == nil || *fake.lastPatch.Status != "done" {
+		t.Errorf("statut transmis = %v, attendu done", fake.lastPatch.Status)
+	}
+	if fake.lastNote != "migration appliquée, reste la doc" {
+		t.Errorf("note transmise = %q, attendue sans blancs de bord", fake.lastNote)
+	}
+	if task.Number != 7 {
+		t.Errorf("tâche renvoyée = #%d, attendu #7 : c'est le patch qui est renvoyé, pas la note",
+			task.Number)
+	}
+}
+
+// Le cas fréquent — un patch sans note — ne doit pas payer l'aller-retour d'une transaction.
+func TestUpdateTaskWithoutNoteDoesNotOpenTransaction(t *testing.T) {
+	svc, fake, teamID, projectID := newService()
+
+	status := "in_progress"
+	if _, err := svc.UpdateTask(context.Background(), service.UpdateTaskInput{
+		TeamID:    teamID,
+		ProjectID: projectID,
+		Number:    3,
+		Status:    &status,
+	}); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+
+	if fake.txCalls != 0 {
+		t.Errorf("%d transaction(s) pour un patch sans note, attendu 0", fake.txCalls)
+	}
+	if fake.lastNote != "" {
+		t.Errorf("note écrite sans qu'on en demande une: %q", fake.lastNote)
+	}
+}
+
+// Une note qui échoue doit faire échouer TOUT l'appel : un patch appliqué seul rendrait le
+// « et dire pourquoi » facultatif à l'insu de l'appelant.
+func TestUpdateTaskFailsWholeWhenNoteFails(t *testing.T) {
+	fake := &fakeStore{noteErr: store.ErrNotFound}
+	svc := service.New(fake)
+
+	note := "trace"
+	status := "done"
+	_, err := svc.UpdateTask(context.Background(), service.UpdateTaskInput{
+		TeamID:    uuid.New(),
+		ProjectID: uuid.New(),
+		Number:    1,
+		Status:    &status,
+		Note:      &note,
+	})
+	if !errors.Is(err, service.ErrNotFound) {
+		t.Fatalf("erreur = %v, attendu ErrNotFound remontée par la note", err)
+	}
+	if fake.txCalls != 1 {
+		t.Errorf("%d transaction(s), attendu 1 — c'est elle qui annule le patch", fake.txCalls)
 	}
 }
 

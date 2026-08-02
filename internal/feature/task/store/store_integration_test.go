@@ -359,6 +359,59 @@ func TestFailedCreateDoesNotBurnNumber(t *testing.T) {
 	}
 }
 
+// Le patch et la note d'un même appel tombent ensemble ou tiennent ensemble.
+//
+// C'est la garantie sur laquelle repose le repli d'add_task_note dans update_task : sans elle,
+// l'état « statut changé, motif perdu » resterait atteignable — la note échoue alors que le done
+// est déjà en base, et la session suivante lit un done que rien n'explique.
+//
+// MUTATION : remplacer le Rollback différé de tx.go par un Commit inconditionnel fait tomber ce
+// test sur les deux assertions à la fois.
+func TestPatchAndNoteRollBackTogether(t *testing.T) {
+	st, db := newStore(t)
+	ctx := context.Background()
+	sc := newProject(t, db, "CORE")
+
+	task := createTask(t, st, sc, "titre d'origine")
+
+	boom := errors.New("échec après les deux écritures")
+	patched := "titre modifié"
+	err := st.WithTx(ctx, func(tx store.Store) error {
+		if _, err := tx.UpdateTask(ctx, store.TaskPatch{
+			TeamID:    sc.teamID,
+			ProjectID: sc.projectID,
+			Number:    task.Number,
+			Title:     &patched,
+		}); err != nil {
+			return err
+		}
+		if _, err := tx.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "note qui ne doit pas survivre"); err != nil {
+			return err
+		}
+		return boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("erreur = %v, attendu celle renvoyée par fn", err)
+	}
+
+	reread, err := st.TaskByNumber(ctx, sc.teamID, sc.projectID, task.Number)
+	if err != nil {
+		t.Fatalf("relecture de la tâche: %v", err)
+	}
+	if reread.Title != "titre d'origine" {
+		t.Errorf("titre = %q après annulation, attendu %q : le patch a été committé seul",
+			reread.Title, "titre d'origine")
+	}
+
+	notes, err := st.ListNotes(ctx, sc.teamID, sc.projectID, task.Number)
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	if len(notes) != 0 {
+		t.Errorf("%d note(s) après annulation, attendu 0: %+v", len(notes), notes)
+	}
+}
+
 func TestArchivedTaskIsNotWritable(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()

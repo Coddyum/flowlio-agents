@@ -228,34 +228,52 @@ côté `internal/store/` si l'écriture doit être transactionnelle avec la tâc
 
 Petite par conception : chaque outil superflu coûte des tokens à **chaque tour** d'agent.
 
-Livrés (M2) :
+Surface réellement servie (M2 → M3, resserrée par FLWL-15). **Huit outils**, arbitrés dans
+`docs/DESIGN-M3.md` : c'est ce fichier-là qui fait foi sur la surface MCP.
 
 ```
-whoami                                → projet, team, portée du token
-list_tasks(status?, limit?, archived?) → backlog du projet courant
-get_task(key)                         → détail + fil de notes
-create_task(title, body?, ...)        → nouvelle tâche, renvoie sa clé
-update_task(key, ..., archive?)       → statut, priorité, deadline, description, archivage
-add_task_note(key, body)              → progression
+list_tasks(status?, limit?, archived?)       → backlog du projet courant
+get(ref)                                     → tâche + fil de notes, ou issue + fil de messages
+create_task(title, body?, ...)               → nouvelle tâche, renvoie sa référence
+update_task(ref, ..., note?, archive?)       → statut, priorité, deadline, description,
+                                               note de progression, archivage
 ```
 
-À venir (M3) :
+`whoami` n'est pas un outil : son contenu est constant sur la vie du token, il est injecté dans
+`initialize.instructions`. `get_task` est absorbé par `get(ref)` — tâches et issues partagent le
+compteur du projet, donc un outil typé échouerait une fois sur deux. `add_task_note` est replié
+dans `update_task(note:)`, écrit dans la même transaction que le patch.
+
+Livrés en M3 :
 
 ```
-create_issue(to_project, title, body)
-list_issues(role=incoming|outgoing, state?)
-answer_issue(key, body)
-close_issue(key)
-check_inbox()              → événements depuis le curseur, puis avance le curseur
+create_issue(to_project, title, body)        → question à un projet frère
+list_issues(role?, state?, limit?, closed?)  → les questions échangées
+answer_issue(ref, body, close?)              → répondre, et clore si demandé
+check_inbox()                                → l'état actionnable courant
 ```
+
+`close_issue` n'a jamais existé : c'est le drapeau `close` d'`answer_issue`, parce que le cas
+majoritaire est « je réponds et ça clôt le sujet ».
+
+> `check_inbox` ne rend PAS « les événements depuis le curseur » comme l'annonçait cette section
+> avant M3. Il rend l'**état actionnable courant**, recalculé à chaque appel ; le curseur ne
+> pilote que le drapeau `new`. Le motif est dans `docs/DESIGN-M3.md` — un flux exigerait une
+> livraison exactement-une-fois que `events.id` ne peut pas garantir, et une issue perdue le
+> serait pour toujours.
 
 **Aucun outil n'accepte de projet en paramètre** (sauf `to_project` d'une issue, qui désigne un
 destinataire et non un scope de lecture) : le projet vient du token. Il n'existe donc aucun appel
 MCP capable de désigner le backlog d'un autre projet.
 
-`archive_task` a été fusionné dans `update_task` sous forme de drapeau : un septième outil se
-paierait dans le contexte de chaque tour pour une action que personne n'appelle sans d'abord
-passer la tâche en `done`.
+`archive_task` et `add_task_note` ont été fusionnés dans `update_task`, en drapeau `archive` et
+en champ `note`. Même raison dans les deux cas : un outil de plus se paie dans le contexte de
+chaque tour, pour des actions que personne n'appelle sans changer un statut dans le même geste.
+Et pour la note, le repli ferme un état de fait : le patch et la note partagent désormais une
+transaction, donc « statut changé, motif perdu » n'est plus atteignable.
+
+Tout retour d'écriture a la même forme, `{ref, task}` ou `{ref, issue}` : l'agent lit la
+référence au même endroit quel que soit l'outil qu'il vient d'appeler.
 
 ## Binaires
 

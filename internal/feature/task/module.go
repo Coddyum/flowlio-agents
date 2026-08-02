@@ -8,7 +8,7 @@ package task
 // | mod                | Module task, porteur du handler et du middleware d'auth     | 45    |
 // | mod.Key            | Renvoie la clé du module                                    | 51    |
 // | mod.Routes         | Déclare les routes, middleware lié une seule fois           | 62    |
-// | requireProjectScope| Refuse tout token qui n'est pas scopé à un projet           | 86    |
+// | requireProjectScope| Refuse tout token qui n'est pas scopé à un projet           | 88    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -72,7 +72,9 @@ func (m *mod) Routes() http.Handler {
 	r.Handle("GET /{number}", project(m.h.GetTask))
 	r.Handle("PATCH /{number}", project(m.h.UpdateTask))
 
-	r.Handle("POST /{number}/notes", project(m.h.AddNote))
+	// Pas de route de note : une note s'écrit par le champ `note` du PATCH, dans la même
+	// transaction que le patch. Deux chemins d'écriture pour un même fil, c'est deux surfaces à
+	// sécuriser et un état « statut changé, motif perdu » qui reste atteignable.
 	r.Handle("POST /{number}/archive", project(m.h.ArchiveTask))
 
 	return r

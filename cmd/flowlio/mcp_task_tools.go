@@ -4,15 +4,14 @@ package main
 //
 // | Élément                 | Résumé                                                | Ligne |
 // |-------------------------|-------------------------------------------------------|-------|
-// | mcpServer.listTasks     | Backlog du projet courant                               | 42    |
-// | mcpServer.get           | Résout une référence, qu'elle soit tâche ou issue       | 83    |
-// | mcpServer.createTask    | Ouvre une tâche et renvoie sa clé                       | 122   |
-// | mcpServer.updateTask    | Modifie une tâche, ou l'archive                         | 158   |
-// | mcpServer.addNote       | Ajoute une note de progression                          | 215   |
-// | mcpServer.numberFromKey | Résout une clé lisible dans le projet du token          | 242   |
-// | mcpServer.taskPath      | Compose le chemin d'API d'une tâche                     | 265   |
-// | mcpServer.taskKey       | Compose la clé lisible d'un numéro                      | 270   |
-// | mcpServer.withKeys      | Ajoute sa clé lisible à chaque tâche d'un listing       | 275   |
+// | mcpServer.listTasks     | Backlog du projet courant                               | 41    |
+// | mcpServer.get           | Résout une référence, qu'elle soit tâche ou issue       | 82    |
+// | mcpServer.createTask    | Ouvre une tâche et renvoie sa clé                       | 121   |
+// | mcpServer.updateTask    | Modifie une tâche, la note, ou l'archive                | 160   |
+// | mcpServer.numberFromKey | Résout une clé lisible dans le projet du token          | 224   |
+// | mcpServer.taskPath      | Compose le chemin d'API d'une tâche                     | 247   |
+// | mcpServer.taskRef       | Compose la référence lisible d'un numéro                | 252   |
+// | mcpServer.withRefs      | Ajoute sa référence à chaque tâche d'un listing         | 260   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -69,7 +68,7 @@ func (s *mcpServer) listTasks(ctx context.Context, args json.RawMessage) (any, e
 	if err := s.api.Do(ctx, http.MethodGet, path, nil, &tasks); err != nil {
 		return nil, err
 	}
-	return s.withKeys(tasks), nil
+	return s.withRefs(tasks), nil
 }
 
 // get résout une référence, qu'elle désigne une tâche ou une issue.
@@ -99,7 +98,7 @@ func (s *mcpServer) get(ctx context.Context, args json.RawMessage) (any, error) 
 		if err == nil {
 			return map[string]any{
 				"kind": "task",
-				"ref":  s.taskKey(detail.Number),
+				"ref":  s.taskRef(detail.Number),
 				"task": detail,
 			}, nil
 		}
@@ -147,14 +146,17 @@ func (s *mcpServer) createTask(ctx context.Context, args json.RawMessage) (any, 
 	if err := s.api.Do(ctx, http.MethodPost, taskAPI+"/", payload, &task); err != nil {
 		return nil, err
 	}
-	return map[string]any{"key": s.taskKey(task.Number), "task": task}, nil
+	return writeResult("task", s.taskRef(task.Number), task), nil
 }
 
-// updateTask modifie une tâche, ou l'archive.
+// updateTask modifie une tâche, y ajoute une note de progression, ou l'archive.
 //
-// L'archivage est un drapeau de cet outil plutôt qu'un septième outil : il coûterait un outil de
-// plus dans le contexte de chaque tour d'agent pour une action que personne n'appelle sans
-// d'abord passer la tâche en done.
+// L'archivage et la note sont des champs de cet outil plutôt que deux outils de plus : ils
+// coûteraient leur schéma dans le contexte de chaque tour d'agent pour des actions que personne
+// n'appelle sans changer un statut dans le même geste.
+//
+// La note voyage DANS le patch et non dans un second appel : l'API les écrit en une transaction,
+// donc « statut changé, motif perdu » n'est plus un état atteignable.
 func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, error) {
 	var in struct {
 		Ref           string  `json:"ref"`
@@ -164,6 +166,7 @@ func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, 
 		Priority      *string `json:"priority"`
 		Deadline      string  `json:"deadline"`
 		ClearDeadline bool    `json:"clear_deadline"`
+		Note          *string `json:"note"`
 		Archive       bool    `json:"archive"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
@@ -176,10 +179,11 @@ func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, 
 	}
 
 	// Le patch part avant l'archivage : archiver d'abord rendrait la tâche non modifiable, et le
-	// même appel échouerait à moitié.
+	// même appel échouerait à moitié. La note suit le même chemin, donc elle est écrite tant que
+	// la tâche est encore active.
 	var task taskservice.Task
 	if in.Title != nil || in.Body != nil || in.Status != nil || in.Priority != nil ||
-		in.Deadline != "" || in.ClearDeadline {
+		in.Deadline != "" || in.ClearDeadline || in.Note != nil {
 
 		payload := taskservice.UpdateTaskInput{
 			Title:         in.Title,
@@ -187,6 +191,7 @@ func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, 
 			Status:        in.Status,
 			Priority:      in.Priority,
 			ClearDeadline: in.ClearDeadline,
+			Note:          in.Note,
 		}
 		deadline, err := parseDeadline(in.Deadline)
 		if err != nil {
@@ -208,30 +213,7 @@ func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, 
 	if task.Number == 0 {
 		return nil, errors.New("aucune modification demandée")
 	}
-	return map[string]any{"key": s.taskKey(task.Number), "task": task}, nil
-}
-
-// addNote ajoute une note de progression au fil d'une tâche.
-func (s *mcpServer) addNote(ctx context.Context, args json.RawMessage) (any, error) {
-	var in struct {
-		Ref  string `json:"ref"`
-		Body string `json:"body"`
-	}
-	if err := json.Unmarshal(args, &in); err != nil {
-		return nil, errors.New("arguments illisibles")
-	}
-
-	number, err := s.numberFromKey(in.Ref)
-	if err != nil {
-		return nil, err
-	}
-
-	var note taskservice.Note
-	payload := taskservice.AddNoteInput{Body: in.Body}
-	if err := s.api.Do(ctx, http.MethodPost, s.taskPath(number)+"/notes", payload, &note); err != nil {
-		return nil, err
-	}
-	return map[string]any{"key": s.taskKey(number), "note": note}, nil
+	return writeResult("task", s.taskRef(task.Number), task), nil
 }
 
 // numberFromKey résout une clé lisible en numéro, DANS le projet du token.
@@ -266,16 +248,19 @@ func (s *mcpServer) taskPath(number int64) string {
 	return taskAPI + "/" + strconv.FormatInt(number, 10)
 }
 
-// taskKey compose la clé lisible d'un numéro : c'est la seule forme qu'un agent manipule.
-func (s *mcpServer) taskKey(number int64) string {
+// taskRef compose la référence lisible d'un numéro : c'est la seule forme qu'un agent manipule.
+func (s *mcpServer) taskRef(number int64) string {
 	return fmt.Sprintf("%s-%d", s.projectKey, number)
 }
 
-// withKeys ajoute sa clé lisible à chaque tâche d'un listing.
-func (s *mcpServer) withKeys(tasks []taskservice.Task) []map[string]any {
+// withRefs ajoute sa référence à chaque tâche d'un listing.
+//
+// La référence est portée par l'enveloppe et non par Task : l'API travaille sur des numéros et
+// ne connaît pas les clés de projet, composer CORE-34 est le rôle de cette couche.
+func (s *mcpServer) withRefs(tasks []taskservice.Task) []map[string]any {
 	out := make([]map[string]any, 0, len(tasks))
 	for _, task := range tasks {
-		out = append(out, map[string]any{"key": s.taskKey(task.Number), "task": task})
+		out = append(out, writeResult("task", s.taskRef(task.Number), task))
 	}
 	return out
 }

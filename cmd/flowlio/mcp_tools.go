@@ -4,18 +4,18 @@ package main
 //
 // | Élément         | Résumé                                                       | Ligne |
 // |-----------------|--------------------------------------------------------------|-------|
-// | toolDef         | Définition d'un outil MCP telle qu'annoncée au client          | 44    |
-// | object          | Construit un schéma JSON d'objet                               | 51    |
-// | prop            | Construit une propriété de schéma JSON                         | 63    |
-// | enumProp        | Construit une propriété contrainte à un jeu de valeurs         | 72    |
-// | tools           | Les neuf outils exposés, et rien de plus                        | 81    |
-// | toolsListResult | Réponse de tools/list                                          | 209   |
+// | toolDef         | Définition d'un outil MCP telle qu'annoncée au client          | 50    |
+// | object          | Construit un schéma JSON d'objet                               | 57    |
+// | prop            | Construit une propriété de schéma JSON                         | 69    |
+// | enumProp        | Construit une propriété contrainte à un jeu de valeurs         | 78    |
+// | tools           | Les huit outils exposés, et rien de plus                        | 87    |
+// | toolsListResult | Réponse de tools/list                                          | 210   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
 // La surface MCP est un BUDGET, pas une liste de souhaits : chaque outil est réinjecté dans le
-// contexte de l'agent à CHAQUE tour. Neuf outils, des descriptions courtes, aucun paramètre
+// contexte de l'agent à CHAQUE tour. Huit outils, des descriptions courtes, aucun paramètre
 // décoratif. Tout ajout ici se paie sur toutes les sessions, indéfiniment.
 //
 // Ce que ces outils n'exposent volontairement pas :
@@ -26,6 +26,12 @@ package main
 //   - whoami : son contenu est constant sur la vie du token, donc il est injecté dans les
 //     instructions d'initialize. Zéro schéma, zéro tour, et l'information est dans le contexte
 //     de l'agent avant son premier message.
+//   - add_task_note : replié dans update_task en champ `note`. L'intention réelle est « passer
+//     en done ET dire pourquoi », donc un seul appel, une seule transaction. Un outil de plus
+//     aurait coûté son schéma à chaque tour pour ne rien ajouter.
+//
+// Tout retour d'ÉCRITURE a la même forme, {ref, task} ou {ref, issue} : un agent lit la
+// référence au même endroit quel que soit l'outil qu'il vient d'appeler, au lieu de la deviner.
 //
 // `get` n'est pas typé (get_task / get_issue) parce que tâches et issues partagent le compteur du
 // projet : l'agent qui lit CORE-34 dans un commit ou une inbox ne sait PAS laquelle des deux
@@ -77,7 +83,7 @@ func enumProp(values []string, description string) map[string]any {
 	}
 }
 
-// tools est la surface exposée. Neuf outils, arbitrés dans docs/DESIGN-M3.md.
+// tools est la surface exposée. Huit outils, arbitrés dans docs/DESIGN-M3.md.
 func tools() []toolDef {
 	return []toolDef{
 		{
@@ -123,8 +129,9 @@ func tools() []toolDef {
 		},
 		{
 			Name: "update_task",
-			Description: "Modifie une tâche du projet courant. Seuls les champs fournis " +
-				"changent ; les autres restent en l'état. Une tâche archivée n'est plus modifiable.",
+			Description: "Modifie une tâche du projet courant, et note au passage ce qui a été " +
+				"fait. Seuls les champs fournis changent ; les autres restent en l'état. " +
+				"Une tâche archivée n'est plus modifiable.",
 			InputSchema: object(map[string]any{
 				"ref": prop("string",
 					"Référence de la tâche, par exemple CORE-34. Le numéro seul est accepté."),
@@ -135,19 +142,13 @@ func tools() []toolDef {
 				"deadline": prop("string", "Nouvelle échéance au format RFC 3339."),
 				"clear_deadline": prop("boolean",
 					"Efface l'échéance. Nécessaire parce qu'un champ absent signifie déjà « ne change pas »."),
+				"note": prop("string",
+					"Note de progression ajoutée au fil, en markdown. C'est la trace que relira "+
+						"la session suivante : y écrire ce qui a été fait et ce qui reste. "+
+						"Écrite avec le reste du changement, ou pas du tout."),
 				"archive": prop("boolean",
 					"Sort la tâche du backlog actif. Elle reste lisible, avec ses notes."),
 			}, "ref"),
-		},
-		{
-			Name: "add_task_note",
-			Description: "Ajoute une note de progression au fil d'une tâche. C'est la trace que " +
-				"relira la session suivante : y écrire ce qui a été fait et ce qui reste.",
-			InputSchema: object(map[string]any{
-				"ref": prop("string",
-					"Référence de la tâche, par exemple CORE-34. Le numéro seul est accepté."),
-				"body": prop("string", "La note, en markdown."),
-			}, "ref", "body"),
 		},
 		{
 			Name: "create_issue",

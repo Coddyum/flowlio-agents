@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Coddyum/flowlio-ia/internal/pkg/client"
 )
 
 // newTestServer construit un serveur MCP sans client API : les méthodes de protocole
@@ -137,7 +141,7 @@ func TestProtocolErrors(t *testing.T) {
 // qu'il est celui dans lequel un agent découvre le produit.
 func TestToolSurfaceIsSmallAndWellFormed(t *testing.T) {
 	expected := []string{
-		"list_tasks", "get", "create_task", "update_task", "add_task_note",
+		"list_tasks", "get", "create_task", "update_task",
 		"create_issue", "list_issues", "answer_issue", "check_inbox",
 	}
 
@@ -182,6 +186,153 @@ func TestToolSurfaceIsSmallAndWellFormed(t *testing.T) {
 					def.Name, forbidden)
 			}
 		}
+	}
+}
+
+// add_task_note a été replié dans update_task : ce test garde la suppression acquise. Le champ
+// `note` porte la capacité, sans le schéma d'un outil de plus payé à chaque tour.
+func TestNoteIsAFieldOfUpdateTaskNotATool(t *testing.T) {
+	for _, def := range tools() {
+		if def.Name == "add_task_note" {
+			t.Fatal("add_task_note est de retour : la note est un champ d'update_task")
+		}
+	}
+
+	for _, def := range tools() {
+		if def.Name != "update_task" {
+			continue
+		}
+		properties, _ := def.InputSchema["properties"].(map[string]any)
+		note, found := properties["note"]
+		if !found {
+			t.Fatal("update_task n'accepte pas de note : la capacité a été perdue, pas repliée")
+		}
+		if schema, _ := note.(map[string]any); schema["type"] != "string" {
+			t.Errorf("note de type %v, attendu string", schema["type"])
+		}
+		return
+	}
+	t.Fatal("update_task absent de la surface")
+}
+
+// newAPIServer monte une API factice qui répond toujours la même charge, et un serveur MCP qui
+// lui parle. Aucune base : ce qu'on vérifie ici est la forme du retour, pas la persistance.
+func newAPIServer(t *testing.T, reply string) *mcpServer {
+	t.Helper()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(reply))
+	}))
+	t.Cleanup(ts.Close)
+
+	return &mcpServer{
+		out:        &bytes.Buffer{},
+		api:        client.New(ts.URL, "flw_test"),
+		projectKey: "CORE",
+		teamSlug:   "omiros",
+	}
+}
+
+// Toute écriture rend {ref, <objet>} et rien d'autre.
+//
+// Avant, un agent devait deviner où lire la référence selon l'outil : sous "key" pour une tâche,
+// à l'intérieur de l'objet pour une issue. Une seule forme lui évite de se tromper, et le coût
+// d'un renommage croît avec le nombre d'appelants — d'où ce test, qui fige la forme.
+func TestWriteToolsShareOneReturnShape(t *testing.T) {
+	const taskReply = `{"number":34,"title":"x","status":"todo","priority":"normal",` +
+		`"created_at":"2026-08-02T10:00:00Z","updated_at":"2026-08-02T10:00:00Z"}`
+	const issueReply = `{"ref":"FRNT-12","title":"x","state":"open","role":"outgoing",` +
+		`"peer":"FRNT","updated_at":"2026-08-02T10:00:00Z"}`
+
+	tests := []struct {
+		name    string
+		reply   string
+		call    func(*mcpServer) (any, error)
+		wantRef string
+		wantKey string
+	}{
+		{
+			"create_task", taskReply,
+			func(s *mcpServer) (any, error) {
+				return s.createTask(context.Background(), json.RawMessage(`{"title":"x"}`))
+			},
+			"CORE-34", "task",
+		},
+		{
+			"update_task", taskReply,
+			func(s *mcpServer) (any, error) {
+				return s.updateTask(context.Background(),
+					json.RawMessage(`{"ref":"CORE-34","status":"done","note":"fait"}`))
+			},
+			"CORE-34", "task",
+		},
+		{
+			"create_issue", issueReply,
+			func(s *mcpServer) (any, error) {
+				return s.createIssue(context.Background(),
+					json.RawMessage(`{"to_project":"FRNT","title":"x","body":"y"}`))
+			},
+			"FRNT-12", "issue",
+		},
+		{
+			"answer_issue", issueReply,
+			func(s *mcpServer) (any, error) {
+				return s.answerIssue(context.Background(),
+					json.RawMessage(`{"ref":"FRNT-12","body":"y"}`))
+			},
+			"FRNT-12", "issue",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			value, err := tc.call(newAPIServer(t, tc.reply))
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+
+			result, ok := value.(map[string]any)
+			if !ok {
+				t.Fatalf("%s rend un %T, attendu l'enveloppe {ref, objet}", tc.name, value)
+			}
+			if result["ref"] != tc.wantRef {
+				t.Errorf("ref = %v, attendu %s", result["ref"], tc.wantRef)
+			}
+			if _, found := result[tc.wantKey]; !found {
+				t.Errorf("objet absent sous la clé %q: %+v", tc.wantKey, result)
+			}
+			if len(result) != 2 {
+				t.Errorf("%d champs dans l'enveloppe, attendu exactement 2 (ref + %s): %+v",
+					len(result), tc.wantKey, result)
+			}
+		})
+	}
+}
+
+// Le listing de tâches porte la même enveloppe que les écritures : la référence se lit toujours
+// sous "ref", jamais sous un autre nom selon l'outil.
+func TestListTasksCarriesTheSameEnvelope(t *testing.T) {
+	srv := newAPIServer(t, `[{"number":7,"title":"x","status":"todo","priority":"normal",`+
+		`"created_at":"2026-08-02T10:00:00Z","updated_at":"2026-08-02T10:00:00Z"}]`)
+
+	value, err := srv.listTasks(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("listTasks: %v", err)
+	}
+
+	rows, ok := value.([]map[string]any)
+	if !ok {
+		t.Fatalf("listTasks rend un %T, attendu une liste d'enveloppes", value)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("%d lignes, attendu 1", len(rows))
+	}
+	if rows[0]["ref"] != "CORE-7" {
+		t.Errorf("ref = %v, attendu CORE-7", rows[0]["ref"])
+	}
+	if _, legacy := rows[0]["key"]; legacy {
+		t.Error(`la ligne porte encore "key" : la référence se lit sous "ref"`)
 	}
 }
 
