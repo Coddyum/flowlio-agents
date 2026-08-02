@@ -4,12 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/Coddyum/flowlio-ia/internal/pkg/client"
 )
 
 // newTestServer construit un serveur MCP sans client API : les méthodes de protocole
@@ -217,21 +213,18 @@ func TestNoteIsAFieldOfUpdateTaskNotATool(t *testing.T) {
 
 // newAPIServer monte une API factice qui répond toujours la même charge, et un serveur MCP qui
 // lui parle. Aucune base : ce qu'on vérifie ici est la forme du retour, pas la persistance.
+//
+// Le double passe par newRecordingAPI et jette l'enregistreur. Ce détour n'est pas gratuit : la
+// version d'avant ignorait la requête reçue (`func(w, _ *http.Request)`), et c'est cette ligne
+// qui laissait trois mutations traverser la suite entière au vert — un outil pouvait omettre un
+// champ sans que rien ne le voie. Il n'existe plus, dans ce paquet, de façon de monter une API
+// factice sourde à ce qu'on lui envoie ; les assertions sur l'envoi vivent dans
+// mcp_request_test.go.
 func newAPIServer(t *testing.T, reply string) *mcpServer {
 	t.Helper()
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(reply))
-	}))
-	t.Cleanup(ts.Close)
-
-	return &mcpServer{
-		out:        &bytes.Buffer{},
-		api:        client.New(ts.URL, "flw_test"),
-		projectKey: "CORE",
-		teamSlug:   "omiros",
-	}
+	srv, _ := newRecordingServer(t, reply)
+	return srv
 }
 
 // Toute écriture rend {ref, <objet>} et rien d'autre.
