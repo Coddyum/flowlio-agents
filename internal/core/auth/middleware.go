@@ -7,9 +7,9 @@ package auth
 // | contextKey         | Type privé de clé de contexte, non collisionnable            | 25    |
 // | FromContext        | Récupère le Principal déposé par le middleware               | 31    |
 // | service.Middleware | Exige un token valide et dépose le Principal dans le contexte| 43    |
-// | service.AdminOnly  | Exige en plus une portée admin                               | 108   |
-// | bearerToken        | Extrait le token de l'en-tête Authorization                  | 121   |
-// | deny               | Répond une erreur d'auth sans divulguer la cause             | 132   |
+// | service.AdminOnly  | Exige en plus une portée admin                               | 109   |
+// | bearerToken        | Extrait le token de l'en-tête Authorization                  | 122   |
+// | deny               | Répond une erreur d'auth sans divulguer la cause             | 133   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -51,8 +51,6 @@ func (s *service) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		ip, prefix := clientIP(r), presentedPrefix(raw)
-
 		// L'empreinte identifie le token PRÉSENTÉ, préfixe et secret compris. Elle sert au
 		// limiteur à reconnaître deux requêtes portant exactement le même token — pour ne les
 		// compter qu'une fois, et pour exempter un token qui s'est déjà authentifié. Le token
@@ -67,14 +65,15 @@ func (s *service) Middleware(next http.Handler) http.Handler {
 		// de 429, pas de Retry-After, pas d'en-tête de quota — un code distinct apprendrait à
 		// l'attaquant que son balayage progresse.
 		//
-		// Ce que ce court-circuit ne masque PAS : la LATENCE. Le chemin bloqué ne fait ni requête
-		// Postgres ni SHA-256, il répond donc environ deux ordres de grandeur plus vite qu'un
-		// échec normal, et un attaquant qui chronomètre distingue les deux états. C'est un
-		// COMPROMIS ASSUMÉ : aligner les temps supposerait d'aller quand même en base, c'est-à-
-		// dire d'offrir gratuitement la requête que le limiteur existe précisément pour refuser.
-		// On préfère payer un oracle sur l'état « limité » — qui ne dit rien sur la validité d'un
-		// token — plutôt que de rendre le limiteur inopérant.
-		reserved, allowed := s.limiter.reserve(ip, prefix, fingerprint)
+		// Ce que ce court-circuit ne masque PAS : la LATENCE. Le chemin bloqué calcule bien le
+		// SHA-256 de l'empreinte, juste au-dessus, mais il ne fait aucun aller-retour Postgres :
+		// il répond donc mesurablement plus vite qu'un échec normal, et un attaquant qui
+		// chronomètre distingue les deux états. COMPROMIS ASSUMÉ : aligner les temps supposerait
+		// d'aller quand même en base, c'est-à-dire d'offrir gratuitement la requête que le
+		// limiteur existe précisément pour refuser. On préfère payer un oracle sur l'état
+		// « limité » — qui ne dit rien sur la validité d'un token — plutôt que de rendre le
+		// limiteur inopérant.
+		reserved, allowed := s.limiter.reserve(clientIP(r), fingerprint)
 		if !allowed {
 			deny(w, http.StatusUnauthorized)
 			return
@@ -82,9 +81,11 @@ func (s *service) Middleware(next http.Handler) http.Handler {
 
 		principal, err := s.Authenticate(r.Context(), raw)
 		if err != nil {
-			// Seul un refus avéré garde sa charge. Une panne du store n'est pas un échec
-			// d'authentification : la compter reviendrait à bloquer les clients légitimes
-			// pendant l'incident, et à offrir un levier de déni de service.
+			// La charge reste due dans les deux cas. Elle n'est PAS rendue sur une panne du
+			// store : l'attaquant provoque lui-même cette issue en abandonnant sa requête, et
+			// s'en servait pour faire rembourser la charge de sa requête jumelle — le quota ne
+			// montait alors jamais. Les deux issues restent distinguées pour la confiance : un
+			// refus avéré retire la confiance d'un token, une panne ne prouve rien.
 			outcome := outcomeRejected
 			if !errors.Is(err, ErrUnauthenticated) {
 				outcome = outcomeUnavailable
@@ -94,9 +95,9 @@ func (s *service) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Succès : la charge est rendue, et le token devient de confiance — il ne consommera
-		// plus de quota tant qu'il reste valide. Sans quoi un agent légitime se bloquerait avec
-		// ses propres requêtes, ou se ferait bloquer par un attaquant qui vise son préfixe.
+		// Succès : la seule issue qui rend la charge, et la seule qui rend le token de confiance
+		// — il ne consommera plus de quota tant qu'il reste valide. Sans quoi un agent légitime
+		// se bloquerait avec ses propres requêtes, ou se ferait bloquer par un voisin bruyant.
 		s.limiter.release(reserved, outcomeAuthenticated)
 
 		ctx := context.WithValue(r.Context(), principalKey, principal)

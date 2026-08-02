@@ -16,10 +16,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// limitedService monte un service d'auth avec des quotas serrés et une horloge pilotée : les
-// tests décrivent des scénarios de balayage sans dormir ni toucher à Postgres.
-func limitedService(store Store, perIP, perPrefix int, clock *time.Time) *service {
-	limiter := newAttemptLimiter(perIP, perPrefix, attemptWindow)
+// limitedService monte un service d'auth avec un quota serré et une horloge pilotée : les tests
+// décrivent des scénarios de balayage sans dormir ni toucher à Postgres.
+func limitedService(store Store, perIP int, clock *time.Time) *service {
+	limiter := newAttemptLimiter(perIP, attemptWindow)
 	limiter.now = func() time.Time { return *clock }
 
 	return &service{store: store, touchInterval: time.Minute, limiter: limiter}
@@ -66,7 +66,9 @@ func (s *countingStore) TokenByPrefix(_ context.Context, _ string) (TokenRecord,
 
 func (s *countingStore) TouchToken(_ context.Context, _ uuid.UUID) error { return nil }
 
-// brokenStore simule une panne d'infrastructure : ni token trouvé, ni token absent.
+// brokenStore simule une panne d'infrastructure : ni token trouvé, ni token absent. C'est aussi
+// ce que voit le serveur quand le CLIENT abandonne sa requête — le contexte annulé remonte du
+// store comme une erreur qui n'est pas ErrTokenNotFound.
 type brokenStore struct{}
 
 func (brokenStore) TokenByPrefix(_ context.Context, _ string) (TokenRecord, error) {
@@ -114,10 +116,9 @@ func TestConcurrentBurstDoesNotOverrunTheStore(t *testing.T) {
 
 	now := time.Now()
 	store := &countingStore{latency: 2 * time.Millisecond}
-	svc := limitedService(store, perIP, burst+1, &now)
+	svc := limitedService(store, perIP, &now)
 
-	// Chaque goroutine présente un token distinct : le seau par préfixe ne joue aucun rôle, la
-	// borne mesurée est bien celle du seau par IP.
+	// Chaque goroutine présente un token distinct : c'est bien le balayage qu'on mesure.
 	raws := make([]string, burst)
 	for i := range raws {
 		raws[i] = newTokenOrFail(t).Plain
@@ -144,7 +145,7 @@ func TestConcurrentBurstDoesNotOverrunTheStore(t *testing.T) {
 }
 
 // Un agent légitime enchaîne bien plus de requêtes par minute que le quota : puisque le compteur
-// compte les tentatives, un succès doit rendre sa réservation, sinon l'agent s'auto-bloque.
+// compte les tentatives, un succès doit rendre sa charge, sinon l'agent s'auto-bloque.
 func TestValidTokenIsNeverBlockedByItsOwnTraffic(t *testing.T) {
 	const (
 		perIP    = 3
@@ -153,7 +154,7 @@ func TestValidTokenIsNeverBlockedByItsOwnTraffic(t *testing.T) {
 
 	now := time.Now()
 	token := newTokenOrFail(t)
-	svc := limitedService(&fakeStore{found: true, record: adminRecord(token.Hash)}, perIP, perIP, &now)
+	svc := limitedService(&fakeStore{found: true, record: adminRecord(token.Hash)}, perIP, &now)
 
 	for i := range requests {
 		if code := attempt(svc, "203.0.113.9", token.Plain).Code; code != http.StatusOK {
@@ -162,13 +163,13 @@ func TestValidTokenIsNeverBlockedByItsOwnTraffic(t *testing.T) {
 	}
 }
 
-// LA RÉGRESSION QUI A REFUSÉ LE MERGE DE CE LIMITEUR. Un agent légitime SEUL, qui lance ses
-// requêtes en parallèle, se voyait refuser le surplus dès qu'il dépassait le quota en requêtes
-// SIMULTANÉES — avec un 401 indistinguable d'un token invalide, donc irrécupérable côté client.
+// LA RÉGRESSION QUI A REFUSÉ LE PREMIER MERGE DE CE LIMITEUR. Un agent légitime SEUL, qui lance
+// ses requêtes en parallèle, se voyait refuser le surplus dès qu'il dépassait le quota en
+// requêtes SIMULTANÉES — avec un 401 indistinguable d'un token invalide, donc irrécupérable.
 //
-// Les quotas sont ici au plus serré possible (1 et 1) À DESSEIN : la garantie ne doit rien devoir
-// à la générosité du seuil, mais au fait que les requêtes concurrentes d'un même token partagent
-// une seule charge. Relever les constantes n'aurait pas fait passer ce test.
+// Le quota est ici au plus serré possible (1) À DESSEIN : la garantie ne doit rien devoir à la
+// générosité du seuil, mais au fait que les requêtes concurrentes d'un même token partagent une
+// seule charge. Relever la constante n'aurait pas fait passer ce test.
 func TestConcurrentValidRequestsFromOneAgentAreNeverRefused(t *testing.T) {
 	const burst = 200
 
@@ -177,7 +178,7 @@ func TestConcurrentValidRequestsFromOneAgentAreNeverRefused(t *testing.T) {
 	// La latence du store force le recouvrement : sans elle, les requêtes se sérialiseraient et
 	// le test ne prouverait rien sur la concurrence.
 	store := &concurrentStore{record: adminRecord(token.Hash), latency: 2 * time.Millisecond}
-	svc := limitedService(store, 1, 1, &now)
+	svc := limitedService(store, 1, &now)
 
 	var wg sync.WaitGroup
 	start := make(chan struct{})
@@ -200,52 +201,162 @@ func TestConcurrentValidRequestsFromOneAgentAreNeverRefused(t *testing.T) {
 	}
 }
 
-// Le groupement ne doit pas affaiblir la garde : ce sont les SECRETS DISTINCTS essayés sur un
-// même préfixe qui doivent rester plafonnés, quel que soit le parallélisme de l'attaquant.
-func TestConcurrentDistinctSecretsOnOnePrefixStayCapped(t *testing.T) {
+// Le groupement des requêtes en vol ne doit pas devenir un contournement. Une revue adversariale
+// a mesuré 3 200 requêtes parvenues au store en 480 ms sur une version où le groupe survivait
+// tant qu'un porteur restait en vol : un flux pipeliné entretenait le groupe indéfiniment et
+// passait sans jamais payer. Un groupe cesse donc d'accueillir dès sa première réponse.
+func TestPipelinedRepeatsOfOneTokenStayCapped(t *testing.T) {
 	const (
-		perPrefix = 3
-		burst     = 500
+		perIP    = 3
+		requests = 200
 	)
 
 	now := time.Now()
-	target := newTokenOrFail(t)
-	store := &countingStore{latency: 2 * time.Millisecond}
-	svc := limitedService(store, burst+1, perPrefix, &now)
+	store := &countingStore{}
+	svc := limitedService(store, perIP, &now)
+
+	// Le même token, encore et encore : le cas exact que le groupement laissait passer.
+	bad := newTokenOrFail(t).Plain
+	for range requests {
+		attempt(svc, "203.0.113.50", bad)
+	}
+
+	if hits := store.hits.Load(); hits != perIP {
+		t.Fatalf("%d requêtes ont atteint le store, attendu %d (limite par IP)", hits, perIP)
+	}
+}
+
+// Même chose avec un vrai recouvrement : les requêtes se chevauchent en permanence, donc il
+// existe toujours un porteur en vol.
+//
+// La borne exacte est perIP × profondeur, et pas perIP : une charge abrite sa propre GÉNÉRATION
+// de requêtes simultanées, et il se forme au plus perIP charges par fenêtre. C'est la borne
+// qu'on veut, énoncée telle quelle plutôt qu'arrondie — un attaquant n'amplifie qu'à hauteur de
+// sa propre concurrence, et seulement pour des requêtes portant le MÊME token, dont la répétition
+// ne lui apprend rien. Le défaut corrigé était l'absence totale de borne dans le temps : 3 200
+// requêtes en 480 ms, mesurées par une revue adversariale, avec un plafond annoncé de 120.
+func TestPipelinedConcurrentRepeatsStayBounded(t *testing.T) {
+	const (
+		perIP    = 3
+		depth    = 4
+		requests = 400
+	)
+
+	now := time.Now()
+	store := &countingStore{latency: time.Millisecond}
+	svc := limitedService(store, perIP, &now)
+	bad := newTokenOrFail(t).Plain
 
 	var wg sync.WaitGroup
-	start := make(chan struct{})
-	for i := range burst {
+	slots := make(chan struct{}, depth)
+	for range requests {
 		wg.Add(1)
+		slots <- struct{}{}
 		go func() {
 			defer wg.Done()
-			<-start
-			if code := attempt(svc, "203.0.113.41", sameProjectToken(target.Prefix, i)).Code; code != http.StatusUnauthorized {
-				t.Errorf("code = %d, attendu 401", code)
-			}
+			defer func() { <-slots }()
+			attempt(svc, "203.0.113.51", bad)
 		}()
 	}
-	close(start)
 	wg.Wait()
 
-	if hits := store.hits.Load(); hits != perPrefix {
-		t.Fatalf("%d secrets distincts ont atteint le store, attendu %d (limite par préfixe)", hits, perPrefix)
+	if hits := store.hits.Load(); hits > int64(perIP*depth) {
+		t.Fatalf("%d requêtes ont atteint le store sur %d émises, attendu au plus %d (perIP × profondeur)",
+			hits, requests, perIP*depth)
+	}
+}
+
+// Le remboursement ne doit dépendre d'AUCUNE issue que l'attaquant contrôle. Une version
+// précédente remboursait les pannes du store : il suffisait d'abandonner une requête jumelle —
+// ce qui remonte un contexte annulé, classé comme panne — pour faire rembourser la charge que
+// l'autre venait de payer. Le compteur ne montait jamais.
+func TestAbandonedTwinDoesNotRefundTheCharge(t *testing.T) {
+	now := time.Now()
+	limiter := newAttemptLimiter(5, attemptWindow)
+	limiter.now = func() time.Time { return now }
+
+	const ip = "203.0.113.52"
+	paying, allowed := limiter.reserve(ip, "empreinte")
+	if !allowed {
+		t.Fatalf("première tentative refusée")
+	}
+	twin, allowed := limiter.reserve(ip, "empreinte")
+	if !allowed {
+		t.Fatalf("la jumelle est refusée alors qu'elle porte le même token")
+	}
+
+	// L'attaquant abandonne la jumelle, puis laisse la première aller au bout.
+	limiter.release(twin, outcomeUnavailable)
+	limiter.release(paying, outcomeRejected)
+
+	if count := limiter.add(limiter.bucket(bucketIP, ip), 0); count != 1 {
+		t.Fatalf("compteur = %d, attendu 1 : la charge a été remboursée par un abandon", count)
+	}
+}
+
+// Bout en bout : une source qui n'obtient que des pannes finit bloquée. C'est le renversement
+// assumé d'un choix antérieur — ne pas facturer les pannes ouvrait le contournement ci-dessus.
+// Le coût est borné : pendant un incident, l'API ne répond de toute façon pas, et un token DÉJÀ
+// authentifié reste exempté de quota, donc les agents en cours de session ne sont pas touchés.
+func TestStoreOutageKeepsItsCharge(t *testing.T) {
+	const perIP = 2
+
+	now := time.Now()
+	svc := limitedService(brokenStore{}, perIP, &now)
+
+	for i := range perIP * 5 {
+		if code := attempt(svc, "203.0.113.23", newTokenOrFail(t).Plain).Code; code != http.StatusUnauthorized {
+			t.Fatalf("tentative %d : code = %d, attendu 401", i+1, code)
+		}
+	}
+
+	valid := newTokenOrFail(t)
+	svc.store = &fakeStore{found: true, record: adminRecord(valid.Hash)}
+	if code := attempt(svc, "203.0.113.23", valid.Plain).Code; code != http.StatusUnauthorized {
+		t.Errorf("code = %d, attendu 401 (les pannes ont consommé le quota de la source)", code)
+	}
+}
+
+// UN AGENT À FROID NE DOIT PAS POUVOIR ÊTRE COUPÉ PAR SON PRÉFIXE, QUI EST PUBLIC.
+//
+// C'est ce qu'une revue adversariale a mesuré sur la version à deux seaux : 11 requêtes par
+// minute sur le préfixe d'une victime lui faisaient refuser son token valide, fenêtre après
+// fenêtre, indéfiniment — et l'exemption censée corriger ça ne s'activait qu'après un premier
+// succès, que l'attaque empêchait précisément. Le seau par préfixe a été supprimé : la garantie
+// tient maintenant par construction, ce test l'interdit de revenir.
+func TestColdValidTokenSurvivesAnAttackOnItsPrefix(t *testing.T) {
+	const attackerRequests = 1000
+
+	now := time.Now()
+	victim := newTokenOrFail(t)
+	svc := limitedService(&fakeStore{found: true, record: adminRecord(victim.Hash)}, maxAttemptsPerIP, &now)
+
+	for i := range attackerRequests {
+		attempt(svc, "203.0.113.66", sameProjectToken(victim.Prefix, i))
+	}
+
+	// La victime n'a JAMAIS authentifié dans ce process : elle n'est pas de confiance.
+	if svc.limiter.isTrusted(tokenFingerprint(victim.Plain)) {
+		t.Fatalf("la victime est déjà de confiance — le test ne prouve rien sur le cas à froid")
+	}
+	if code := attempt(svc, "127.0.0.1", victim.Plain).Code; code != http.StatusOK {
+		t.Errorf("code = %d, attendu 200 : un préfixe public ne doit pas pouvoir couper son porteur", code)
 	}
 }
 
 // Le groupement compte UNE charge pour toutes les requêtes en vol d'un même token, et la libère
-// quand la dernière est soldée. Vérifié directement sur le limiteur : le test précédent prouve
-// l'effet, celui-ci prouve le mécanisme.
+// quand la dernière est soldée.
 func TestInFlightAttemptsOfTheSameTokenShareOneCharge(t *testing.T) {
 	const holders = 50
 
 	now := time.Now()
-	limiter := newAttemptLimiter(1, 1, attemptWindow)
+	limiter := newAttemptLimiter(1, attemptWindow)
 	limiter.now = func() time.Time { return now }
 
+	const ip = "203.0.113.42"
 	reservations := make([]reservation, 0, holders)
 	for i := range holders {
-		res, allowed := limiter.reserve("203.0.113.42", "abcdefghijkl", "empreinte")
+		res, allowed := limiter.reserve(ip, "empreinte")
 		if !allowed {
 			t.Fatalf("tentative %d refusée alors qu'elle porte le même token que la première", i+1)
 		}
@@ -259,8 +370,8 @@ func TestInFlightAttemptsOfTheSameTokenShareOneCharge(t *testing.T) {
 	if group.holders != holders {
 		t.Errorf("porteurs = %d, attendu %d", group.holders, holders)
 	}
-	if count := limiter.add(group.prefixKey, 0); count != 1 {
-		t.Errorf("compteur du préfixe = %d, attendu 1 pour %d requêtes du même token", count, holders)
+	if count := limiter.add(limiter.bucket(bucketIP, ip), 0); count != 1 {
+		t.Errorf("compteur = %d, attendu 1 pour %d requêtes du même token", count, holders)
 	}
 
 	for _, res := range reservations {
@@ -271,39 +382,13 @@ func TestInFlightAttemptsOfTheSameTokenShareOneCharge(t *testing.T) {
 	}
 }
 
-// Un préfixe est PUBLIC : sans exemption, un attaquant qui l'a vu passer coupe l'agent légitime
-// pour le reste de la fenêtre en brûlant le quota du préfixe. Un token qui s'est authentifié ne
-// consomme plus de quota, donc il survit à l'attaque.
-func TestAuthenticatedTokenSurvivesAnAttackOnItsPrefix(t *testing.T) {
-	const perPrefix = 3
-
-	now := time.Now()
-	token := newTokenOrFail(t)
-	svc := limitedService(&fakeStore{found: true, record: adminRecord(token.Hash)}, 1000, perPrefix, &now)
-
-	if code := attempt(svc, "127.0.0.1", token.Plain).Code; code != http.StatusOK {
-		t.Fatalf("code = %d, attendu 200 pour la première authentification", code)
-	}
-
-	// L'attaquant s'acharne sur le préfixe depuis ailleurs, largement au-delà du quota.
-	for i := range perPrefix * 5 {
-		if code := attempt(svc, "203.0.113.44", sameProjectToken(token.Prefix, i)).Code; code != http.StatusUnauthorized {
-			t.Fatalf("tentative %d de l'attaquant : code = %d, attendu 401", i+1, code)
-		}
-	}
-
-	if code := attempt(svc, "127.0.0.1", token.Plain).Code; code != http.StatusOK {
-		t.Errorf("code = %d, attendu 200 : un token authentifié ne se fait pas couper par son préfixe", code)
-	}
-}
-
 // L'exemption tombe au premier refus : c'est ce qui empêche un token révoqué de rester exempté
 // jusqu'à l'expiration de sa marque de confiance.
 func TestRejectedTokenLosesItsExemption(t *testing.T) {
 	now := time.Now()
 	token := newTokenOrFail(t)
 	store := &fakeStore{found: true, record: adminRecord(token.Hash)}
-	svc := limitedService(store, 1000, 1000, &now)
+	svc := limitedService(store, 1000, &now)
 
 	if code := attempt(svc, "127.0.0.1", token.Plain).Code; code != http.StatusOK {
 		t.Fatalf("code = %d, attendu 200", code)
@@ -322,33 +407,12 @@ func TestRejectedTokenLosesItsExemption(t *testing.T) {
 	}
 }
 
-// Une panne du store n'est pas un échec d'authentification : la facturer offrirait un levier de
-// déni de service, en bloquant les clients légitimes pendant l'incident.
-func TestStoreOutageDoesNotConsumeQuota(t *testing.T) {
-	const perIP = 2
-
-	now := time.Now()
-	svc := limitedService(brokenStore{}, perIP, perIP, &now)
-
-	for i := range perIP * 5 {
-		if code := attempt(svc, "203.0.113.23", newTokenOrFail(t).Plain).Code; code != http.StatusUnauthorized {
-			t.Fatalf("tentative %d : code = %d, attendu 401", i+1, code)
-		}
-	}
-
-	valid := newTokenOrFail(t)
-	svc.store = &fakeStore{found: true, record: adminRecord(valid.Hash)}
-	if code := attempt(svc, "203.0.113.23", valid.Plain).Code; code != http.StatusOK {
-		t.Errorf("code = %d, attendu 200 (la panne n'a pas consommé de quota)", code)
-	}
-}
-
-// Une même IP qui balaie des préfixes différents finit bloquée, quel que soit le token visé.
+// Une même IP qui balaie des tokens différents finit bloquée.
 func TestFailuresFromSameIPAreBlocked(t *testing.T) {
 	const perIP = 3
 
 	now := time.Now()
-	svc := limitedService(&fakeStore{found: false}, perIP, 100, &now)
+	svc := limitedService(&fakeStore{found: false}, perIP, &now)
 
 	for i := range perIP {
 		if code := attempt(svc, "203.0.113.7", newTokenOrFail(t).Plain).Code; code != http.StatusUnauthorized {
@@ -357,7 +421,8 @@ func TestFailuresFromSameIPAreBlocked(t *testing.T) {
 	}
 
 	// La tentative suivante est refusée sans même consulter le store : le token présenté est
-	// pourtant parfaitement valide.
+	// pourtant parfaitement valide. C'est le prix d'une limite par source, et la raison pour
+	// laquelle le seuil réel est large et la boucle locale exemptée.
 	valid := newTokenOrFail(t)
 	svc.store = &fakeStore{found: true, record: adminRecord(valid.Hash)}
 	if code := attempt(svc, "203.0.113.7", valid.Plain).Code; code != http.StatusUnauthorized {
@@ -372,76 +437,30 @@ func TestFailuresFromSameIPAreBlocked(t *testing.T) {
 	}
 }
 
-// Tourner les IP ne doit pas permettre de s'acharner sur un token précis.
-func TestFailuresOnSamePrefixAcrossIPsAreBlocked(t *testing.T) {
-	const perPrefix = 3
-
-	now := time.Now()
-	target := newTokenOrFail(t)
-	svc := limitedService(
-		&fakeStore{found: true, record: adminRecord(crypto.HashSecret("autre"))},
-		100, perPrefix, &now,
-	)
-
-	ips := []string{"203.0.113.1", "203.0.113.2", "203.0.113.3", "203.0.113.4"}
-	for i, ip := range ips[:perPrefix] {
-		if code := attempt(svc, ip, target.Plain).Code; code != http.StatusUnauthorized {
-			t.Fatalf("tentative %d : code = %d, attendu 401", i+1, code)
-		}
-	}
-
-	// Le préfixe est saturé : même depuis une IP vierge, et même si le secret devient correct.
-	svc.store = &fakeStore{found: true, record: adminRecord(target.Hash)}
-	if code := attempt(svc, ips[perPrefix], target.Plain).Code; code != http.StatusUnauthorized {
-		t.Errorf("code = %d, attendu 401 (préfixe saturé)", code)
-	}
-}
-
 // En mode local, tous les agents de la machine partagent 127.0.0.1 : un agent fautif ne doit pas
-// pouvoir refuser le token valide de tous les autres en saturant le seau par IP.
-func TestLoopbackIsExemptFromTheIPBucket(t *testing.T) {
+// pouvoir refuser le token valide de tous les autres. La contrepartie, assumée et documentée :
+// depuis la boucle locale le limiteur ne freine rien, et ne crée aucune clé de cache.
+func TestLoopbackIsExemptAndAllocatesNothing(t *testing.T) {
 	const perIP = 3
 
 	now := time.Now()
-	svc := limitedService(&fakeStore{found: false}, perIP, 100, &now)
+	svc := limitedService(&fakeStore{found: false}, perIP, &now)
 
-	// L'agent fautif part très au-delà du quota par IP, chaque essai visant un préfixe distinct
-	// pour ne solliciter que ce seau-là.
 	for i := range perIP * 10 {
 		if code := attempt(svc, "127.0.0.1", newTokenOrFail(t).Plain).Code; code != http.StatusUnauthorized {
 			t.Fatalf("tentative %d : code = %d, attendu 401", i+1, code)
 		}
 	}
 
+	if count := svc.limiter.add(svc.limiter.bucket(bucketIP, "127.0.0.1"), 0); count != 0 {
+		t.Errorf("compteur de la boucle locale = %d, attendu 0 (aucune clé ne doit être créée)", count)
+	}
+
 	// Un autre agent, même machine, token valide.
 	valid := newTokenOrFail(t)
 	svc.store = &fakeStore{found: true, record: adminRecord(valid.Hash)}
 	if code := attempt(svc, "127.0.0.1", valid.Plain).Code; code != http.StatusOK {
-		t.Errorf("code = %d, attendu 200 (boucle locale exemptée du seau par IP)", code)
-	}
-}
-
-// L'exemption ne vaut QUE pour le seau par IP : en local c'est le seau par préfixe qui porte la
-// protection contre le balayage, il doit rester pleinement actif.
-func TestPrefixBucketStillAppliesOnLoopback(t *testing.T) {
-	const perPrefix = 3
-
-	now := time.Now()
-	target := newTokenOrFail(t)
-	svc := limitedService(
-		&fakeStore{found: true, record: adminRecord(crypto.HashSecret("autre"))},
-		100, perPrefix, &now,
-	)
-
-	for i := range perPrefix {
-		if code := attempt(svc, "127.0.0.1", target.Plain).Code; code != http.StatusUnauthorized {
-			t.Fatalf("tentative %d : code = %d, attendu 401", i+1, code)
-		}
-	}
-
-	svc.store = &fakeStore{found: true, record: adminRecord(target.Hash)}
-	if code := attempt(svc, "127.0.0.1", target.Plain).Code; code != http.StatusUnauthorized {
-		t.Errorf("code = %d, attendu 401 (préfixe saturé depuis la boucle locale)", code)
+		t.Errorf("code = %d, attendu 200 (boucle locale exemptée)", code)
 	}
 }
 
@@ -452,7 +471,7 @@ func TestPrefixBucketStillAppliesOnLoopback(t *testing.T) {
 // store, il répond donc mesurablement plus vite. Compromis assumé, documenté dans middleware.go.
 func TestBlockedResponseSharesStatusHeadersAndBody(t *testing.T) {
 	now := time.Now()
-	svc := limitedService(&fakeStore{found: false}, 1, 100, &now)
+	svc := limitedService(&fakeStore{found: false}, 1, &now)
 
 	normal := attempt(svc, "203.0.113.11", newTokenOrFail(t).Plain)
 	blocked := attempt(svc, "203.0.113.11", newTokenOrFail(t).Plain)
@@ -474,7 +493,7 @@ func TestLimitReleasesAfterWindow(t *testing.T) {
 
 	now := time.Now()
 	token := newTokenOrFail(t)
-	svc := limitedService(&fakeStore{found: false}, perIP, 100, &now)
+	svc := limitedService(&fakeStore{found: false}, perIP, &now)
 
 	for range perIP {
 		attempt(svc, "203.0.113.13", newTokenOrFail(t).Plain)
@@ -491,34 +510,32 @@ func TestLimitReleasesAfterWindow(t *testing.T) {
 	}
 }
 
-// Un release décalé d'une fenêtre ne doit pas créer de crédit négatif : le compteur reste borné
-// par le bas, sinon une tentative gratuite se fabriquerait en jouant sur les bords de fenêtre.
+// Le compteur est borné par le bas : un remboursement décalé d'une fenêtre ne doit pas créer de
+// crédit négatif, avec lequel on se fabriquerait des tentatives gratuites.
+//
+// Le plancher est exercé DIRECTEMENT, par des deltas négatifs sur une clé au repos : passer par
+// reserve/release ne l'atteindrait jamais — un groupe ne se rembourse qu'une fois et disparaît
+// avec son dernier porteur, donc le test paraîtrait vert sans rien prouver.
 func TestCounterNeverGoesNegative(t *testing.T) {
 	now := time.Now()
-	limiter := newAttemptLimiter(2, 2, attemptWindow)
+	limiter := newAttemptLimiter(2, attemptWindow)
 	limiter.now = func() time.Time { return now }
 
-	reserved, allowed := limiter.reserve("203.0.113.30", "abcdefgh", "empreinte")
-	if !allowed {
-		t.Fatalf("première tentative refusée")
+	key := limiter.bucket(bucketIP, "203.0.113.30")
+	if count := limiter.add(key, 1); count != 1 {
+		t.Fatalf("compteur = %d après un incrément, attendu 1", count)
 	}
 
-	group := limiter.pending["empreinte"]
-	if group == nil {
-		t.Fatalf("aucune charge enregistrée pour la tentative")
+	for range 3 {
+		limiter.add(key, -1)
 	}
-	ipKey, prefixKey := group.ipKey, group.prefixKey
-
-	// Trois restitutions pour une seule charge : le compteur plancherait à zéro.
-	limiter.release(reserved, outcomeUnavailable)
-	limiter.release(reserved, outcomeUnavailable)
-	limiter.release(reserved, outcomeUnavailable)
-
-	if count := limiter.add(ipKey, 0); count != 0 {
-		t.Errorf("compteur IP = %d, attendu 0", count)
+	if count := limiter.add(key, 0); count != 0 {
+		t.Fatalf("compteur = %d, attendu 0 (plancher)", count)
 	}
-	if count := limiter.add(prefixKey, 0); count != 0 {
-		t.Errorf("compteur préfixe = %d, attendu 0", count)
+
+	// Le crédit négatif se verrait ici : la tentative suivante doit repartir de 1, pas de -2.
+	if count := limiter.add(key, 1); count != 1 {
+		t.Errorf("compteur = %d après réincrément, attendu 1 — un crédit négatif a survécu", count)
 	}
 }
 
@@ -574,29 +591,6 @@ func TestClientIP(t *testing.T) {
 
 			if got := clientIP(req); got != tc.want {
 				t.Errorf("clientIP = %q, attendu %q", got, tc.want)
-			}
-		})
-	}
-}
-
-// Un token malformé n'a pas de cible : il ne doit pas créer de clé de préfixe.
-func TestPresentedPrefix(t *testing.T) {
-	token := newTokenOrFail(t)
-
-	cases := []struct {
-		name string
-		raw  string
-		want string
-	}{
-		{name: "token bien formé", raw: token.Plain, want: token.Prefix},
-		{name: "token malformé", raw: "pas-un-token", want: ""},
-		{name: "token vide", raw: "", want: ""},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := presentedPrefix(tc.raw); got != tc.want {
-				t.Errorf("presentedPrefix = %q, attendu %q", got, tc.want)
 			}
 		})
 	}

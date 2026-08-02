@@ -84,6 +84,6 @@ func New(store Store) Service {
 	return &service{
 		store:         store,
 		touchInterval: time.Minute,
-		limiter:       newAttemptLimiter(maxAttemptsPerIP, maxAttemptsPerPrefix, attemptWindow),
+		limiter:       newAttemptLimiter(maxAttemptsPerIP, attemptWindow),
 	}
 }

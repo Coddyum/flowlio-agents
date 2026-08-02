@@ -2,58 +2,76 @@ package auth
 
 // SOMMAIRE (lire en premier, sauter directement au bon passage)
 //
-// | Élément                     | Résumé                                                  | Ligne |
-// |-----------------------------|---------------------------------------------------------|-------|
-// | attemptOutcome              | Issue d'une tentative, qui décide du sort de sa charge    | 86    |
-// | reservation                 | Ce qu'une tentative a consommé, et à quel titre           | 106   |
-// | inflight                    | Charge partagée par les tentatives d'un même token en vol | 117   |
-// | attemptLimiter              | Compteurs de tentatives d'authentification par IP/préfixe | 131   |
-// | newAttemptLimiter           | Crée le limiteur et son cache mémoire borné par TTL       | 147   |
-// | attemptLimiter.reserve      | Consomme le quota avant le store et dit si on continue    | 173   |
-// | attemptLimiter.release      | Solde la tentative selon son issue                        | 202   |
-// | attemptLimiter.charge       | Incrémente les deux seaux et dit si la tentative passe    | 238   |
-// | attemptLimiter.refund       | Rend la charge d'un groupe, une seule fois                | 258   |
-// | attemptLimiter.add          | Applique un delta au compteur d'une clé, jamais sous zéro | 272   |
-// | attemptLimiter.bucket       | Compose la clé de cache seau + fenêtre courante           | 296   |
+// | Élément                | Résumé                                                       | Ligne |
+// |------------------------|---------------------------------------------------------------|-------|
+// | attemptOutcome         | Issue d'une tentative, qui décide du sort de sa charge          | 97    |
+// | reservation            | Ce qu'une tentative a consommé, et à quel titre                 | 118   |
+// | inflight               | Charge partagée par les tentatives d'un même token en vol       | 131   |
+// | attemptLimiter         | Compteur de tentatives d'authentification par IP source         | 147   |
+// | newAttemptLimiter      | Crée le limiteur et son cache mémoire borné par TTL             | 162   |
+// | attemptLimiter.reserve | Consomme le quota avant le store et dit si on continue          | 185   |
+// | attemptLimiter.release | Solde la tentative selon son issue                              | 219   |
+// | attemptLimiter.charge  | Incrémente le seau de la source et dit si la tentative passe    | 253   |
+// | attemptLimiter.add     | Applique un delta au compteur d'une clé, jamais sous zéro       | 266   |
+// | attemptLimiter.bucket  | Compose la clé de cache seau + fenêtre courante                 | 290   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// POURQUOI — /api/* accepte sinon un nombre illimité de tentatives. Le hash est en SHA-256, donc
-// chaque tentative coûte peu au serveur : rien ne freine un attaquant qui balaie des préfixes.
+// CE QUE CE LIMITEUR PROTÈGE, ET CE QU'IL NE PROTÈGE PAS.
+//
+// Il ne protège PAS contre la découverte d'un token. Un secret fait 32 octets tirés au hasard :
+// 2^256 possibilités, aucune attaque par dictionnaire, aucun raccourci. Aucun seuil, si serré
+// soit-il, ne change cette arithmétique — c'est l'entropie qui tient, pas le limiteur.
+//
+// Il protège contre la CONSOMMATION DE RESSOURCES par une source qui échoue en boucle : un
+// aller-retour Postgres et un SHA-256 par tentative, sans rien pour la freiner.
+//
+// Cette distinction commande tout le reste. Puisque la chose contre laquelle on se défend est
+// déjà impossible, tout mécanisme capable de refuser un token VALIDE est un bilan négatif : il
+// coûte une panne réelle pour empêcher une attaque irréalisable.
+//
+// POURQUOI IL N'Y A PLUS DE SEAU PAR PRÉFIXE. Une première version en portait un, censé freiner
+// l'acharnement sur un token précis. Le préfixe est la partie PUBLIQUE du token : n'importe qui
+// l'ayant vu passer saturait le seau de sa victime pour 11 requêtes par minute, et lui faisait
+// refuser son token valide fenêtre après fenêtre — mesuré sur dix fenêtres consécutives, et
+// 4 400 requêtes depuis UNE source suffisaient à couper 400 victimes à la fois. En face, ce seau
+// ne rachetait rien : il ralentissait une force brute que l'entropie rend déjà impossible.
+// Un dispositif qui ne défend rien et qui coupe les légitimes se supprime, il ne se recalibre pas.
 //
 // CE QUI EST COMPTÉ — les TENTATIVES, pas les échecs. Compter les échecs supposait de lire le
 // compteur avant l'aller-retour store et de l'écrire après : entre les deux, la latence de la
 // base laissait passer autant de requêtes que l'attaquant en lançait en parallèle, et la limite
 // réelle valait « N par aller-retour DB ». Le quota est donc RÉSERVÉ sous le verrou, en une
-// seule opération, AVANT de toucher le store — puis RENDU quand la tentative ne doit rien
-// coûter : succès, ou panne du store. Seul un échec avéré garde sa charge, c'est lui qu'on veut
-// freiner.
+// seule opération, AVANT de toucher le store.
 //
-// DEUX GARDE-FOUS CONTRE L'AUTO-BLOCAGE. Réserver avant le store fait que le quota borne aussi
-// les tentatives EN VOL, et une première version refusait donc le surplus d'un agent légitime
-// qui lançait plus de maxAttemptsPerPrefix requêtes SIMULTANÉES — mesuré : 11 requêtes valides
-// concurrentes, 1 refusée, avec un 401 indistinguable d'un token invalide. Un limiteur qui
-// refuse les clients légitimes est pire que pas de limiteur. D'où, tous deux indexés sur
-// l'EMPREINTE DU TOKEN COMPLET et jamais sur le préfixe, qui est public :
+// UNE SEULE ISSUE REND LA CHARGE : l'authentification RÉUSSIE. Ni l'échec, ni la panne du store,
+// ni l'abandon du client. Une version précédente remboursait aussi les pannes, au nom de la
+// disponibilité pendant un incident — c'était un contournement complet : l'attaquant provoquait
+// lui-même cette issue en abandonnant sa requête HTTP, ce qui remontait un context.Canceled
+// classé « panne », et rendait la charge que sa requête jumelle venait de payer. Le quota ne
+// montait jamais. Une issue que l'attaquant contrôle ne peut pas décider d'un remboursement ;
+// celle-ci exige un token valide, c'est-à-dire précisément ce qu'il n'a pas.
+//
+// DEUX GARDE-FOUS CONTRE L'AUTO-BLOCAGE, tous deux indexés sur l'EMPREINTE DU TOKEN COMPLET :
 //
 //  1. le GROUPEMENT des requêtes concurrentes portant le même token, qui ne comptent que pour
-//     une — ce qu'on freine, ce sont les essais DISTINCTS, pas le parallélisme ;
+//     une — ce qu'on freine, ce sont les essais DISTINCTS, pas le parallélisme. Le groupe cesse
+//     d'accueillir dès que sa première requête a une réponse : sinon un flux pipeliné entretenait
+//     un groupe indéfiniment et passait sans limite (3 200 requêtes en 480 ms, mesuré) ;
 //  2. l'EXEMPTION des tokens déjà authentifiés, dans trusted_tokens.go.
 //
-// L'attaquant ne tire rien de ces deux exemptions : elles exigent le token complet, c'est-à-dire
-// exactement le secret que le limiteur protège.
+// L'attaquant ne tire rien de ces deux exemptions : elles exigent le token complet.
 //
 // Fenêtre FIXE, pas glissante : le compteur tient dans un entier et une clé, là où une fenêtre
 // glissante suppose de garder l'horodatage de chaque tentative. Défaut connu, la rafale de bord
 // — jusqu'à 2×limite à cheval sur deux fenêtres — sans portée pratique face à 2^256 secrets.
 //
-// MÉMOIRE — les clés « ip: » et « prefix: » sont contrôlées par l'attaquant. Hors boucle locale,
-// maxAttemptsPerIP les borne ; DEPUIS la boucle locale, exemptée de ce seau, rien ne les borne
-// sinon leur TTL. Consommation mémoire réelle, assumée parce qu'un attaquant capable d'émettre
-// depuis 127.0.0.1 lit déjà le fichier de credentials, et suivie au board — pas niée.
+// MÉMOIRE — une clé « ip:<source> » par source et par fenêtre, purgée par son TTL, plus une
+// marque de confiance par token réellement valide. La boucle locale étant exemptée du seau, elle
+// ne crée AUCUNE clé : aucune famille de clés n'est fabricable en masse par un attaquant.
 //
-// Seuils, arbitrages et limites connues : docs/DESIGN-V1.md § Calibrage du rate limiting.
+// Seuil, arbitrages et limites connues : docs/DESIGN-V1.md § Calibrage du rate limiting.
 
 import (
 	"strconv"
@@ -66,77 +84,74 @@ import (
 const (
 	// attemptWindow est la durée d'une fenêtre de comptage.
 	attemptWindow = time.Minute
-	// maxAttemptsPerIP borne le balayage de préfixes DISTINCTS depuis une même source. Généreux
-	// à dessein : ce seau ne protège pas contre la force brute — 36^12 préfixes et 2^256 secrets
-	// s'en chargent — il borne la mémoire et le débit brut. Le serrer davantage ne gagnerait
-	// rien et refuserait les agents légitimes derrière un même NAT.
+	// maxAttemptsPerIP borne les tentatives de tokens DISTINCTS depuis une même source. Généreux
+	// à dessein : ce seau borne une consommation de ressources, pas une force brute, et le
+	// serrer refuserait les agents légitimes à froid derrière un même NAT sans rien gagner.
 	maxAttemptsPerIP = 120
-	// maxAttemptsPerPrefix borne l'acharnement sur un token précis, y compris en changeant d'IP.
-	// Bien plus bas que la limite par IP : dix SECRETS DIFFÉRENTS essayés sur le même préfixe en
-	// une minute, ce n'est jamais un agent légitime — le groupement des tentatives en vol et
-	// l'exemption des tokens authentifiés garantissent qu'un client honnête n'arrive pas ici.
-	maxAttemptsPerPrefix = 10
 
-	// bucketIP et bucketPrefix séparent les deux espaces de clés dans le même cache.
-	bucketIP     = "ip"
-	bucketPrefix = "prefix"
+	// bucketIP nomme l'espace de clés des compteurs dans le cache partagé.
+	bucketIP = "ip"
 )
 
 // attemptOutcome dit ce qu'est devenue une tentative, donc ce qu'il advient de sa charge.
 type attemptOutcome int
 
 const (
-	// outcomeAuthenticated : le token est bon. La charge est rendue et le token devient de
-	// confiance — il ne consommera plus de quota.
+	// outcomeAuthenticated : le token est bon. C'est la SEULE issue qui rend la charge, et elle
+	// rend le token de confiance — il ne consommera plus de quota.
 	outcomeAuthenticated attemptOutcome = iota
 	// outcomeRejected : échec avéré. La charge reste due, et la confiance est retirée si elle
 	// existait : c'est ce qui fait qu'un token révoqué cesse d'être exempté.
 	outcomeRejected
-	// outcomeUnavailable : panne du store. Ce n'est pas un échec d'authentification ; la charge
-	// est rendue et la confiance n'est pas touchée.
+	// outcomeUnavailable : ni succès ni refus — panne du store, ou client qui abandonne. La
+	// charge reste due : la tentative a coûté un aller-retour, et l'issue est à la portée de
+	// l'attaquant, qui ne doit jamais pouvoir décider d'un remboursement.
 	outcomeUnavailable
 )
 
 // reservation retient ce qu'une tentative a consommé et à quel titre. release s'en sert pour
 // solder exactement ce qui a été pris.
 //
-// Les clés de seau sont retenues dans le groupe, telles quelles : si la fenêtre a tourné pendant
-// l'aller-retour store, on annule bien l'incrément d'origine et pas le compteur d'une fenêtre à
-// laquelle la tentative n'appartient pas.
+// Le groupe est retenu par POINTEUR, pas cherché par empreinte au moment de solder : deux
+// générations de requêtes peuvent porter la même empreinte, et une requête doit solder la charge
+// qu'elle a réellement rejointe.
 type reservation struct {
 	// fingerprint identifie le token présenté sans jamais le stocker en clair. Toujours
 	// renseignée, y compris pour un token malformé : deux requêtes identiques restent groupées.
 	fingerprint string
 	// trusted signale une tentative exemptée : rien n'a été consommé, il n'y a rien à rendre.
 	trusted bool
+	// group est la charge rejointe, nil si la tentative n'a rien consommé.
+	group *inflight
 }
 
 // inflight est la charge d'un token en cours d'évaluation, partagée par toutes les requêtes qui
 // présentent ce même token au même moment. C'est ce partage qui empêche un agent légitime de
 // s'auto-bloquer avec ses propres requêtes concurrentes.
 type inflight struct {
-	holders   int
-	ipKey     string
-	prefixKey string
-	// refunded évite qu'un groupe rende sa charge deux fois : le premier succès la rend, les
-	// suivants n'ont plus rien à rendre.
+	holders int
+	ipKey   string
+	// resolved passe à vrai dès que la PREMIÈRE requête du groupe a sa réponse. Un groupe résolu
+	// n'accueille plus personne : sans ça, un flux pipeliné entretenait indéfiniment un groupe
+	// vivant et faisait passer un nombre illimité de requêtes pour une seule charge.
+	resolved bool
+	// refunded évite qu'un groupe rende sa charge deux fois.
 	refunded bool
 }
 
-// attemptLimiter compte les tentatives d'authentification par IP et par préfixe présenté.
+// attemptLimiter compte les tentatives d'authentification par IP source.
 //
-// Le cache mémoire process suffit : le mode local tourne en instance unique. Une instance
-// supplémentaire diviserait la limite effective par le nombre d'instances, pas plus — le jour
-// où ça arrive, c'est le cache qui change, pas ce fichier.
+// Le cache mémoire process suffit : le mode local tourne en instance unique. Le jour où
+// plusieurs instances tournent, chacune porte son propre compteur — la limite effective est donc
+// MULTIPLIÉE par le nombre d'instances, et c'est le cache qu'il faut changer, pas ce fichier.
 type attemptLimiter struct {
 	counters cache.Cache
 	mu       sync.Mutex
 	// pending groupe les tentatives concurrentes portant le même token. Vidé au fur et à mesure :
 	// une entrée disparaît dès que sa dernière requête est soldée.
-	pending   map[string]*inflight
-	perIP     int
-	perPrefix int
-	window    time.Duration
+	pending map[string]*inflight
+	perIP   int
+	window  time.Duration
 	// now est injectable pour que les tests pilotent le temps sans dormir.
 	now func() time.Time
 }
@@ -144,14 +159,13 @@ type attemptLimiter struct {
 // newAttemptLimiter crée le limiteur. Le TTL par défaut des compteurs vaut deux fenêtres : assez
 // pour qu'un compteur survive à sa propre fenêtre, assez court pour que la mémoire se rende
 // toute seule. Les marques de confiance portent leur propre TTL (trusted_tokens.go).
-func newAttemptLimiter(perIP, perPrefix int, window time.Duration) *attemptLimiter {
+func newAttemptLimiter(perIP int, window time.Duration) *attemptLimiter {
 	return &attemptLimiter{
-		counters:  cache.NewMemory(2*window, window),
-		pending:   make(map[string]*inflight),
-		perIP:     perIP,
-		perPrefix: perPrefix,
-		window:    window,
-		now:       time.Now,
+		counters: cache.NewMemory(2*window, window),
+		pending:  make(map[string]*inflight),
+		perIP:    perIP,
+		window:   window,
+		now:      time.Now,
 	}
 }
 
@@ -162,15 +176,13 @@ func newAttemptLimiter(perIP, perPrefix int, window time.Duration) *attemptLimit
 // Trois chemins, du moins cher au plus cher :
 //
 //   - token de confiance — il a déjà prouvé sa validité : rien n'est compté ;
-//   - token déjà en vol — une autre requête porte exactement le même token : on rejoint sa
-//     charge au lieu d'en créer une deuxième ;
-//   - sinon — les deux seaux sont incrémentés, et la tentative passe si aucun ne déborde.
+//   - token déjà en vol et pas encore résolu — une autre requête porte exactement le même token
+//     et attend sa réponse : on rejoint sa charge au lieu d'en créer une deuxième ;
+//   - sinon — le seau de la source est incrémenté, et la tentative passe s'il ne déborde pas.
 //
 // L'incrément est inconditionnel, y compris quand la tentative est refusée : une source déjà
 // au-delà du seuil n'a aucune raison de voir son compteur figé.
-//
-// Un préfixe vide (token malformé) n'est compté que sur l'IP : il n'y a pas de token ciblé.
-func (l *attemptLimiter) reserve(ip, prefix, fingerprint string) (reservation, bool) {
+func (l *attemptLimiter) reserve(ip, fingerprint string) (reservation, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -181,24 +193,29 @@ func (l *attemptLimiter) reserve(ip, prefix, fingerprint string) (reservation, b
 		return res, true
 	}
 
-	if group, found := l.pending[fingerprint]; found {
+	if group, found := l.pending[fingerprint]; found && !group.resolved {
 		group.holders++
+		res.group = group
 		return res, true
 	}
 
-	ipKey, prefixKey, allowed := l.charge(ip, prefix)
-	if allowed {
-		l.pending[fingerprint] = &inflight{holders: 1, ipKey: ipKey, prefixKey: prefixKey}
+	ipKey, allowed := l.charge(ip)
+	if !allowed {
+		return res, false
 	}
 
-	return res, allowed
+	group := &inflight{holders: 1, ipKey: ipKey}
+	l.pending[fingerprint] = group
+	res.group = group
+
+	return res, true
 }
 
 // release solde la tentative selon son issue : rendre la charge ou la conserver, et mettre à
 // jour la confiance accordée au token.
 //
-// Le groupe n'est démonté que par sa DERNIÈRE requête. Tant qu'il en reste une en vol, l'entrée
-// survit : sinon une nouvelle requête du même token repaierait une charge déjà payée.
+// Le groupe n'est démonté que par sa DERNIÈRE requête, et seulement s'il est encore celui que le
+// cache désigne : une génération suivante a pu prendre sa place sous la même empreinte.
 func (l *attemptLimiter) release(res reservation, outcome attemptOutcome) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -208,66 +225,43 @@ func (l *attemptLimiter) release(res reservation, outcome attemptOutcome) {
 		l.trust(res.fingerprint)
 	case outcomeRejected:
 		// Un token de confiance qui se fait refuser a été révoqué, ou n'a jamais été le bon :
-		// la confiance tombe, et la tentative suivante repassera par les seaux.
+		// la confiance tombe, et la tentative suivante repassera par le seau.
 		l.distrust(res.fingerprint)
 	case outcomeUnavailable:
 	}
 
-	if res.trusted {
+	if res.group == nil {
 		return
 	}
+	group := res.group
+	group.resolved = true
 
-	group, found := l.pending[res.fingerprint]
-	if !found {
-		return
-	}
-
-	if outcome != outcomeRejected {
-		l.refund(group)
+	if outcome == outcomeAuthenticated && !group.refunded {
+		group.refunded = true
+		l.add(group.ipKey, -1)
 	}
 
 	group.holders--
-	if group.holders <= 0 {
+	if group.holders <= 0 && l.pending[res.fingerprint] == group {
 		delete(l.pending, res.fingerprint)
 	}
 }
 
-// charge incrémente les deux seaux de la tentative et dit si elle passe. Renvoie les clés
-// exactes incrémentées ; une clé vide signifie « ce seau n'a pas été consommé » (préfixe absent
-// pour un token malformé, IP exemptée). Appelé sous l.mu.
-func (l *attemptLimiter) charge(ip, prefix string) (ipKey, prefixKey string, allowed bool) {
-	allowed = true
-
-	if countsAgainstIPBucket(ip) {
-		ipKey = l.bucket(bucketIP, ip)
-		if l.add(ipKey, 1) > l.perIP {
-			allowed = false
-		}
-	}
-	if prefix != "" {
-		prefixKey = l.bucket(bucketPrefix, prefix)
-		if l.add(prefixKey, 1) > l.perPrefix {
-			allowed = false
-		}
+// charge incrémente le seau de la source et dit si la tentative passe. La clé renvoyée est celle
+// qui a été incrémentée ; vide si la source est exemptée, auquel cas rien n'est consommé et
+// aucune clé de cache n'est créée. Appelé sous l.mu.
+func (l *attemptLimiter) charge(ip string) (ipKey string, allowed bool) {
+	if !countsAgainstIPBucket(ip) {
+		return "", true
 	}
 
-	return ipKey, prefixKey, allowed
-}
-
-// refund rend la charge d'un groupe, au plus une fois. Appelé sous l.mu.
-func (l *attemptLimiter) refund(group *inflight) {
-	if group.refunded {
-		return
-	}
-	group.refunded = true
-
-	l.add(group.ipKey, -1)
-	l.add(group.prefixKey, -1)
+	ipKey = l.bucket(bucketIP, ip)
+	return ipKey, l.add(ipKey, 1) <= l.perIP
 }
 
 // add applique delta au compteur de la clé et renvoie la nouvelle valeur. Une clé vide ne
-// consomme rien. Le compteur ne descend jamais sous zéro : un release décalé d'une fenêtre ne
-// doit pas créer de crédit négatif exploitable. Appelé sous l.mu — la lecture-modification-
+// consomme rien. Le compteur ne descend jamais sous zéro : un remboursement décalé d'une fenêtre
+// ne doit pas créer de crédit négatif exploitable. Appelé sous l.mu — la lecture-modification-
 // écriture n'est pas atomique côté cache.
 func (l *attemptLimiter) add(key string, delta int) int {
 	if key == "" {

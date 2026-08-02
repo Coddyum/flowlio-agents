@@ -80,47 +80,72 @@ Un seul port `Auth()` dans `CoreServices`, deux adaptateurs. `buildModules()` ne
 
 ### Calibrage du rate limiting
 
-Livré dans `internal/core/auth/rate_limit.go` et `trusted_tokens.go`. Deux seaux à fenêtre fixe
-d'une minute, consommés **avant** l'aller-retour store — compter après laissait passer toute une
-rafale concurrente pendant la latence de la base.
+Livré dans `internal/core/auth/rate_limit.go`, `trusted_tokens.go` et `request_source.go`.
 
-| Seau                     | Seuil | Ce qu'il borne                                             |
-| ------------------------ | ----- | ----------------------------------------------------------- |
-| `maxAttemptsPerIP`       | 120   | le balayage de préfixes distincts depuis une même source     |
-| `maxAttemptsPerPrefix`   | 10    | l'acharnement sur un token précis, même en changeant d'IP    |
+**Ce que ce limiteur protège, et ce qu'il ne protège pas.** Il ne protège **pas** contre la
+découverte d'un token : un secret fait 32 octets aléatoires, soit 2^256 possibilités, et aucun
+seuil ne change cette arithmétique — c'est l'entropie qui tient. Il protège contre la
+**consommation de ressources** par une source qui échoue en boucle : un aller-retour Postgres et
+un SHA-256 par tentative.
 
-Le seuil par IP est volontairement large : ce seau ne protège pas contre la force brute — 36^12
-préfixes et 2^256 secrets s'en chargent — il borne la mémoire et le débit brut. Le serrer
-refuserait des agents légitimes derrière un même NAT sans rien gagner.
+Cette distinction commande le reste : puisque ce contre quoi on se défend est déjà impossible,
+tout mécanisme capable de refuser un token **valide** est un bilan négatif.
 
-**Décision structurante — un token valide ne consomme jamais de quota.** Prise ici parce que la
-version précédente, sans elle, refusait des clients légitimes de deux façons mesurées :
+**Un seul seau**, à fenêtre fixe d'une minute, consommé **avant** l'aller-retour store — compter
+après laissait passer toute une rafale concurrente pendant la latence de la base.
 
-- un agent seul qui lançait plus de 10 requêtes **simultanées** en voyait refuser le surplus (11
-  concurrentes → 1 refusée), avec un `401` indistinguable d'un token invalide ;
-- un attaquant coupait un agent pour le reste de la fenêtre en brûlant 10 essais sur son
-  **préfixe**, qui est la partie publique du token.
+| Seau               | Seuil | Ce qu'il borne                                          |
+| ------------------ | ----- | --------------------------------------------------------- |
+| `maxAttemptsPerIP` | 120   | les tentatives de tokens distincts depuis une même source   |
 
-Deux mécanismes, tous deux indexés sur l'empreinte SHA-256 du **token complet** — jamais sur le
-préfixe, sans quoi ils s'ouvriraient à qui a seulement vu passer un préfixe :
+Le seuil est volontairement large : il borne une consommation de ressources, pas une force
+brute. Le serrer refuserait des agents légitimes à froid derrière un même NAT sans rien gagner.
 
-1. les requêtes concurrentes portant le même token partagent **une seule** charge ;
+**Le seau par préfixe a été supprimé après revue.** Il existait pour freiner l'acharnement sur un
+token précis. Le préfixe étant la partie **publique** du token, il s'est révélé être le seul
+moyen de couper un agent légitime : mesuré, 11 requêtes par minute sur le préfixe d'une victime
+lui faisaient refuser son token valide, fenêtre après fenêtre, et 4 400 requêtes depuis une seule
+source coupaient 400 victimes à la fois. En face il ne rachetait rien. Un dispositif qui ne
+défend rien et qui coupe les légitimes se supprime, il ne se recalibre pas.
+
+**Un token valide ne consomme jamais de quota**, par deux mécanismes indexés sur l'empreinte
+SHA-256 du **token complet** — jamais sur le préfixe :
+
+1. les requêtes concurrentes portant le même token partagent **une seule** charge. Un groupe
+   cesse d'accueillir dès sa première réponse : sans cette borne, un flux pipeliné entretenait un
+   groupe indéfiniment et passait sans limite (3 200 requêtes en 480 ms, mesurées). La borne
+   exacte est donc `maxAttemptsPerIP × concurrence`, et seulement pour des requêtes portant le
+   même token, dont la répétition n'apprend rien à l'attaquant ;
 2. un token qui s'est authentifié est exempté de quota (24 h), exemption **retirée au premier
    refus**, ce qui fait tomber un token révoqué.
 
 Ce n'est pas un cache d'authentification : chaque requête va quand même au store et compare le
 secret, la révocation reste immédiate.
 
+**Une seule issue rend la charge : l'authentification réussie.** Ni l'échec, ni la panne du
+store, ni l'abandon du client. Une version précédente remboursait aussi les pannes, au nom de la
+disponibilité pendant un incident ; c'était un contournement complet, parce que l'attaquant
+provoque lui-même cette issue en abandonnant sa requête HTTP — le contexte annulé remonte comme
+une panne et rembourse la charge que la requête jumelle vient de payer. Le prix de ce
+renversement est borné : pendant un incident l'API ne répond de toute façon pas, et un token déjà
+authentifié reste exempté, donc les agents en session ne sont pas touchés.
+
 Limites connues, assumées, non compensées ailleurs :
 
-- la boucle locale est exemptée du seau par IP (sinon un agent en boucle de retry refuserait le
-  service à tous les autres agents de la machine) ; un balayage de préfixes distincts depuis
-  `127.0.0.1` n'est donc pas borné, et la mémoire des compteurs non plus ;
-- le chemin bloqué répond sans toucher la base : sa **latence** distingue « limité » de « refusé ».
-  L'aligner supposerait d'offrir la requête que le limiteur existe pour refuser ;
-- NAT, conteneur ou proxy partagé : le contournement reste ouvert. À traiter le jour où un proxy
-  de confiance existe, par configuration explicite, jamais en faisant confiance à
-  `X-Forwarded-For`.
+- **la boucle locale est exemptée du seau, donc le limiteur ne freine rien en mode local.** C'est
+  cohérent avec le modèle de menace, pas un oubli : un attaquant capable d'émettre depuis
+  `127.0.0.1` lit déjà le fichier de credentials, il n'a aucune raison de deviner un token. Ce
+  limiteur défend le mode hosted, où la source d'une requête est une information ; en local,
+  c'est le système de fichiers qui protège. Corollaire utile : la boucle locale ne crée **aucune**
+  clé de cache, donc aucune famille de clés n'est fabricable en masse ;
+- le chemin bloqué calcule bien un SHA-256 mais ne touche pas la base : sa **latence** distingue
+  « limité » de « refusé ». L'aligner supposerait d'offrir la requête que le limiteur existe pour
+  refuser ;
+- NAT, conteneur ou proxy partagé : un voisin bruyant peut faire refuser un token valide **pas
+  encore authentifié** dans le process courant. À traiter le jour où un proxy de confiance
+  existe, par configuration explicite, jamais en faisant confiance à `X-Forwarded-For` ;
+- plusieurs instances de l'API multiplient la limite effective par leur nombre, chacune portant
+  son propre compteur mémoire. Le jour où ça arrive, c'est le cache qui change.
 
 ## Schéma
 
