@@ -78,24 +78,34 @@ Un seul port `Auth()` dans `CoreServices`, deux adaptateurs. `buildModules()` ne
 
 ## Schéma
 
-Livré (migrations `000001_init`, `000002_token_scope`) :
+Livré (migrations `000001_init`, `000002_token_scope`, `000003_tasks`) :
 
 ```
 teams(id, slug, name, created_at, updated_at)
 projects(id, team_id, key, name, next_number, created_at, updated_at)   unique(team_id, key)
+                                                                        unique(id, team_id)
 tokens(id, scope, team_id, project_id, name, prefix, secret_hash,
        created_at, last_used_at, revoked_at)                            unique(prefix)
+tasks(id, team_id, project_id, number, title, body_md, status,
+      priority, deadline, created_at, updated_at, archived_at)          unique(project_id, number)
+task_notes(id, task_id, body_md, created_at)
 ```
 
 `tokens.scope` vaut `admin` (amorçage local, aucune team) ou `project` (agent, team et projet
 obligatoires) — une seule table, donc un seul chemin de vérification de secret.
 
+`tasks` porte un `team_id` **dénormalisé** pour que chaque query puisse embarquer son scope de
+tenancy complet sans jointure. La clé étrangère composite `(project_id, team_id)` vers
+`projects (id, team_id)` — d'où l'unicité ajoutée sur `projects` — garantit que cette
+dénormalisation ne peut jamais diverger : une tâche dont le `team_id` ment est impossible en base,
+pas seulement improbable. Le même schéma s'appliquera aux issues.
+
+`task_status ∈ {todo, in_progress, blocked, done}`,
+`task_priority ∈ {low, normal, high, urgent}` (défaut `normal`).
+
 À venir :
 
 ```
-tasks(id, team_id, project_id, number, title, body_md, status,
-      priority, deadline, created_at, updated_at, archived_at)     unique(project_id, number)   -- M2
-task_notes(id, task_id, body_md, created_at)                                                    -- M2
 issues(id, team_id, project_id, author_project_id, number, title,
        state, created_at, updated_at, closed_at)                   unique(project_id, number)   -- M3
 issue_messages(id, issue_id, author_project_id, body_md, created_at)                            -- M3
@@ -110,12 +120,12 @@ Elle tire son numéro du compteur de ce projet : tasks et issues partagent la m�
 
 ## Découpage en modules (`internal/feature/`)
 
-| Module      | Clé         | Responsabilité                                              |
-| ----------- | ----------- | ----------------------------------------------------------- |
-| `workspace` | `workspace` | teams, projects, tokens d'agent (création, révocation)       |
-| `task`      | `task`      | tâches d'un projet + notes de progression + archivage        |
-| `issue`     | `issue`     | issues inter-projets, fil de messages, changements d'état    |
-| `inbox`     | `inbox`     | lecture du journal d'événements depuis le curseur du token   |
+| Module      | Clé         | Responsabilité                                              | État |
+| ----------- | ----------- | ----------------------------------------------------------- | ---- |
+| `workspace` | `workspace` | teams, projects, tokens d'agent (création, révocation)       | livré |
+| `task`      | `task`      | tâches d'un projet + notes de progression + archivage        | livré |
+| `issue`     | `issue`     | issues inter-projets, fil de messages, changements d'état    | M3 |
+| `inbox`     | `inbox`     | lecture du journal d'événements depuis le curseur du token   | M3 |
 
 `auth` n'est pas une feature : c'est un service transverse de `internal/core`, exposé via
 `CoreServices.Auth()` (résolution token → `Principal{TeamID, ProjectID}` + middleware).
@@ -126,21 +136,36 @@ côté `internal/store/` si l'écriture doit être transactionnelle avec la tâc
 
 ## Surface MCP (v1)
 
-Petite par conception : chaque outil superflu coûte des tokens à chaque tour d'agent.
+Petite par conception : chaque outil superflu coûte des tokens à **chaque tour** d'agent.
+
+Livrés (M2) :
 
 ```
-whoami                     → projet, team, portée du token
-list_tasks(status?, limit) → backlog du projet courant
-get_task(key)              → détail + notes
-create_task(...)           → nouvelle tâche
-update_task(key, ...)      → statut, priorité, deadline, description
-add_task_note(key, body)   → progression
+whoami                                → projet, team, portée du token
+list_tasks(status?, limit?, archived?) → backlog du projet courant
+get_task(key)                         → détail + fil de notes
+create_task(title, body?, ...)        → nouvelle tâche, renvoie sa clé
+update_task(key, ..., archive?)       → statut, priorité, deadline, description, archivage
+add_task_note(key, body)              → progression
+```
+
+À venir (M3) :
+
+```
 create_issue(to_project, title, body)
 list_issues(role=incoming|outgoing, state?)
 answer_issue(key, body)
 close_issue(key)
 check_inbox()              → événements depuis le curseur, puis avance le curseur
 ```
+
+**Aucun outil n'accepte de projet en paramètre** (sauf `to_project` d'une issue, qui désigne un
+destinataire et non un scope de lecture) : le projet vient du token. Il n'existe donc aucun appel
+MCP capable de désigner le backlog d'un autre projet.
+
+`archive_task` a été fusionné dans `update_task` sous forme de drapeau : un septième outil se
+paierait dans le contexte de chaque tour pour une action que personne n'appelle sans d'abord
+passer la tâche en `done`.
 
 ## Binaires
 
