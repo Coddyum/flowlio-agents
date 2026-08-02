@@ -1,0 +1,90 @@
+# CI — garde-fous du dépôt, exécutés pour tout le monde et pas seulement dans le hook local.
+#
+# Un seul job : un garde-fou rouge = CI rouge. Aucun secret n'est nécessaire, la CI tourne donc
+# telle quelle sur un fork.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Lecture seule : ce workflow ne publie rien, ne commente rien.
+permissions:
+  contents: read
+
+env:
+  # Version du CLI golang-migrate, alignée sur la stack documentée dans CLAUDE.md.
+  MIGRATE_VERSION: v4.19.1
+  # Version de golangci-lint, épinglée pour que la CI et les postes de dev voient les mêmes
+  # linters activés par défaut.
+  GOLANGCI_LINT_VERSION: v2.11.4
+
+jobs:
+  build-and-check:
+    name: build, garde-fous et tests
+    runs-on: ubuntu-latest
+
+    services:
+      # Même version majeure qu'en dev (docker-compose.yml) et qu'en prod (Neon) : Postgres 18.
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: flowlio
+          POSTGRES_PASSWORD: flowlio
+          POSTGRES_DB: flowlio
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flowlio -d flowlio"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      # Lu par le Makefile (DB_URL_DEV) pour `make up-dev` et `make test-integration`.
+      # Aucun .env dans la CI : la variable vient uniquement de l'environnement.
+      DATABASE_URL: postgres://flowlio:flowlio@localhost:5432/flowlio?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Installer Go
+        uses: actions/setup-go@v6
+        with:
+          # La version vient de go.mod : elle n'est jamais dupliquée ici.
+          go-version-file: go.mod
+          # Cache des modules et du cache de build Go.
+          cache: true
+
+      - name: Compiler et vet
+        run: |
+          go build ./...
+          go vet ./...
+
+      - name: Garde-fous structurels
+        run: |
+          ./scripts/check-cross-feature-imports.sh
+          ./scripts/check-file-size.sh
+          ./scripts/check-sommaire.sh
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+
+      - name: Tests unitaires (make check)
+        run: make check
+
+      - name: Installer golang-migrate
+        run: |
+          curl -fsSL "https://github.com/golang-migrate/migrate/releases/download/${MIGRATE_VERSION}/migrate.linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin migrate
+          migrate -version
+
+      - name: Appliquer les migrations
+        run: make up-dev
+
+      - name: Tests d'intégration
+        run: make test-integration

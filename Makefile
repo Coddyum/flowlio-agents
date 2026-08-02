@@ -24,10 +24,10 @@ help: ## Liste les cibles
 
 ## --- Dev ---
 
-dev-up: ## Démarre Postgres 17 (docker compose)
+dev-up: ## Démarre Postgres 18 (docker compose)
 	docker compose up -d
 
-dev-down: ## Arrête Postgres 17
+dev-down: ## Arrête Postgres 18
 	docker compose down
 
 run: ## Lance l'API
