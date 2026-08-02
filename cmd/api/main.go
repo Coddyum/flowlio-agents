@@ -4,9 +4,9 @@ package main
 //
 // | Élément      | Résumé                                                           | Ligne |
 // |--------------|------------------------------------------------------------------|-------|
-// | main         | Charge la config, câble l'infra, monte les modules, sert l'API     | 42    |
-// | buildModules   | Instancie les modules de feature — point d'ajout unique          | 94    |
-// | bootstrapLocal | Émet le token admin au tout premier démarrage local              | 105   |
+// | main         | Charge la config, câble l'infra, monte les modules, sert l'API     | 43    |
+// | buildModules   | Instancie les modules de feature — point d'ajout unique          | 95    |
+// | bootstrapLocal | Émet le token admin au tout premier démarrage local              | 107   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -26,6 +26,7 @@ import (
 	"github.com/Coddyum/flowlio-ia/internal/core/engine"
 	"github.com/Coddyum/flowlio-ia/internal/core/module"
 	"github.com/Coddyum/flowlio-ia/internal/database"
+	"github.com/Coddyum/flowlio-ia/internal/feature/task"
 	"github.com/Coddyum/flowlio-ia/internal/feature/workspace"
 	"github.com/Coddyum/flowlio-ia/internal/pkg/cache"
 	"github.com/Coddyum/flowlio-ia/internal/pkg/config"
@@ -94,6 +95,7 @@ func main() {
 func buildModules(cfg module.ModuleConfig) []module.Module {
 	return []module.Module{
 		workspace.NewModule(cfg),
+		task.NewModule(cfg),
 	}
 }
 

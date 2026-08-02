@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict quQJA2zMjEngtXBath16gUvREGa7IDSaVd6pNnAr2hxddekbPvdca2wippM3hds
+\restrict AetEj6cQNvGdVWIO82Ggom0ehZgjmkA4MEyWyoqxenmMMUmcgKdem2vTQVh44Ue
 
 -- Dumped from database version 18.4
 -- Dumped by pg_dump version 18.4
@@ -18,6 +18,30 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: task_priority; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.task_priority AS ENUM (
+    'low',
+    'normal',
+    'high',
+    'urgent'
+);
+
+
+--
+-- Name: task_status; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.task_status AS ENUM (
+    'todo',
+    'in_progress',
+    'blocked',
+    'done'
+);
+
 
 --
 -- Name: token_scope; Type: TYPE; Schema: public; Owner: -
@@ -62,6 +86,42 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: task_notes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_notes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    task_id uuid NOT NULL,
+    body_md text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_notes_body_not_blank CHECK ((btrim(body_md) <> ''::text))
+);
+
+
+--
+-- Name: tasks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tasks (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    team_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    number bigint NOT NULL,
+    title text NOT NULL,
+    body_md text DEFAULT ''::text NOT NULL,
+    status public.task_status DEFAULT 'todo'::public.task_status NOT NULL,
+    priority public.task_priority DEFAULT 'normal'::public.task_priority NOT NULL,
+    deadline timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    archived_at timestamp with time zone,
+    CONSTRAINT tasks_number_positive CHECK ((number >= 1)),
+    CONSTRAINT tasks_title_length CHECK ((char_length(title) <= 200)),
+    CONSTRAINT tasks_title_not_blank CHECK ((btrim(title) <> ''::text))
+);
+
+
+--
 -- Name: teams; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -98,6 +158,14 @@ CREATE TABLE public.tokens (
 
 
 --
+-- Name: projects projects_id_team_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.projects
+    ADD CONSTRAINT projects_id_team_unique UNIQUE (id, team_id);
+
+
+--
 -- Name: projects projects_key_unique_per_team; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -119,6 +187,30 @@ ALTER TABLE ONLY public.projects
 
 ALTER TABLE ONLY public.schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: task_notes task_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_notes
+    ADD CONSTRAINT task_notes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tasks tasks_number_unique_per_project; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_number_unique_per_project UNIQUE (project_id, number);
+
+
+--
+-- Name: tasks tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_pkey PRIMARY KEY (id);
 
 
 --
@@ -161,6 +253,20 @@ CREATE INDEX projects_team_id_idx ON public.projects USING btree (team_id);
 
 
 --
+-- Name: task_notes_task_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX task_notes_task_id_idx ON public.task_notes USING btree (task_id, created_at);
+
+
+--
+-- Name: tasks_project_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tasks_project_active_idx ON public.tasks USING btree (project_id, status, number DESC) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: tokens_project_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -192,8 +298,24 @@ ALTER TABLE ONLY public.projects
 
 
 --
+-- Name: task_notes task_notes_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_notes
+    ADD CONSTRAINT task_notes_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tasks tasks_project_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_project_fk FOREIGN KEY (project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
+
+
+--
 -- PostgreSQL database dump complete
 --
 
-\unrestrict quQJA2zMjEngtXBath16gUvREGa7IDSaVd6pNnAr2hxddekbPvdca2wippM3hds
+\unrestrict AetEj6cQNvGdVWIO82Ggom0ehZgjmkA4MEyWyoqxenmMMUmcgKdem2vTQVh44Ue
 

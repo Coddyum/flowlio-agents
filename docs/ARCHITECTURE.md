@@ -6,8 +6,8 @@ Carte des domaines et des interfaces inter-modules. À lire avant d'éditer une 
 ## État actuel
 
 **M1 livré** : tenancy (teams, projets), tokens d'agent et authentification.
-Tâches (M2) et issues inter-projets (M3) à venir. Décisions de conception :
-[DESIGN-V1.md](DESIGN-V1.md).
+**M2 en cours** : les tâches sont livrées (module `task`), le serveur MCP stdio suit.
+Issues inter-projets (M3) à venir. Décisions de conception : [DESIGN-V1.md](DESIGN-V1.md).
 
 ## Squelette
 
@@ -38,14 +38,24 @@ Le middleware d'une feature (auth…) se lie une seule fois dans son `module.go`
 
 ## Domaines (features)
 
-| Clé module  | Domaine                          | Routes (préfixées `/api/workspace`)                                                                             | Dépendances inter-modules |
+| Clé module  | Domaine                          | Routes                                                                                                            | Dépendances inter-modules |
 | ----------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `workspace` | teams, projets, tokens d'agent    | `POST/GET /teams`, `POST/GET /projects`, `POST/GET /tokens`, `DELETE /tokens/{id}`, `GET /whoami`                  | aucune                    |
+| `workspace` | teams, projets, tokens d'agent    | `/api/workspace` : `POST/GET /teams`, `POST/GET /projects`, `POST/GET /tokens`, `DELETE /tokens/{id}`, `GET /whoami` | aucune                    |
+| `task`      | backlog d'un projet + notes       | `/api/task` : `POST/GET /`, `GET/PATCH /{number}`, `POST /{number}/notes`, `POST /{number}/archive`                 | aucune                    |
 
-Portées : les routes d'administration exigent un token `admin` (`AdminOnly`) ; `GET /projects` et
-`GET /whoami` acceptent tout token valide et restent scopés à sa team. Un token admin désigne la
-team visée par `?team=<slug>` ; un token de projet ne peut pas sortir de la sienne, même en
-forçant le paramètre.
+Portées `workspace` : les routes d'administration exigent un token `admin` (`AdminOnly`) ;
+`GET /projects` et `GET /whoami` acceptent tout token valide et restent scopés à sa team. Un
+token admin désigne la team visée par `?team=<slug>` ; un token de projet ne peut pas sortir de
+la sienne, même en forçant le paramètre.
+
+Portées `task` : **toutes** les routes exigent un token de portée `project`
+(`requireProjectScope`, lié une fois dans `module.go`). Un backlog est le travail interne d'un
+repo : aucune route ne prend de projet en paramètre, donc il n'existe aucune surface où un scope
+pourrait être contourné. Un token admin, qui n'est lié à aucun projet, reçoit `403`.
+
+`team_id` **et** `project_id` figurent dans chaque query de `sql/queries/tasks.sql` — y compris
+l'insertion d'une note, alimentée par un `SELECT` scopé sur la tâche. L'isolation entre projets
+d'une même team est couverte par `internal/feature/task/store/store_integration_test.go`.
 
 ## Services transverses (`internal/core`)
 

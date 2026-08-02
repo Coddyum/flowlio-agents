@@ -13,6 +13,94 @@ import (
 	"github.com/google/uuid"
 )
 
+type TaskPriority string
+
+const (
+	TaskPriorityLow    TaskPriority = "low"
+	TaskPriorityNormal TaskPriority = "normal"
+	TaskPriorityHigh   TaskPriority = "high"
+	TaskPriorityUrgent TaskPriority = "urgent"
+)
+
+func (e *TaskPriority) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TaskPriority(s)
+	case string:
+		*e = TaskPriority(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TaskPriority: %T", src)
+	}
+	return nil
+}
+
+type NullTaskPriority struct {
+	TaskPriority TaskPriority `json:"task_priority"`
+	Valid        bool         `json:"valid"` // Valid is true if TaskPriority is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTaskPriority) Scan(value interface{}) error {
+	if value == nil {
+		ns.TaskPriority, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TaskPriority.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTaskPriority) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TaskPriority), nil
+}
+
+type TaskStatus string
+
+const (
+	TaskStatusTodo       TaskStatus = "todo"
+	TaskStatusInProgress TaskStatus = "in_progress"
+	TaskStatusBlocked    TaskStatus = "blocked"
+	TaskStatusDone       TaskStatus = "done"
+)
+
+func (e *TaskStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TaskStatus(s)
+	case string:
+		*e = TaskStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TaskStatus: %T", src)
+	}
+	return nil
+}
+
+type NullTaskStatus struct {
+	TaskStatus TaskStatus `json:"task_status"`
+	Valid      bool       `json:"valid"` // Valid is true if TaskStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTaskStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.TaskStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TaskStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTaskStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TaskStatus), nil
+}
+
 type TokenScope string
 
 const (
@@ -63,6 +151,28 @@ type Project struct {
 	NextNumber int64     `json:"next_number"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type Task struct {
+	ID         uuid.UUID    `json:"id"`
+	TeamID     uuid.UUID    `json:"team_id"`
+	ProjectID  uuid.UUID    `json:"project_id"`
+	Number     int64        `json:"number"`
+	Title      string       `json:"title"`
+	BodyMd     string       `json:"body_md"`
+	Status     TaskStatus   `json:"status"`
+	Priority   TaskPriority `json:"priority"`
+	Deadline   sql.NullTime `json:"deadline"`
+	CreatedAt  time.Time    `json:"created_at"`
+	UpdatedAt  time.Time    `json:"updated_at"`
+	ArchivedAt sql.NullTime `json:"archived_at"`
+}
+
+type TaskNote struct {
+	ID        uuid.UUID `json:"id"`
+	TaskID    uuid.UUID `json:"task_id"`
+	BodyMd    string    `json:"body_md"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Team struct {

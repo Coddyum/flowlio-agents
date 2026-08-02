@@ -15,3 +15,6 @@ coverage.*
 
 # OS / éditeurs
 .DS_Store
+
+# Worktrees temporaires créés par les agents
+.claude/worktrees/

@@ -16,7 +16,7 @@ UPDATE projects
 SET next_number = next_number + 1,
     updated_at  = now()
 WHERE id = $1 AND team_id = $2
-RETURNING next_number - 1 AS claimed_number
+RETURNING (next_number - 1)::bigint AS claimed_number
 `
 
 type ClaimNextNumberParams struct {
@@ -26,9 +26,11 @@ type ClaimNextNumberParams struct {
 
 // ClaimNextNumber réserve le prochain identifiant lisible du projet (FRNT-34).
 // Le UPDATE ... RETURNING sérialise les appels concurrents sur la ligne du projet.
-func (q *Queries) ClaimNextNumber(ctx context.Context, arg ClaimNextNumberParams) (int32, error) {
+// Le cast en bigint est explicite : sans lui, sqlc infère un int32 pour l'expression
+// `next_number - 1`, alors que la colonne est un bigint.
+func (q *Queries) ClaimNextNumber(ctx context.Context, arg ClaimNextNumberParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, claimNextNumber, arg.ID, arg.TeamID)
-	var claimed_number int32
+	var claimed_number int64
 	err := row.Scan(&claimed_number)
 	return claimed_number, err
 }
