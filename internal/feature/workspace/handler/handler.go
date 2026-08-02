@@ -10,9 +10,9 @@ package handler
 // | Handler.writeError  | Répond une erreur domaine, sans fuite d'interne           | 77    |
 // | Handler.decodeBody  | Décode un corps JSON en refusant les champs inconnus      | 95    |
 // | Handler.principal   | Récupère le Principal déposé par le middleware            | 106   |
-// | Handler.teamFor     | Résout la team de la requête selon la portée du token     | 118   |
-// | errorBody           | Forme unique des réponses d'erreur                        | 133   |
-// | whoamiResponse      | Portée du token ajoutée à l'identité résolue              | 138   |
+// | Handler.teamFor     | Résout la team de la requête selon la portée du token     | 129   |
+// | errorBody           | Forme unique des réponses d'erreur                        | 147   |
+// | whoamiResponse      | Portée du token ajoutée à l'identité résolue              | 152   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -115,6 +115,17 @@ func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (auth.Princi
 
 // teamFor résout la team visée. Un token de projet est enfermé dans la sienne ; un token admin
 // doit la désigner explicitement par son slug.
+//
+// UN ADMIN QUI PORTE UNE TEAM Y EST ENFERMÉ, exactement comme un token de projet. Cette forme
+// n'est pas insérable en base depuis la migration 000006, et rien ne la produit — mais une
+// défense qui repose sur une contrainte écrite dans un autre fichier n'est pas une défense.
+// Sans ce garde, la première session qui aura une raison d'épingler un admin à une team (la
+// lecture team-scopée du TUI, l'édition du graphe de confiance) armerait un piège que ni
+// AdminOnly ni les tests d'isolation existants ne voient : POST /tokens?team=<voisin> émettrait
+// un token de projet chez le voisin, secret en clair.
+//
+// Le refus est un ErrNotFound, jamais un 403 : « cette team existe mais pas pour toi » est un
+// oracle qui laisse énumérer les teams de l'installation par balayage de slugs.
 func (h *Handler) teamFor(ctx context.Context, p auth.Principal, slug string) (uuid.UUID, error) {
 	if !p.IsAdmin() {
 		return p.TeamID, nil
@@ -125,6 +136,9 @@ func (h *Handler) teamFor(ctx context.Context, p auth.Principal, slug string) (u
 	team, err := h.svc.TeamBySlug(ctx, slug)
 	if err != nil {
 		return uuid.Nil, err
+	}
+	if p.TeamID != uuid.Nil && team.ID != p.TeamID {
+		return uuid.Nil, service.ErrNotFound
 	}
 	return team.ID, nil
 }

@@ -167,6 +167,73 @@ func TestTokenLifecycle(t *testing.T) {
 	}
 }
 
+// Un token admin ne porte NI team NI projet, et la base le refuse — pas seulement le code.
+//
+// La forme `scope='admin' AND team_id IS NOT NULL` était légale jusqu'à la migration 000006 :
+// rien ne la produisait, donc elle était invisible, et elle armait un piège pour la première
+// session qui aurait une raison de créer un « admin épinglé à une team ». La doctrine du dépôt
+// est de rendre la forme illégale NON INSÉRABLE plutôt que seulement non produite.
+//
+// Le SQL est écrit ici en direct, sans passer par le store : le store n'expose aucun chemin
+// pour créer cette ligne, et c'est justement ce qu'on ne veut pas avoir à croire sur parole.
+//
+// MUTATION : rétablir la contrainte de 000002 (`scope='admin' AND project_id IS NULL`, sans la
+// clause sur team_id) fait passer le premier cas, donc tomber ce test.
+func TestDatabaseRejectsAdminTokenCarryingATeam(t *testing.T) {
+	st, db := newStore(t)
+	team := createTeam(t, st, db)
+
+	project, err := st.CreateProject(context.Background(), team.ID, "CORE", "core")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	interdits := []struct {
+		name      string
+		teamID    any
+		projectID any
+	}{
+		{"admin avec une team", team.ID, nil},
+		{"admin avec un projet", nil, project.ID},
+		{"admin complètement scopé", team.ID, project.ID},
+	}
+
+	for _, tc := range interdits {
+		t.Run(tc.name, func(t *testing.T) {
+			prefix := strings.ToLower(uuid.NewString()[:8]) + "abcd"
+			_, err := db.Exec(
+				`INSERT INTO tokens (scope, team_id, project_id, name, prefix, secret_hash)
+				 VALUES ('admin', $1, $2, 'piège', $3, 'hash-de-test')`,
+				tc.teamID, tc.projectID, prefix,
+			)
+			if err == nil {
+				// La ligne ne devrait jamais exister : on la retire pour ne pas polluer la base
+				// de dev, puis on échoue.
+				_, _ = db.Exec("DELETE FROM tokens WHERE prefix = $1", prefix)
+				t.Fatalf("la base a accepté un token admin (%s) : la contrainte tokens_scope_shape ne borne pas cette forme", tc.name)
+			}
+			if !strings.Contains(err.Error(), "tokens_scope_shape") {
+				t.Errorf("refusé par autre chose que tokens_scope_shape: %v", err)
+			}
+		})
+	}
+
+	// Contre-épreuve : la forme légale, elle, passe. Sans elle, une contrainte qui refuserait
+	// TOUT token admin passerait pour correcte.
+	prefix := strings.ToLower(uuid.NewString()[:8]) + "abcd"
+	if _, err := db.Exec(
+		`INSERT INTO tokens (scope, team_id, project_id, name, prefix, secret_hash)
+		 VALUES ('admin', NULL, NULL, 'admin global', $1, 'hash-de-test')`, prefix,
+	); err != nil {
+		t.Fatalf("la base refuse l'admin global, qui est la seule forme que l'amorçage produit: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := db.Exec("DELETE FROM tokens WHERE prefix = $1", prefix); err != nil {
+			t.Errorf("nettoyage du token %s: %v", prefix, err)
+		}
+	})
+}
+
 // La contrainte de format des clés est portée par la base : la validation applicative donne le
 // message, la base donne la garantie.
 func TestDatabaseRejectsMalformedKey(t *testing.T) {

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict bYyAWbihsZWNh3BGsPydhEBoiBSH2bS1lJ9cpVAIp1o2PUxbBheBVLInZEoVRFZ
+\restrict T6Rj0qrD2bDZIdhNQEJlBacDVnagu1MDxOalxSXsG4G7nKFgSNeK67Kj0L9zGXs
 
 -- Dumped from database version 18.4
 -- Dumped by pg_dump version 18.4
@@ -255,7 +255,7 @@ CREATE TABLE public.tokens (
     scope public.token_scope NOT NULL,
     CONSTRAINT agent_tokens_name_not_blank CHECK ((btrim(name) <> ''::text)),
     CONSTRAINT agent_tokens_prefix_format CHECK ((prefix ~ '^[a-z0-9]{12}$'::text)),
-    CONSTRAINT tokens_scope_shape CHECK ((((scope = 'project'::public.token_scope) AND (team_id IS NOT NULL) AND (project_id IS NOT NULL)) OR ((scope = 'admin'::public.token_scope) AND (project_id IS NULL))))
+    CONSTRAINT tokens_scope_shape CHECK ((((scope = 'project'::public.token_scope) AND (team_id IS NOT NULL) AND (project_id IS NOT NULL)) OR ((scope = 'admin'::public.token_scope) AND (team_id IS NULL) AND (project_id IS NULL))))
 );
 
 
@@ -564,5 +564,5 @@ ALTER TABLE ONLY public.token_cursors
 -- PostgreSQL database dump complete
 --
 
-\unrestrict bYyAWbihsZWNh3BGsPydhEBoiBSH2bS1lJ9cpVAIp1o2PUxbBheBVLInZEoVRFZ
+\unrestrict T6Rj0qrD2bDZIdhNQEJlBacDVnagu1MDxOalxSXsG4G7nKFgSNeK67Kj0L9zGXs
 
