@@ -1,6 +1,12 @@
-# Postgres de développement. Une commande, aucune installation locale :
+# Pile de développement complète. Une commande, aucune installation locale :
 #   docker compose up -d
-# Port 5433 pour ne pas entrer en conflit avec un Postgres déjà installé sur 5432.
+#
+# Trois services enchaînés : Postgres, les migrations, l'API. C'est l'enchaînement qui compte —
+# sans lui, un nouvel arrivant doit installer golang-migrate, comprendre l'ordre des cibles du
+# Makefile et lire la documentation avant d'obtenir quoi que ce soit. Le premier démarrage de
+# l'API affiche le token d'administration, une seule fois : c'est le point d'entrée du produit.
+#
+# Port 5433 pour Postgres, afin de ne pas entrer en conflit avec une installation locale sur 5432.
 #
 # Même version majeure qu'en production (Neon, Postgres 18) : un écart de version majeure entre
 # dev et prod, c'est une classe de bugs qu'on ne voit qu'après déploiement.
@@ -24,6 +30,46 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Service à usage unique : applique les migrations puis sort. L'API attend qu'il ait terminé
+  # avec succès, donc elle ne démarre jamais sur un schéma en retard.
+  #
+  # Ce service existe pour le DÉVELOPPEMENT. En production, les migrations restent une opération
+  # humaine et explicite (`make up-prod`) : les enchaîner à un démarrage de conteneur, c'est
+  # laisser un redéploiement toucher au schéma sans que personne l'ait décidé.
+  migrate:
+    image: migrate/migrate:v4.19.0
+    container_name: flowlio-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./sql/migrations:/migrations:ro
+    command:
+      - -path=/migrations
+      - -database=postgres://flowlio:flowlio@postgres:5432/flowlio?sslmode=disable
+      - up
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flowlio-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      # Le service parle à Postgres par le réseau du compose, donc sur 5432 et par son nom de
+      # service — pas par le 5433 publié sur l'hôte, qui n'existe que vu de l'extérieur.
+      DATABASE_URL: postgres://flowlio:flowlio@postgres:5432/flowlio?sslmode=disable
+      ADDR: ":42058"
+      ENV: dev
+    ports:
+      - "42058:42058"
+    restart: unless-stopped
 
 volumes:
   flowlio-pgdata:

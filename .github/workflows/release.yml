@@ -1,0 +1,75 @@
+# Release — déclenchée par un tag de version, jamais sur push.
+#
+# Le workflow ne fait AUCUN raccourci sur les garde-fous : il rejoue build, vet et tests avant de
+# produire quoi que ce soit. Publier des binaires depuis un arbre qui ne passe pas la CI, c'est
+# distribuer un défaut connu.
+#
+# La release est créée en BROUILLON (voir .goreleaser.yaml) : un tag poussé par erreur ne publie
+# rien au monde entier avant relecture.
+name: Release
+
+on:
+  push:
+    tags:
+      # Uniquement les tags de version. Un tag de travail ne déclenche rien.
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      # Créer la release et téléverser les archives.
+      contents: write
+      # Attestation de provenance : elle rattache les binaires à ce dépôt et à ce tag, ce qu'une
+      # clé privée rangée dans les secrets du dépôt ne prouverait pas.
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # goreleaser lit l'historique pour composer le journal de release : un clone superficiel
+          # le rendrait vide sans erreur.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          # Version lue depuis go.mod, jamais dupliquée ici.
+          go-version-file: go.mod
+          cache: true
+
+      # Les garde-fous d'abord. Les tests d'intégration ne tournent pas ici : ils exigent un
+      # Postgres, et la CI les a déjà passés sur le commit que ce tag désigne.
+      - name: Garde-fous
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+          ./scripts/check-cross-feature-imports.sh
+          ./scripts/check-file-size.sh
+          ./scripts/check-sommaire.sh
+
+      - name: Le tag doit pointer sur un commit de main
+        run: |
+          git fetch origin main --depth=0
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "Le tag ne descend pas de main : release refusée." >&2
+            exit 1
+          fi
+
+      - uses: goreleaser/goreleaser-action@v6
+        id: goreleaser
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attestation de provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.tar.gz

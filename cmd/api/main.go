@@ -127,11 +127,17 @@ func bootstrapLocal(ctx context.Context, queries *database.Queries, addr string)
 		return err
 	}
 
+	// La ligne d'export est donnée prête à coller parce que le chemin nominal du produit passe
+	// par Docker : le fichier d'identifiants est alors écrit DANS le conteneur, où la CLI de
+	// l'hôte ne le lira jamais. Afficher un chemin sans dire quoi en faire laisse l'utilisateur
+	// devant un token qu'il ne sait pas où mettre — c'est exactement là qu'on perd les deux
+	// minutes que ce démarrage doit tenir.
 	fmt.Println("\n  flowlio — première initialisation")
 	fmt.Println("  Token d'administration créé. Il ne sera plus jamais affiché.")
-	fmt.Printf("\n    %s\n\n", token)
-	fmt.Printf("  Enregistré dans %s (0600).\n", path)
-	fmt.Println("  Étape suivante : flowlio init")
+	fmt.Printf("\n    export FLOWLIO_API_URL=%s\n    export FLOWLIO_TOKEN=%s\n\n", apiURL, token)
+	fmt.Printf("  Copie ces deux lignes dans ton terminal, puis :\n")
+	fmt.Println("    flowlio init --team <slug> --project <CLÉ>")
+	fmt.Printf("\n  (Aussi enregistré dans %s, 0600 — inutile si tu passes par Docker.)\n", path)
 
 	return nil
 }

@@ -1,0 +1,21 @@
+# Ce que l'image de build ne doit PAS recevoir.
+#
+# .env en tête de liste : il porte un DSN avec mot de passe. Une image Docker se pousse sur un
+# registre, et chaque couche reste lisible par qui la télécharge — un secret copié ici est un
+# secret publié, même si une couche ultérieure le supprime.
+.env
+.env.*
+!.env.example
+
+# Identifiants locaux, s'ils traînent dans l'arbre.
+credentials.json
+*.pem
+*.key
+
+# Inutile à la compilation, et coûteux à copier.
+.git
+.github
+.claude
+blueprint
+docs
+*.md

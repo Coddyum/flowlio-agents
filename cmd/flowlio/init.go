@@ -4,10 +4,11 @@ package main
 //
 // | Élément    | Résumé                                                           | Ligne |
 // |------------|------------------------------------------------------------------|-------|
-// | runInit    | Prépare team, projet et token d'agent en une seule commande        | 31    |
-// | ensure     | Exécute une création en tolérant l'existence préalable             | 84    |
-// | splitFlags | Sépare options et arguments positionnels, dans n'importe quel ordre| 101   |
-// | printToken | Affiche un token fraîchement émis, avec l'avertissement qui va avec| 121   |
+// | runInit    | Prépare team, projet et token d'agent en une seule commande        | 33    |
+// | announceMCPConfig | Écrit la configuration MCP du dépôt et dit ce qui s'est passé | 96    |
+// | ensure     | Exécute une création en tolérant l'existence préalable             | 117   |
+// | splitFlags | Sépare options et arguments positionnels, dans n'importe quel ordre| 134   |
+// | printToken | Affiche un token fraîchement émis, avec l'avertissement qui va avec| 154   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -18,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/service"
 	"github.com/Coddyum/flowlio-ia/internal/pkg/client"
@@ -75,7 +77,38 @@ func runInit(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("team %s et projet %s prêts.\n", *team, *project)
+
+	// Le .mcp.json est écrit AVANT l'affichage du token : c'est lui qui rend l'agent
+	// opérationnel, et le token affiché n'a de sens qu'une fois qu'on sait où il sera lu.
+	if err := announceMCPConfig(c.BaseURL()); err != nil {
+		return err
+	}
+
 	printToken(created)
+	return nil
+}
+
+// announceMCPConfig écrit la configuration MCP du dépôt courant et dit ce qui s'est passé.
+//
+// Un échec d'écriture N'ANNULE PAS l'init : la team, le projet et le token existent déjà côté
+// serveur, et le token est sur le point d'être affiché pour la seule et unique fois. Avorter ici
+// le perdrait. Le défaut est donc signalé, et la commande continue.
+func announceMCPConfig(apiURL string) error {
+	dir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("répertoire courant introuvable: %w", err)
+	}
+
+	path, written, err := writeMCPConfig(dir, apiURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flowlio: configuration MCP non écrite: %v\n", err)
+		return nil
+	}
+	if written {
+		fmt.Printf("%s écrit — commitable tel quel, il ne contient aucun secret.\n", path)
+	} else {
+		fmt.Printf("%s porte déjà une entrée %q, conservée.\n", path, mcpServerKey)
+	}
 	return nil
 }
 
@@ -119,7 +152,9 @@ func splitFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 // printToken affiche un token émis. C'est la seule occasion de le lire : le serveur n'en garde
 // qu'un hash.
 func printToken(created service.CreatedToken) {
-	fmt.Printf("\ntoken %q pour le projet %s — affiché une seule fois :\n\n    %s\n\n",
+	// La ligne est donnée prête à coller, parce que c'est exactement ce que l'utilisateur va en
+	// faire : le .mcp.json référence ${FLOWLIO_TOKEN}, il faut donc que la variable existe.
+	fmt.Printf("\ntoken %q pour le projet %s — affiché une seule fois, à coller tel quel :\n\n    export FLOWLIO_TOKEN=%s\n\n",
 		created.Name, created.ProjectKey, created.Secret)
-	fmt.Println("À placer dans la configuration MCP de l'agent, jamais dans le dépôt.")
+	fmt.Println("Jamais dans le dépôt : le .mcp.json ne porte que la référence à cette variable.")
 }

@@ -1,0 +1,94 @@
+# Release des binaires. Déclenchée par un tag, jamais à la main.
+#
+# Deux binaires, deux publics : `flowlio` est celui que tout le monde télécharge — la CLI et le
+# serveur MCP. `api` n'est utile qu'à qui héberge son instance sans Docker ; il est publié parce
+# que ne pas le publier obligerait cette personne à installer la chaîne Go.
+#
+# Rien ici ne signe avec une clé : une signature dont la clé privée vit dans les secrets d'un
+# dépôt ne prouve pas grand-chose. L'attestation de provenance est produite par le workflow
+# GitHub (`actions/attest-build-provenance`), qui la rattache à l'identité du dépôt et du tag.
+# Les checksums restent publiés, ils servent à vérifier un téléchargement, pas à authentifier.
+version: 2
+
+project_name: flowlio
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: flowlio
+    main: ./cmd/flowlio
+    binary: flowlio
+    env:
+      # Aucune dépendance à la libc de la machine cible : le binaire doit tourner sur une Alpine
+      # comme sur une Ubuntu.
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      # -trimpath retire les chemins de la machine de build du binaire : ils n'apprennent rien à
+      # l'utilisateur et rendent la compilation non reproductible.
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+
+  - id: api
+    main: ./cmd/api
+    binary: flowlio-api
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+
+archives:
+  - id: default
+    ids: [flowlio, api]
+    # Un nom d'archive qui se lit sans documentation : produit, version, OS, architecture.
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    # Le journal de release s'adresse aux utilisateurs : la plomberie interne n'y a pas sa place.
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  # Une release reste un brouillon jusqu'à relecture humaine : un tag poussé par erreur ne doit
+  # pas publier des binaires au monde entier dans la seconde.
+  draft: true
+  prerelease: auto
+  footer: |
+    ## Installation
+
+    ```sh
+    tar xzf flowlio_{{ .Version }}_<os>_<arch>.tar.gz
+    sudo install flowlio /usr/local/bin/
+    flowlio help
+    ```
+
+    Vérifier le téléchargement :
+
+    ```sh
+    sha256sum -c checksums.txt --ignore-missing
+    ```
+
+    Sous licence AGPL-3.0. Le code de la version publiée est le tag `{{ .Tag }}`.

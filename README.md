@@ -7,9 +7,9 @@ pour se poser des questions entre repos — sans que vous serviez de messager.
 Tout passe par la CLI et par MCP. Pas d'interface web, pas d'IA embarquée : le produit est
 déterministe de bout en bout.
 
-> **État : M1.** Teams, projets, tokens d'agent et authentification sont opérationnels.
-> Les tâches (M2) et les issues inter-projets (M3) arrivent ensuite. Voir
-> [docs/DESIGN-V1.md](docs/DESIGN-V1.md).
+> **État : M3 livré.** Teams, projets, tokens et authentification (M1) ; backlog de tâches et
+> serveur MCP (M2) ; issues inter-projets et inbox d'état (M3). La surface MCP fait neuf outils.
+> Voir [docs/DESIGN-V1.md](docs/DESIGN-V1.md) pour le périmètre et les décisions.
 
 ## Le problème
 
@@ -23,30 +23,54 @@ projet ; seuls les issues et les métadonnées des repos frères traversent.
 
 ## Démarrage
 
-Prérequis : Go 1.26, Docker, [golang-migrate](https://github.com/golang-migrate/migrate),
-[sqlc](https://sqlc.dev).
+Prérequis : **Docker**. C'est tout.
 
 ```bash
 git clone https://github.com/Coddyum/flowlio-ia && cd flowlio-ia
-cp .env.example .env
-make dev-up        # Postgres 18 dans Docker
-make up-dev        # applique les migrations
-make run           # démarre l'API — affiche le token d'administration, une seule fois
+docker compose up -d
+docker compose logs api        # affiche le token d'administration, une seule fois
 ```
 
-Puis, dans un autre terminal :
+Trois conteneurs s'enchaînent : Postgres, les migrations, l'API. Les logs affichent deux lignes
+prêtes à coller — copiez-les dans votre terminal :
 
 ```bash
-go run ./cmd/flowlio init --team omiros --project CORE --project-name omiros-core
+export FLOWLIO_API_URL=http://localhost:42058
+export FLOWLIO_TOKEN=flw_<prefix>_<secret>
 ```
 
-La commande crée la team, le projet et un token d'agent. Le token s'affiche une fois : placez-le
-dans la configuration MCP de votre agent, **jamais dans le dépôt**.
+Installez la CLI depuis la [dernière release](https://github.com/Coddyum/flowlio-ia/releases)
+(`flowlio_<version>_<os>_<arch>.tar.gz`), puis, **à la racine du repo à suivre** :
 
 ```bash
-go run ./cmd/flowlio whoami          # identité du token courant
-go run ./cmd/flowlio project list    # repos de la team
-go run ./cmd/flowlio token list CORE
+flowlio init --team omiros --project CORE --project-name omiros-core
+```
+
+La commande crée la team, le projet et un token d'agent, et écrit un `.mcp.json` dans le repo.
+Elle réaffiche une ligne `export FLOWLIO_TOKEN=…` : c'est le token de **l'agent**, il remplace
+celui de l'administration.
+
+Votre agent voit désormais flowlio. Vérifiez :
+
+```bash
+flowlio task create "première tâche"
+flowlio task list
+```
+
+> **Le `.mcp.json` est fait pour être commité, et il ne contient aucun secret.** Il référence
+> `${FLOWLIO_TOKEN}`, que l'agent résout depuis son environnement. Un token dans un fichier
+> versionné, c'est un identifiant publié sur GitHub — le `.mcp.json` écrit par `flowlio init`
+> n'en contiendra jamais, et un test le vérifie sur le texte du fichier.
+
+Un fichier `.mcp.json` déjà présent est **complété**, pas remplacé : vos autres serveurs MCP
+survivent, et une entrée `flowlio` déjà réglée à la main est laissée telle quelle.
+
+### Sans Docker
+
+```bash
+cp .env.example .env          # DATABASE_URL vers votre Postgres 18
+make up-dev                   # migrations (nécessite golang-migrate)
+make run                      # démarre l'API
 ```
 
 ## Modèle

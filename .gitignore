@@ -3,6 +3,9 @@
 /tmp/
 flowlio-ia
 
+# Artefacts de release produits par goreleaser
+/dist/
+
 # Env
 .env
 .env.*

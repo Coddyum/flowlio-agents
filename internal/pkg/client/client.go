@@ -4,12 +4,13 @@ package client
 //
 // | Élément     | Résumé                                                            | Ligne |
 // |-------------|-------------------------------------------------------------------|-------|
-// | APIError    | Erreur renvoyée par l'API, avec son code HTTP                       | 36    |
-// | APIError.Error | Message lisible de l'erreur API                                  | 42    |
-// | Client      | Client HTTP de l'API flowlio, partagé par la CLI et le serveur MCP  | 50    |
-// | New         | Crée un client vers une API et un token donnés                      | 57    |
-// | FromCredentials | Crée un client à partir des identifiants locaux                 | 67    |
-// | Client.Do   | Exécute une requête JSON et décode la réponse                       | 81    |
+// | APIError    | Erreur renvoyée par l'API, avec son code HTTP                       | 37    |
+// | APIError.Error | Message lisible de l'erreur API                                  | 43    |
+// | Client      | Client HTTP de l'API flowlio, partagé par la CLI et le serveur MCP  | 51    |
+// | New         | Crée un client vers une API et un token donnés                      | 58    |
+// | Client.BaseURL | Adresse de l'API, sans slash final                               | 68    |
+// | FromCredentials | Crée un client à partir des identifiants locaux                 | 74    |
+// | Client.Do   | Exécute une requête JSON et décode la réponse                       | 88    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -60,6 +61,12 @@ func New(baseURL, token string) *Client {
 		token:   token,
 		http:    &http.Client{Timeout: requestTimeout},
 	}
+}
+
+// BaseURL renvoie l'adresse de l'API, sans slash final. Le token, lui, n'est jamais exposé :
+// c'est un secret, et rien hors de ce paquet n'a de raison de le relire.
+func (c *Client) BaseURL() string {
+	return c.baseURL
 }
 
 // FromCredentials crée un client à partir du fichier d'identifiants local, ou des variables
