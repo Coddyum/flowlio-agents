@@ -4,9 +4,14 @@
 > client, empreinte serveur, produit, sécurité — chacun critiqué par un agent adversarial), puis
 > vérifiée par exécution contre la base de dev.
 >
-> **Statut : proposition de NE RIEN CONSTRUIRE, en attente d'arbitrage (FLWL-14).**
-> Ce document existe pour que la session suivante n'ait pas à refaire l'analyse, et pour que le
-> refus soit contestable sur des faits plutôt que réimprovisé.
+> **Statut : DÉCISION ACTÉE le 2026-08-02 par Maxence — aucune déduplication ne sera construite.**
+> Motif retenu : « jouer sur quelques millisecondes est ridicule ». Ce document existe pour que
+> la session suivante n'ait pas à refaire l'analyse, et pour que la décision soit contestable sur
+> des faits plutôt que réimprovisée.
+>
+> Ce qui rouvrirait le sujet : un client MCP qui **rejoue mécaniquement** un appel d'outil dont la
+> réponse s'est perdue. Aucun ne le fait aujourd'hui ; le jour où l'un le fait, la variante à
+> retenir est l'empreinte du contenu sur une fenêtre courte, et rien d'autre.
 
 ---
 
