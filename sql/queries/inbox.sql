@@ -87,3 +87,9 @@ VALUES (@token_id, @last_event_id)
 ON CONFLICT (token_id) DO UPDATE
 SET last_event_id = GREATEST(token_cursors.last_event_id, EXCLUDED.last_event_id),
     updated_at    = now();
+
+-- InboxProjectKey résout la clé du projet du token, nécessaire pour composer les références
+-- lisibles (CORE-34) de ses propres tâches et des issues qui lui sont adressées.
+-- Scopée par team_id comme toute lecture de projet, même si l'identifiant vient déjà du token.
+-- name: InboxProjectKey :one
+SELECT key FROM projects WHERE id = $1 AND team_id = $2;

@@ -67,6 +67,25 @@ func (q *Queries) InboxCursor(ctx context.Context, arg InboxCursorParams) (Inbox
 	return i, err
 }
 
+const inboxProjectKey = `-- name: InboxProjectKey :one
+SELECT key FROM projects WHERE id = $1 AND team_id = $2
+`
+
+type InboxProjectKeyParams struct {
+	ID     uuid.UUID `json:"id"`
+	TeamID uuid.UUID `json:"team_id"`
+}
+
+// InboxProjectKey résout la clé du projet du token, nécessaire pour composer les références
+// lisibles (CORE-34) de ses propres tâches et des issues qui lui sont adressées.
+// Scopée par team_id comme toute lecture de projet, même si l'identifiant vient déjà du token.
+func (q *Queries) InboxProjectKey(ctx context.Context, arg InboxProjectKeyParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, inboxProjectKey, arg.ID, arg.TeamID)
+	var key string
+	err := row.Scan(&key)
+	return key, err
+}
+
 const listInProgressTasks = `-- name: ListInProgressTasks :many
 SELECT t.number, t.title, t.priority, t.updated_at
 FROM tasks t
