@@ -46,7 +46,7 @@ Le middleware d'une feature (auth…) se lie une seule fois dans son `module.go`
 | Clé module  | Domaine                          | Routes                                                                                                            | Dépendances inter-modules |
 | ----------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------- |
 | `workspace` | teams, projets, tokens d'agent    | `/api/workspace` : `POST/GET /teams`, `POST/GET /projects`, `POST/GET /tokens`, `DELETE /tokens/{id}`, `GET /whoami` | aucune                    |
-| `task`      | backlog d'un projet + notes       | `/api/task` : `POST/GET /`, `GET/PATCH /{number}`, `POST /{number}/archive`                                         | aucune                    |
+| `task`      | backlog d'un projet + notes       | `/api/task` : `POST/GET /`, `GET/PATCH /{number}` — **une seule route d'écriture** : note et archivage sont des champs du PATCH | aucune                    |
 | `issue`     | questions inter-projets + fil     | `/api/issue` : `POST/GET /`, `GET /{project}/{number}`, `POST /{project}/{number}/answer`                           | aucune                    |
 | `inbox`     | état actionnable du projet        | `/api/inbox` : `GET /`                                                                                              | aucune                    |
 

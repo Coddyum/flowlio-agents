@@ -27,6 +27,11 @@ type fakeStore struct {
 	// seul endroit d'où on peut vérifier qu'il n'en réclame pas la totalité.
 	noteLimit int32
 
+	// archived reproduit la clause `archived_at IS NULL` que portent les VRAIES queries d'écriture.
+	// Sans elle, ce double accepterait une note sur une tâche archivée là où Postgres la refuse,
+	// et l'ordre des écritures dans UpdateTask ne serait vérifié par rien.
+	archived bool
+
 	// txCalls compte les ouvertures de transaction. C'est ce qui prouve qu'une écriture composée
 	// en ouvre une, et qu'une écriture simple n'en paie pas le coût.
 	txCalls int
@@ -80,15 +85,14 @@ func (f *fakeStore) UpdateTask(_ context.Context, patch store.TaskPatch) (store.
 	if f.writeErr != nil {
 		return store.Task{}, f.writeErr
 	}
-	f.lastPatch = patch
-	return store.Task{Number: patch.Number, Title: "tâche", Status: "todo", Priority: "normal"}, nil
-}
-
-func (f *fakeStore) ArchiveTask(_ context.Context, _, _ uuid.UUID, number int64) (store.Task, error) {
-	if f.writeErr != nil {
-		return store.Task{}, f.writeErr
+	if f.archived {
+		return store.Task{}, store.ErrNotFound
 	}
-	return store.Task{Number: number}, nil
+	f.lastPatch = patch
+	if patch.Archive {
+		f.archived = true
+	}
+	return store.Task{Number: patch.Number, Title: "tâche", Status: "todo", Priority: "normal"}, nil
 }
 
 func (f *fakeStore) AddNote(_ context.Context, _, _ uuid.UUID, _ int64, body string) (store.Note, error) {
@@ -97,6 +101,9 @@ func (f *fakeStore) AddNote(_ context.Context, _, _ uuid.UUID, _ int64, body str
 	}
 	if f.writeErr != nil {
 		return store.Note{}, f.writeErr
+	}
+	if f.archived {
+		return store.Note{}, store.ErrNotFound
 	}
 	f.lastNote = body
 	return store.Note{Body: body}, nil
@@ -178,8 +185,8 @@ func TestScopeIsRequiredEverywhere(t *testing.T) {
 			_, err := s.UpdateTask(ctx, service.UpdateTaskInput{ProjectID: id, Number: 1, Note: &note})
 			return err
 		},
-		"ArchiveTask": func(s service.Service) error {
-			_, err := s.ArchiveTask(ctx, uuid.Nil, id, 1)
+		"UpdateTask (archive)": func(s service.Service) error {
+			_, err := s.UpdateTask(ctx, service.UpdateTaskInput{ProjectID: id, Number: 1, Archive: true})
 			return err
 		},
 	}
@@ -429,8 +436,10 @@ func TestStoreErrorsAreTranslated(t *testing.T) {
 	}
 
 	fake.writeErr = store.ErrConflict
-	if _, err := svc.ArchiveTask(context.Background(), teamID, projectID, 42); !errors.Is(err, service.ErrConflict) {
-		t.Errorf("ArchiveTask: erreur = %v, attendu ErrConflict", err)
+	if _, err := svc.UpdateTask(context.Background(), service.UpdateTaskInput{
+		TeamID: teamID, ProjectID: projectID, Number: 42, Archive: true,
+	}); !errors.Is(err, service.ErrConflict) {
+		t.Errorf("UpdateTask(archive): erreur = %v, attendu ErrConflict", err)
 	}
 }
 
@@ -500,5 +509,38 @@ func TestGetTaskAsksForABoundedThread(t *testing.T) {
 	if detail.NotesTotal != 42 {
 		t.Errorf("notes_total = %d, attendu 42 : l'agent ne sait pas qu'il ne lit qu'une fenêtre",
 			detail.NotesTotal)
+	}
+}
+
+// « Passe en done, voilà pourquoi, et archive » est UNE écriture, et la note s'écrit d'abord.
+//
+// L'ordre n'est pas indifférent depuis que l'archivage est un champ du patch : patcher d'abord
+// ferme la tâche, et l'écriture de la note — dont la query porte `archived_at IS NULL` — est
+// refusée derrière. L'appel le plus courant d'une fin de session échouerait entièrement.
+//
+// MUTATION : remettre `tx.UpdateTask` avant `tx.AddNote` fait tomber ce test.
+func TestEndOfTaskWritesTheNoteBeforeArchiving(t *testing.T) {
+	svc, fake, teamID, projectID := newService()
+
+	done := "done"
+	note := "livré"
+	task, err := svc.UpdateTask(context.Background(), service.UpdateTaskInput{
+		TeamID: teamID, ProjectID: projectID, Number: 1,
+		Status: &done, Note: &note, Archive: true,
+	})
+	if err != nil {
+		t.Fatalf("fin de tâche: %v", err)
+	}
+	if task.Number != 1 {
+		t.Errorf("numéro = %d, attendu 1", task.Number)
+	}
+	if fake.lastNote != "livré" {
+		t.Errorf("note écrite = %q, attendu « livré »", fake.lastNote)
+	}
+	if !fake.lastPatch.Archive {
+		t.Error("le patch ne porte pas l'archivage : c'est un second aller-retour qui revient")
+	}
+	if fake.txCalls != 1 {
+		t.Errorf("%d transactions, attendu 1 : les deux écritures doivent tenir ensemble", fake.txCalls)
 	}
 }

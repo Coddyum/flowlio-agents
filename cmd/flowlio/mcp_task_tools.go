@@ -8,10 +8,10 @@ package main
 // | mcpServer.get           | Résout une référence, qu'elle soit tâche ou issue       | 82    |
 // | mcpServer.createTask    | Ouvre une tâche et renvoie sa clé                       | 134   |
 // | mcpServer.updateTask    | Modifie une tâche, la note, ou l'archive                | 173   |
-// | mcpServer.numberFromKey | Résout une clé lisible dans le projet du token          | 244   |
-// | mcpServer.taskPath      | Compose le chemin d'API d'une tâche                     | 267   |
-// | mcpServer.taskRef       | Compose la référence lisible d'un numéro                | 272   |
-// | mcpServer.withRefs      | Ajoute sa référence à chaque tâche d'un listing         | 280   |
+// | mcpServer.numberFromKey | Résout une clé lisible dans le projet du token          | 240   |
+// | mcpServer.taskPath      | Compose le chemin d'API d'une tâche                     | 263   |
+// | mcpServer.taskRef       | Compose la référence lisible d'un numéro                | 268   |
+// | mcpServer.withRefs      | Ajoute sa référence à chaque tâche d'un listing         | 276   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -191,9 +191,13 @@ func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, 
 		return nil, err
 	}
 
-	// Le patch part avant l'archivage : archiver d'abord rendrait la tâche non modifiable, et le
-	// même appel échouerait à moitié. La note suit le même chemin, donc elle est écrite tant que
-	// la tâche est encore active.
+	// UNE SEULE requête, quoi que l'agent demande.
+	//
+	// Le statut, la note et l'archivage voyagent dans le même PATCH, donc dans la même
+	// transaction. L'archivage était un second aller-retour : une panne entre les deux commitait
+	// la note sans archiver, l'agent lisait `api: internal error` et rejouait — ce qui écrivait la
+	// note une SECONDE fois. Ce n'est pas de la déduplication (docs/DECISION-idempotence.md reste
+	// en vigueur) : c'est une couture non atomique qu'on retire.
 	//
 	// L'échéance est jugée sur sa forme TAILLÉE, comme dans parseDeadline. Les deux bornes ont
 	// divergé un temps — ici `!= ""`, là-bas `TrimSpace(...) == ""` — et une échéance faite de
@@ -201,37 +205,29 @@ func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, 
 	// TOUS les champs à nil, l'API rendait la tâche inchangée, et l'agent lisait un succès en
 	// croyant avoir posé une échéance. Une échéance faite de blancs est une échéance absente,
 	// partout et de la même façon.
-	var task taskservice.Task
-	if in.Title != nil || in.Body != nil || in.Status != nil || in.Priority != nil ||
-		strings.TrimSpace(in.Deadline) != "" || in.ClearDeadline || in.Note != nil {
-
-		payload := taskservice.UpdateTaskInput{
-			Title:         in.Title,
-			Body:          in.Body,
-			Status:        in.Status,
-			Priority:      in.Priority,
-			ClearDeadline: in.ClearDeadline,
-			Note:          in.Note,
-		}
-		deadline, err := parseDeadline(in.Deadline)
-		if err != nil {
-			return nil, err
-		}
-		payload.Deadline = deadline
-
-		if err := s.api.Do(ctx, http.MethodPatch, s.taskPath(number), payload, &task); err != nil {
-			return nil, err
-		}
-	}
-
-	if in.Archive {
-		if err := s.api.Do(ctx, http.MethodPost, s.taskPath(number)+"/archive", nil, &task); err != nil {
-			return nil, err
-		}
-	}
-
-	if task.Number == 0 {
+	if in.Title == nil && in.Body == nil && in.Status == nil && in.Priority == nil &&
+		strings.TrimSpace(in.Deadline) == "" && !in.ClearDeadline && in.Note == nil && !in.Archive {
 		return nil, errors.New("aucune modification demandée")
+	}
+
+	payload := taskservice.UpdateTaskInput{
+		Title:         in.Title,
+		Body:          in.Body,
+		Status:        in.Status,
+		Priority:      in.Priority,
+		ClearDeadline: in.ClearDeadline,
+		Note:          in.Note,
+		Archive:       in.Archive,
+	}
+	deadline, err := parseDeadline(in.Deadline)
+	if err != nil {
+		return nil, err
+	}
+	payload.Deadline = deadline
+
+	var task taskservice.Task
+	if err := s.api.Do(ctx, http.MethodPatch, s.taskPath(number), payload, &task); err != nil {
+		return nil, err
 	}
 	return writeResult("task", s.taskRef(task.Number), task), nil
 }

@@ -223,13 +223,17 @@ func TestUpdateTaskSendsARealDeadline(t *testing.T) {
 	}
 }
 
-// L'archivage reste un SECOND aller-retour, après le patch et dans cet ordre.
+// La fin de vie d'une tâche tient dans UNE requête : statut, note et archivage ensemble.
 //
-// Ce test fige un fait connu et documenté (FLWL-24) plutôt qu'une intention : archiver d'abord
-// rendrait la tâche non modifiable et ferait échouer le même appel à moitié. Si le jour vient où
-// l'archivage est replié dans le PATCH, ce test doit tomber — c'est ce qui rendra le changement
-// visible au lieu de silencieux.
-func TestUpdateTaskArchiveIsASecondRequestAfterThePatch(t *testing.T) {
+// Ce test a d'abord figé l'inverse — deux requêtes, un PATCH puis un POST /archive — parce que
+// c'était l'état du code. Il est tombé quand l'archivage a été replié (FLWL-24), et c'est
+// exactement ce qu'on lui demandait : rendre le changement visible au lieu de silencieux.
+//
+// Ce que la seconde requête coûtait : une panne entre les deux commitait la note sans archiver,
+// l'agent lisait `api: internal error` et rejouait — ce qui écrivait la note une SECONDE fois.
+//
+// MUTATION : ressortir l'archivage en `POST .../archive` fait tomber ce test sur le compte.
+func TestUpdateTaskArchivesInTheSameRequest(t *testing.T) {
 	srv, rec := newRecordingServer(t, taskAPIReply)
 
 	if _, err := srv.updateTask(context.Background(),
@@ -237,18 +241,58 @@ func TestUpdateTaskArchiveIsASecondRequestAfterThePatch(t *testing.T) {
 		t.Fatalf("update_task: %v", err)
 	}
 
-	got := rec.all()
-	if len(got) != 2 {
-		t.Fatalf("%d requêtes, attendu 2 (patch puis archive): %+v", len(got), got)
+	req := rec.only(t)
+	if req.Method != http.MethodPatch || req.Path != "/api/task/34" {
+		t.Fatalf("requête = %s %s, attendu PATCH /api/task/34", req.Method, req.Path)
 	}
-	if got[0].Method != http.MethodPatch || got[0].Path != "/api/task/34" {
-		t.Errorf("requête 1 = %s %s, attendu PATCH /api/task/34", got[0].Method, got[0].Path)
+
+	fields := req.fields(t)
+	for key, want := range map[string]any{"status": "done", "note": "livré", "archive": true} {
+		if fields[key] != want {
+			t.Errorf("%s envoyé = %v, attendu %v : les trois doivent voyager ensemble",
+				key, fields[key], want)
+		}
 	}
-	if got[1].Method != http.MethodPost || got[1].Path != "/api/task/34/archive" {
-		t.Errorf("requête 2 = %s %s, attendu POST /api/task/34/archive", got[1].Method, got[1].Path)
+}
+
+// L'archivage SEUL est un appel valide, et reste une seule requête.
+func TestUpdateTaskArchiveOnlyIsOneRequest(t *testing.T) {
+	srv, rec := newRecordingServer(t, taskAPIReply)
+
+	if _, err := srv.updateTask(context.Background(),
+		json.RawMessage(`{"ref":"CORE-34","archive":true}`)); err != nil {
+		t.Fatalf("update_task: %v", err)
 	}
-	if fields := got[0].fields(t); fields["note"] != "livré" {
-		t.Errorf("la note ne part pas avec le patch: %v", fields["note"])
+
+	req := rec.only(t)
+	if req.Method != http.MethodPatch || req.Path != "/api/task/34" {
+		t.Fatalf("requête = %s %s, attendu PATCH /api/task/34", req.Method, req.Path)
+	}
+	if got := req.fields(t)["archive"]; got != true {
+		t.Errorf("archive envoyé = %v, attendu true", got)
+	}
+}
+
+// La CLI `flowlio task archive` emprunte le même chemin unique que l'agent.
+//
+// MUTATION : la renvoyer sur `POST /api/task/34/archive` fait tomber ce test sur la méthode, le
+// chemin et le corps.
+func TestTaskArchiveCLIPatchesTheTask(t *testing.T) {
+	api, rec := newRecordingAPI(t, taskAPIReply)
+
+	if err := taskArchive(context.Background(), api, []string{"CORE-34"}); err != nil {
+		t.Fatalf("task archive: %v", err)
+	}
+
+	req := rec.only(t)
+	if req.Method != http.MethodPatch {
+		t.Errorf("méthode = %s, attendu PATCH", req.Method)
+	}
+	if req.Path != "/api/task/34" {
+		t.Errorf("chemin = %s, attendu /api/task/34", req.Path)
+	}
+	if got := req.fields(t)["archive"]; got != true {
+		t.Errorf("archive envoyé = %v, attendu true", got)
 	}
 }
 

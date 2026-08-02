@@ -4,21 +4,25 @@ package service
 //
 // | Élément         | Résumé                                                        | Ligne |
 // |-----------------|---------------------------------------------------------------|-------|
-// | Service         | Contrat consommé par le handler task                            | 44    |
-// | service         | Implémentation, dépendante de l'interface store                 | 63    |
-// | New             | Crée le service task                                            | 68    |
-// | Task            | Une tâche telle qu'exposée par l'API                            | 74    |
-// | Note            | Une note de progression exposée par l'API                       | 87    |
-// | TaskDetail      | Une tâche et son fil de notes                                   | 98    |
-// | CreateTaskInput | Entrée de création d'une tâche                                  | 106   |
-// | ListTasksInput  | Critères de lecture du backlog                                  | 121   |
-// | UpdateTaskInput | Patch partiel d'une tâche, note de progression comprise         | 134   |
+// | Service         | Contrat consommé par le handler task                            | 48    |
+// | service         | Implémentation, dépendante de l'interface store                 | 64    |
+// | New             | Crée le service task                                            | 69    |
+// | Task            | Une tâche telle qu'exposée par l'API                            | 75    |
+// | Note            | Une note de progression exposée par l'API                       | 88    |
+// | TaskDetail      | Une tâche et son fil de notes                                   | 99    |
+// | CreateTaskInput | Entrée de création d'une tâche                                  | 107   |
+// | ListTasksInput  | Critères de lecture du backlog                                  | 122   |
+// | UpdateTaskInput | Patch partiel d'une tâche, note de progression comprise         | 135   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
 // CONTRAT UNIQUEMENT — les implémentations sont dans create_task.go, list_tasks.go,
-// get_task.go, update_task.go et archive_task.go.
+// get_task.go et update_task.go.
+//
+// Il n'y a PAS de méthode d'archivage : archiver est un champ d'UpdateTask, écrit dans la même
+// transaction que le reste. Une seule écriture sur une tâche, donc une seule surface à sécuriser
+// et aucune couture non atomique entre deux appels.
 
 import (
 	"context"
@@ -54,9 +58,6 @@ type Service interface {
 	// seule écriture, qui réussit ou échoue d'un bloc.
 	UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, error)
 
-	// ArchiveTask sort une tâche du backlog actif sans la supprimer : l'historique d'un repo se
-	// range, il ne s'efface pas.
-	ArchiveTask(ctx context.Context, teamID, projectID uuid.UUID, number int64) (Task, error)
 }
 
 // service dépend de l'interface store, jamais de sqlc.
@@ -151,4 +152,12 @@ type UpdateTaskInput struct {
 	// sans son motif, et coûtaient un aller-retour de plus à chaque tour.
 	// Une chaîne vide est refusée : une note sans contenu n'apprend rien à la session suivante.
 	Note *string `json:"note"`
+
+	// Archive sort la tâche du backlog actif, dans la MÊME écriture que le reste du patch.
+	//
+	// Champ et non opération séparée, pour la raison qui a replié la note : l'archivage était un
+	// second aller-retour HTTP, et l'atomicité s'arrêtait à cette frontière. Une panne entre les
+	// deux commitait la note sans archiver, l'agent lisait une erreur et rejouait — ce qui écrivait
+	// la note une seconde fois. Replié, l'appel réussit ou échoue d'un bloc.
+	Archive bool `json:"archive"`
 }

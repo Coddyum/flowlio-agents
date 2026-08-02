@@ -9,7 +9,6 @@ package store
 // | store.TaskByNumber | Lit une tâche par son numéro, scopée team + projet            | 70    |
 // | store.ListTasks    | Lit le backlog du projet selon un filtre                      | 83    |
 // | store.UpdateTask   | Applique un patch partiel à une tâche active                  | 104   |
-// | store.ArchiveTask  | Sort une tâche du backlog actif                               | 123   |
 // | toTask             | Projette une ligne générée en type domaine                    | 136   |
 // | nullTime           | Convertit un pointeur de date en paramètre nullable           | 154   |
 // | fromNullTime       | Convertit une date nullable lue en base en pointeur            | 162   |
@@ -112,22 +111,10 @@ func (s *store) UpdateTask(ctx context.Context, patch TaskPatch) (Task, error) {
 		Priority:      nullPriorityPtr(patch.Priority),
 		Deadline:      nullTime(patch.Deadline),
 		ClearDeadline: patch.ClearDeadline,
+		Archive:       patch.Archive,
 	})
 	if err != nil {
 		return Task{}, translate(err, "update task")
-	}
-	return toTask(row), nil
-}
-
-// ArchiveTask sort une tâche du backlog actif. Rejouer l'archivage remonte ErrNotFound.
-func (s *store) ArchiveTask(ctx context.Context, teamID, projectID uuid.UUID, number int64) (Task, error) {
-	row, err := s.q.ArchiveTask(ctx, database.ArchiveTaskParams{
-		TeamID:    teamID,
-		ProjectID: projectID,
-		Number:    number,
-	})
-	if err != nil {
-		return Task{}, translate(err, "archive task")
 	}
 	return toTask(row), nil
 }

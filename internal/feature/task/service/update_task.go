@@ -32,6 +32,7 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 		Number:        in.Number,
 		Deadline:      in.Deadline,
 		ClearDeadline: in.ClearDeadline,
+		Archive:       in.Archive,
 	}
 
 	if in.Title != nil {
@@ -79,16 +80,23 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 		return Task{}, err
 	}
 
-	// Le patch et la note partagent une transaction : la tâche archivée entre les deux, ou une
-	// note refusée, annulent l'ensemble. Le scope reste porté par chacune des deux queries — la
-	// transaction garantit l'atomicité, jamais la visibilité.
+	// La note s'écrit AVANT le patch, et cet ordre n'est pas indifférent : depuis que l'archivage
+	// est un champ du patch, patcher d'abord archiverait la tâche, et CreateTaskNote — dont la
+	// query porte `t.archived_at IS NULL` — refuserait d'écrire dans le fil d'une tâche qu'on vient
+	// de fermer. L'appel le plus courant d'une fin de session, « passe en done, voilà pourquoi, et
+	// archive », échouerait entièrement. Écrite d'abord, la note entre pendant que la tâche est
+	// encore active, ce qui est exactement le moment où elle a un sens.
+	//
+	// Les deux partagent une transaction : une note refusée, ou une tâche archivée entre-temps,
+	// annulent l'ensemble. Le scope reste porté par chacune des deux queries — la transaction
+	// garantit l'atomicité, jamais la visibilité.
 	var updated store.Task
 	err := s.store.WithTx(ctx, func(tx store.Store) error {
-		var err error
-		if updated, err = tx.UpdateTask(ctx, patch); err != nil {
+		if _, err := tx.AddNote(ctx, in.TeamID, in.ProjectID, in.Number, note); err != nil {
 			return err
 		}
-		_, err = tx.AddNote(ctx, in.TeamID, in.ProjectID, in.Number, note)
+		var err error
+		updated, err = tx.UpdateTask(ctx, patch)
 		return err
 	})
 	if err != nil {

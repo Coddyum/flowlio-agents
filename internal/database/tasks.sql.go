@@ -13,44 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const archiveTask = `-- name: ArchiveTask :one
-UPDATE tasks
-SET archived_at = now(),
-    updated_at  = now()
-WHERE team_id = $1
-  AND project_id = $2
-  AND number = $3
-  AND archived_at IS NULL
-RETURNING id, team_id, project_id, number, title, body_md, status, priority, deadline, created_at, updated_at, archived_at
-`
-
-type ArchiveTaskParams struct {
-	TeamID    uuid.UUID `json:"team_id"`
-	ProjectID uuid.UUID `json:"project_id"`
-	Number    int64     `json:"number"`
-}
-
-// Rejouer l'archivage remonte ErrNotFound : la query ne cible que les tâches encore actives.
-func (q *Queries) ArchiveTask(ctx context.Context, arg ArchiveTaskParams) (Task, error) {
-	row := q.db.QueryRowContext(ctx, archiveTask, arg.TeamID, arg.ProjectID, arg.Number)
-	var i Task
-	err := row.Scan(
-		&i.ID,
-		&i.TeamID,
-		&i.ProjectID,
-		&i.Number,
-		&i.Title,
-		&i.BodyMd,
-		&i.Status,
-		&i.Priority,
-		&i.Deadline,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ArchivedAt,
-	)
-	return i, err
-}
-
 const createTask = `-- name: CreateTask :one
 
 INSERT INTO tasks (team_id, project_id, number, title, body_md, status, priority, deadline)
@@ -319,18 +281,19 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 
 const updateTask = `-- name: UpdateTask :one
 UPDATE tasks
-SET title      = COALESCE($1, title),
-    body_md    = COALESCE($2, body_md),
-    status     = COALESCE($3::task_status, status),
-    priority   = COALESCE($4::task_priority, priority),
-    deadline   = CASE
-                     WHEN $5::boolean THEN NULL
-                     ELSE COALESCE($6, deadline)
-                 END,
-    updated_at = now()
-WHERE team_id = $7
-  AND project_id = $8
-  AND number = $9
+SET title       = COALESCE($1, title),
+    body_md     = COALESCE($2, body_md),
+    status      = COALESCE($3::task_status, status),
+    priority    = COALESCE($4::task_priority, priority),
+    deadline    = CASE
+                      WHEN $5::boolean THEN NULL
+                      ELSE COALESCE($6, deadline)
+                  END,
+    archived_at = CASE WHEN $7::boolean THEN now() ELSE archived_at END,
+    updated_at  = now()
+WHERE team_id = $8
+  AND project_id = $9
+  AND number = $10
   AND archived_at IS NULL
 RETURNING id, team_id, project_id, number, title, body_md, status, priority, deadline, created_at, updated_at, archived_at
 `
@@ -342,6 +305,7 @@ type UpdateTaskParams struct {
 	Priority      NullTaskPriority `json:"priority"`
 	ClearDeadline bool             `json:"clear_deadline"`
 	Deadline      sql.NullTime     `json:"deadline"`
+	Archive       bool             `json:"archive"`
 	TeamID        uuid.UUID        `json:"team_id"`
 	ProjectID     uuid.UUID        `json:"project_id"`
 	Number        int64            `json:"number"`
@@ -359,6 +323,19 @@ type UpdateTaskParams struct {
 // a réellement touché en dernier. L'ancien POST /notes ne le déplaçait pas — c'était l'anomalie,
 // pas la référence : il laissait une tâche travaillée pendant une heure au fond de la pile.
 // Ce qui n'allait pas, c'est que ce changement de comportement soit arrivé sans être décidé.
+// L'ARCHIVAGE est un champ de ce patch, et non plus une query à part.
+//
+// Il l'était, et l'outil MCP faisait alors DEUX requêtes HTTP : un PATCH puis un POST /archive.
+// L'atomicité gagnée en repliant la note s'arrêtait à cette frontière. Panne entre les deux : la
+// note était commitée, l'archivage non, l'agent lisait `api: internal error` et rejouait — ce qui
+// écrivait la note une SECONDE fois. Doublon silencieux, sur le chemin de fin de tâche.
+// Replié ici, l'appel entier réussit ou échoue d'un bloc : un rejeu écrit la note une fois, ou
+// rend ErrNotFound sur une tâche déjà archivée. Jamais deux.
+// Ce n'est PAS de la déduplication — docs/DECISION-idempotence.md reste en vigueur : on supprime
+// une couture non atomique, on n'ajoute aucune clé d'idempotence.
+//
+// Rejouer l'archivage remonte ErrNotFound : la clause archived_at IS NULL ne cible que les tâches
+// encore actives, et c'est le même ErrNotFound qu'un numéro inexistant.
 func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, error) {
 	row := q.db.QueryRowContext(ctx, updateTask,
 		arg.Title,
@@ -367,6 +344,7 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, e
 		arg.Priority,
 		arg.ClearDeadline,
 		arg.Deadline,
+		arg.Archive,
 		arg.TeamID,
 		arg.ProjectID,
 		arg.Number,

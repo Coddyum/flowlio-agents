@@ -9,9 +9,9 @@ package store
 // | NewTask    | Données d'insertion d'une tâche, numéro déjà réservé                 | 67    |
 // | TaskFilter | Critères de lecture du backlog d'un projet                           | 80    |
 // | TaskPatch  | Patch partiel d'une tâche : un champ nil laisse la valeur en place   | 92    |
-// | Store      | Contrat de persistance de la feature task                            | 110   |
-// | store      | Implémentation adossée aux queries générées par sqlc                 | 134   |
-// | New        | Crée le store task                                                   | 143   |
+// | Store      | Contrat de persistance de la feature task                            | 115   |
+// | store      | Implémentation adossée aux queries générées par sqlc                 | 139   |
+// | New        | Crée le store task                                                   | 148   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -101,6 +101,11 @@ type TaskPatch struct {
 
 	Deadline      *time.Time
 	ClearDeadline bool
+
+	// Archive sort la tâche du backlog actif, dans la MÊME écriture que le reste du patch.
+	// Ce n'est pas une commodité : séparé, l'archivage était un second aller-retour, et une panne
+	// entre les deux faisait rejouer à l'agent une note déjà écrite.
+	Archive bool
 }
 
 // Store est le contrat consommé par le service.
@@ -120,7 +125,6 @@ type Store interface {
 	TaskByNumber(ctx context.Context, teamID, projectID uuid.UUID, number int64) (Task, error)
 	ListTasks(ctx context.Context, filter TaskFilter) ([]Task, error)
 	UpdateTask(ctx context.Context, patch TaskPatch) (Task, error)
-	ArchiveTask(ctx context.Context, teamID, projectID uuid.UUID, number int64) (Task, error)
 
 	AddNote(ctx context.Context, teamID, projectID uuid.UUID, number int64, body string) (Note, error)
 	// ListNotes rend la fin du fil — au plus limit notes, dans l'ordre d'écriture — et le nombre

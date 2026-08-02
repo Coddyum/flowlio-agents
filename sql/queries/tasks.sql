@@ -34,27 +34,30 @@ LIMIT @max_rows::int;
 -- a réellement touché en dernier. L'ancien POST /notes ne le déplaçait pas — c'était l'anomalie,
 -- pas la référence : il laissait une tâche travaillée pendant une heure au fond de la pile.
 -- Ce qui n'allait pas, c'est que ce changement de comportement soit arrivé sans être décidé.
+-- L'ARCHIVAGE est un champ de ce patch, et non plus une query à part.
+--
+-- Il l'était, et l'outil MCP faisait alors DEUX requêtes HTTP : un PATCH puis un POST /archive.
+-- L'atomicité gagnée en repliant la note s'arrêtait à cette frontière. Panne entre les deux : la
+-- note était commitée, l'archivage non, l'agent lisait `api: internal error` et rejouait — ce qui
+-- écrivait la note une SECONDE fois. Doublon silencieux, sur le chemin de fin de tâche.
+-- Replié ici, l'appel entier réussit ou échoue d'un bloc : un rejeu écrit la note une fois, ou
+-- rend ErrNotFound sur une tâche déjà archivée. Jamais deux.
+-- Ce n'est PAS de la déduplication — docs/DECISION-idempotence.md reste en vigueur : on supprime
+-- une couture non atomique, on n'ajoute aucune clé d'idempotence.
+--
+-- Rejouer l'archivage remonte ErrNotFound : la clause archived_at IS NULL ne cible que les tâches
+-- encore actives, et c'est le même ErrNotFound qu'un numéro inexistant.
 -- name: UpdateTask :one
 UPDATE tasks
-SET title      = COALESCE(sqlc.narg('title'), title),
-    body_md    = COALESCE(sqlc.narg('body_md'), body_md),
-    status     = COALESCE(sqlc.narg('status')::task_status, status),
-    priority   = COALESCE(sqlc.narg('priority')::task_priority, priority),
-    deadline   = CASE
-                     WHEN @clear_deadline::boolean THEN NULL
-                     ELSE COALESCE(sqlc.narg('deadline'), deadline)
-                 END,
-    updated_at = now()
-WHERE team_id = @team_id
-  AND project_id = @project_id
-  AND number = @number
-  AND archived_at IS NULL
-RETURNING *;
-
--- Rejouer l'archivage remonte ErrNotFound : la query ne cible que les tâches encore actives.
--- name: ArchiveTask :one
-UPDATE tasks
-SET archived_at = now(),
+SET title       = COALESCE(sqlc.narg('title'), title),
+    body_md     = COALESCE(sqlc.narg('body_md'), body_md),
+    status      = COALESCE(sqlc.narg('status')::task_status, status),
+    priority    = COALESCE(sqlc.narg('priority')::task_priority, priority),
+    deadline    = CASE
+                      WHEN @clear_deadline::boolean THEN NULL
+                      ELSE COALESCE(sqlc.narg('deadline'), deadline)
+                  END,
+    archived_at = CASE WHEN @archive::boolean THEN now() ELSE archived_at END,
     updated_at  = now()
 WHERE team_id = @team_id
   AND project_id = @project_id

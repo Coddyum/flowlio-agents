@@ -9,7 +9,7 @@ package main
 // | prop            | Construit une propriété de schéma JSON                         | 69    |
 // | enumProp        | Construit une propriété contrainte à un jeu de valeurs         | 78    |
 // | tools           | Les huit outils exposés, et rien de plus                        | 87    |
-// | toolsListResult | Réponse de tools/list                                          | 212   |
+// | toolsListResult | Réponse de tools/list                                          | 214   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -149,7 +149,9 @@ func tools() []toolDef {
 						"Écrite avec le reste du changement, ou pas du tout. Seule avec ref, "+
 						"elle remonte la tâche en tête de ce qui est en cours."),
 				"archive": prop("boolean",
-					"Sort la tâche du backlog actif. Elle reste lisible, avec ses notes."),
+					"Sort la tâche du backlog actif. Elle reste lisible, avec ses notes. "+
+						"Écrit avec le statut et la note dans le même appel : « passe en done, "+
+						"voilà pourquoi, et archive » est une seule opération."),
 			}, "ref"),
 		},
 		{

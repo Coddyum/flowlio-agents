@@ -187,15 +187,15 @@ func TestTaskLifecycle(t *testing.T) {
 		t.Errorf("total = %d, attendu 1", total)
 	}
 
-	archived, err := st.ArchiveTask(ctx, sc.teamID, sc.projectID, task.Number)
+	archived, err := st.UpdateTask(ctx, store.TaskPatch{TeamID: sc.teamID, ProjectID: sc.projectID, Number: task.Number, Archive: true})
 	if err != nil {
-		t.Fatalf("ArchiveTask: %v", err)
+		t.Fatalf("archivage: %v", err)
 	}
 	if archived.ArchivedAt == nil {
 		t.Error("la tâche archivée doit porter une date d'archivage")
 	}
 
-	if _, err := st.ArchiveTask(ctx, sc.teamID, sc.projectID, task.Number); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.UpdateTask(ctx, store.TaskPatch{TeamID: sc.teamID, ProjectID: sc.projectID, Number: task.Number, Archive: true}); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("second archivage: erreur = %v, attendu ErrNotFound", err)
 	}
 }
@@ -325,7 +325,7 @@ func TestTasksAreIsolatedAcrossProjectsOfSameTeam(t *testing.T) {
 	})
 
 	t.Run("archivage", func(t *testing.T) {
-		if _, err := st.ArchiveTask(ctx, front.teamID, front.projectID, task.Number); !errors.Is(err, store.ErrNotFound) {
+		if _, err := st.UpdateTask(ctx, store.TaskPatch{TeamID: front.teamID, ProjectID: front.projectID, Number: task.Number, Archive: true}); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("FRNT archive la tâche de CORE: erreur = %v, attendu ErrNotFound", err)
 		}
 	})
@@ -486,8 +486,8 @@ func TestArchivedTaskIsNotWritable(t *testing.T) {
 	sc := newProject(t, db, "CORE")
 
 	task := createTask(t, st, sc, "à archiver")
-	if _, err := st.ArchiveTask(ctx, sc.teamID, sc.projectID, task.Number); err != nil {
-		t.Fatalf("ArchiveTask: %v", err)
+	if _, err := st.UpdateTask(ctx, store.TaskPatch{TeamID: sc.teamID, ProjectID: sc.projectID, Number: task.Number, Archive: true}); err != nil {
+		t.Fatalf("archivage: %v", err)
 	}
 
 	title := "modification après archivage"
@@ -525,8 +525,8 @@ func TestListTasksFilters(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
-	if _, err := st.ArchiveTask(ctx, sc.teamID, sc.projectID, archived.Number); err != nil {
-		t.Fatalf("ArchiveTask: %v", err)
+	if _, err := st.UpdateTask(ctx, store.TaskPatch{TeamID: sc.teamID, ProjectID: sc.projectID, Number: archived.Number, Archive: true}); err != nil {
+		t.Fatalf("archivage: %v", err)
 	}
 
 	base := store.TaskFilter{TeamID: sc.teamID, ProjectID: sc.projectID, Limit: 50}
@@ -694,5 +694,79 @@ func TestDuplicateNumberIsCorruptionNotConflict(t *testing.T) {
 	}
 	if errors.Is(err, store.ErrConflict) {
 		t.Error("un compteur corrompu est remonté comme un conflit d'appelant")
+	}
+}
+
+// « Passe en done, voilà pourquoi, et archive » tient dans UNE transaction, dans le bon ordre.
+//
+// L'ordre n'est pas indifférent : depuis que l'archivage est un champ du patch, patcher d'abord
+// archive la tâche, et CreateTaskNote — dont la query porte `t.archived_at IS NULL` — refuse alors
+// d'écrire dans le fil d'une tâche qu'on vient de fermer. Reproduit : l'appel le plus courant
+// d'une fin de session échouait entièrement sur `task store: not found`.
+//
+// MUTATION : remettre le patch avant la note dans UpdateTask (service) fait tomber ce test.
+func TestEndOfTaskWritesNoteThenArchivesInOneTransaction(t *testing.T) {
+	st, db := newStore(t)
+	ctx := context.Background()
+	sc := newProject(t, db, "CORE")
+	task := createTask(t, st, sc, "à terminer")
+
+	done := "done"
+	var updated store.Task
+	err := st.WithTx(ctx, func(tx store.Store) error {
+		if _, err := tx.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "livré"); err != nil {
+			return err
+		}
+		var err error
+		updated, err = tx.UpdateTask(ctx, store.TaskPatch{
+			TeamID:    sc.teamID,
+			ProjectID: sc.projectID,
+			Number:    task.Number,
+			Status:    &done,
+			Archive:   true,
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("fin de tâche en une transaction: %v", err)
+	}
+
+	if updated.Status != "done" {
+		t.Errorf("statut = %q, attendu done", updated.Status)
+	}
+	if updated.ArchivedAt == nil {
+		t.Error("la tâche doit être archivée par le patch lui-même, sans seconde écriture")
+	}
+
+	// La note est bien là, et une seule fois : c'est le doublon que la seconde requête produisait
+	// à chaque rejeu.
+	notes, total, err := st.ListNotes(ctx, sc.teamID, sc.projectID, task.Number, 10)
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	if total != 1 || len(notes) != 1 || notes[0].Body != "livré" {
+		t.Errorf("fil = %d note(s) sur %d, attendu exactement « livré »", len(notes), total)
+	}
+
+	// Rejouer le même appel ne peut plus doubler la note : la tâche est archivée, la transaction
+	// entière est refusée.
+	err = st.WithTx(ctx, func(tx store.Store) error {
+		if _, err := tx.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "livré"); err != nil {
+			return err
+		}
+		_, err := tx.UpdateTask(ctx, store.TaskPatch{
+			TeamID: sc.teamID, ProjectID: sc.projectID, Number: task.Number, Archive: true,
+		})
+		return err
+	})
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("rejeu: erreur = %v, attendu ErrNotFound", err)
+	}
+	_, total, err = st.ListNotes(ctx, sc.teamID, sc.projectID, task.Number, 10)
+	if err != nil {
+		t.Fatalf("ListNotes après rejeu: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("%d notes après rejeu, attendu 1 : le rejeu a doublé la note", total)
 	}
 }

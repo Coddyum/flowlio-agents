@@ -10,9 +10,9 @@ package main
 // | taskCreate   | Ouvre une tâche et affiche sa clé                                 | 130    |
 // | taskSetStatus| Change le statut d'une tâche                                      | 153    |
 // | taskNote     | Ajoute une note de progression                                    | 175    |
-// | taskArchive  | Sort une tâche du backlog actif                                   | 194    |
-// | taskNumber   | Résout une clé lisible en numéro                                  | 212    |
-// | taskPathFor  | Compose le chemin d'API d'une tâche                               | 226    |
+// | taskArchive  | Sort une tâche du backlog actif                                   | 197    |
+// | taskNumber   | Résout une clé lisible en numéro                                  | 216    |
+// | taskPathFor  | Compose le chemin d'API d'une tâche                               | 230    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -191,6 +191,9 @@ func taskNote(ctx context.Context, c *client.Client, args []string) error {
 }
 
 // taskArchive sort une tâche du backlog actif, sans la supprimer.
+//
+// C'est un PATCH portant `archive`, comme la note : l'API n'a qu'un seul chemin d'écriture vers
+// une tâche, et la CLI l'emprunte comme le serveur MCP.
 func taskArchive(ctx context.Context, c *client.Client, args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: flowlio task archive <CLÉ>")
@@ -200,7 +203,8 @@ func taskArchive(ctx context.Context, c *client.Client, args []string) error {
 		return err
 	}
 
-	if err := c.Do(ctx, http.MethodPost, taskPathFor(number)+"/archive", nil, nil); err != nil {
+	in := taskservice.UpdateTaskInput{Archive: true}
+	if err := c.Do(ctx, http.MethodPatch, taskPathFor(number), in, nil); err != nil {
 		return err
 	}
 	fmt.Printf("tâche #%d archivée\n", number)
