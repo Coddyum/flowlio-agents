@@ -103,20 +103,30 @@ pas seulement improbable. Le même schéma s'appliquera aux issues.
 `task_status ∈ {todo, in_progress, blocked, done}`,
 `task_priority ∈ {low, normal, high, urgent}` (défaut `normal`).
 
-À venir :
+Livré aussi (migration `000004_issues`) :
 
 ```
 issues(id, team_id, project_id, author_project_id, number, title,
-       state, created_at, updated_at, closed_at)                   unique(project_id, number)   -- M3
-issue_messages(id, issue_id, author_project_id, body_md, created_at)                            -- M3
-events(id, team_id, project_id, kind, subject_type, subject_id, created_at)                     -- M3
-token_cursors(token_id, last_event_id)                                                          -- M3
+       state, created_at, updated_at, closed_at)                   unique(project_id, number)
+issue_messages(id, issue_id, author_project_id, body_md, created_at)
+events(id, team_id, project_id, actor_project_id, kind, subject_type, subject_id, created_at)
+token_cursors(token_id, last_event_id, updated_at)
 ```
+
+`events` porte un `actor_project_id` que le modèle annoncé n'avait pas, et **check_inbox ne lit
+pas ce journal comme un flux** : il renvoie l'état actionnable courant, et le curseur ne sert
+qu'au drapeau « nouveau ». Raison complète dans [DESIGN-M3.md](DESIGN-M3.md) — c'est ce qui rend
+sans conséquence le trou de séquence d'un compteur `bigserial`, au lieu d'en faire une classe de
+bugs.
 
 Une issue appartient au projet **destinataire** (`project_id`) et mémorise son auteur
 (`author_project_id`), comme une issue GitHub appartient au repo sur lequel elle est ouverte.
 Elle tire son numéro du compteur de ce projet : tasks et issues partagent la même suite, donc
 `CORE-34` désigne toujours un seul objet.
+
+Conséquence sur la surface MCP : `get(ref)` n'est pas typé. Un agent qui lit `CORE-34` dans un
+commit ou dans son inbox ne sait pas si c'est une tâche ou une issue — deux outils typés
+échoueraient une fois sur deux.
 
 ## Découpage en modules (`internal/feature/`)
 
@@ -124,8 +134,8 @@ Elle tire son numéro du compteur de ce projet : tasks et issues partagent la m�
 | ----------- | ----------- | ----------------------------------------------------------- | ---- |
 | `workspace` | `workspace` | teams, projects, tokens d'agent (création, révocation)       | livré |
 | `task`      | `task`      | tâches d'un projet + notes de progression + archivage        | livré |
-| `issue`     | `issue`     | issues inter-projets, fil de messages, changements d'état    | M3 |
-| `inbox`     | `inbox`     | lecture du journal d'événements depuis le curseur du token   | M3 |
+| `issue`     | `issue`     | issues inter-projets, fil de messages, changements d'état    | livré |
+| `inbox`     | `inbox`     | état actionnable du projet (trois seaux) + curseur du token  | livré |
 
 `auth` n'est pas une feature : c'est un service transverse de `internal/core`, exposé via
 `CoreServices.Auth()` (résolution token → `Principal{TeamID, ProjectID}` + middleware).

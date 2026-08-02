@@ -5,9 +5,14 @@ Carte des domaines et des interfaces inter-modules. À lire avant d'éditer une 
 
 ## État actuel
 
-**M1 livré** : tenancy (teams, projets), tokens d'agent et authentification.
-**M2 en cours** : les tâches sont livrées (module `task`), le serveur MCP stdio suit.
-Issues inter-projets (M3) à venir. Décisions de conception : [DESIGN-V1.md](DESIGN-V1.md).
+**M1, M2 et M3 livrés** : tenancy et tokens d'agent ; tâches et serveur MCP stdio ; issues
+inter-projets et inbox d'état.
+
+Décisions de conception : [DESIGN-V1.md](DESIGN-V1.md) pour le périmètre v1,
+[DESIGN-M3.md](DESIGN-M3.md) pour le modèle des issues et du journal d'événements — à lire avant
+de toucher à `issue`, `inbox` ou `events`, il explique des choix qui paraissent surprenants tant
+qu'on n'a pas la raison (notamment : le curseur ne pilote qu'un drapeau d'affichage, jamais la
+présence d'une ligne).
 
 ## Squelette
 
@@ -42,6 +47,8 @@ Le middleware d'une feature (auth…) se lie une seule fois dans son `module.go`
 | ----------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------- |
 | `workspace` | teams, projets, tokens d'agent    | `/api/workspace` : `POST/GET /teams`, `POST/GET /projects`, `POST/GET /tokens`, `DELETE /tokens/{id}`, `GET /whoami` | aucune                    |
 | `task`      | backlog d'un projet + notes       | `/api/task` : `POST/GET /`, `GET/PATCH /{number}`, `POST /{number}/notes`, `POST /{number}/archive`                 | aucune                    |
+| `issue`     | questions inter-projets + fil     | `/api/issue` : `POST/GET /`, `GET /{project}/{number}`, `POST /{project}/{number}/answer`                           | aucune                    |
+| `inbox`     | état actionnable du projet        | `/api/inbox` : `GET /`                                                                                              | aucune                    |
 
 Portées `workspace` : les routes d'administration exigent un token `admin` (`AdminOnly`) ;
 `GET /projects` et `GET /whoami` acceptent tout token valide et restent scopés à sa team. Un
@@ -67,7 +74,28 @@ d'une même team est couverte par `internal/feature/task/store/store_integration
 
 ## Interfaces inter-modules
 
-Aucune pour l'instant.
+Aucune interface Go inter-module : aucune feature n'en importe une autre, aucune ne passe par
+`FeatureRegistry`.
+
+En revanche, **trois features partagent des tables** — ce n'est pas un import, donc
+`check-cross-feature-imports.sh` ne le voit pas, et c'est pour cette raison que c'est écrit ici :
+
+| Table      | Propriétaire   | Autres écrivains / lecteurs                                              |
+| ---------- | -------------- | ------------------------------------------------------------------------ |
+| `projects` | `workspace`    | `task` et `issue` en **écriture** (`ClaimNextNumber`), `inbox` en lecture |
+| `tasks`    | `task`         | `inbox` en lecture (seau des tâches en cours)                             |
+| `issues`   | `issue`        | `inbox` en lecture (seaux entrants et sortants)                           |
+| `events`   | `issue`        | `inbox` en lecture                                                        |
+
+La règle qui rend ce partage sûr : **toute query porte son scope de tenancy**, quelle que soit la
+feature qui l'écrit. Une query partagée qui prendrait un identifiant nu serait une faille pour
+toutes les features à la fois, pas seulement pour la sienne.
+
+Contrainte de verrouillage à ne pas casser : `ClaimNextNumber` ne doit jamais écrire une colonne
+de clé. Tant que c'est vrai, Postgres prend un `FOR NO KEY UPDATE`, compatible avec le
+`FOR KEY SHARE` que l'insertion d'une issue pose sur ses deux projets parents — sinon deux agents
+symétriques (FRNT→CORE et CORE→FRNT) s'interbloquent. Détail dans
+[DESIGN-M3.md](DESIGN-M3.md).
 
 Rappel du pattern : le fournisseur s'enregistre (`registry.Register("b", api)`) dans son
 `NewModule`, le consommateur résout lazily (`registry.Get("b")`) et type-assert sur une interface
@@ -84,4 +112,11 @@ Un service feature-specific n'entre jamais dans `CoreServices`.
 ## Transactions
 
 Le store expose un `Transactor` (`WithTx(ctx, func(Store) error) error`). `*sql.DB` ne fuite
-jamais dans le service : celui-ci ne voit que l'interface store.
+jamais dans le service : celui-ci ne voit que l'interface store. Implémenté dans `task` et
+`issue` ; `inbox` n'en a pas, parce qu'il ne fait que lire un état.
+
+**L'imbrication est refusée, pas absorbée.** Un `WithTx` dans un `WithTx` ouvrirait une seconde
+transaction sur une autre connexion du pool, qui attendrait le verrou détenu par la première sur
+la ligne du projet — un interblocage qu'aucun test mono-thread ne révèle. Rejoindre silencieusement
+la transaction en cours serait pire : l'extérieur committerait les écritures d'un appel interne
+dont l'erreur aurait été avalée.
