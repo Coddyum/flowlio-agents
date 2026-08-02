@@ -6,8 +6,8 @@ package main
 // |-----------|---------------------------------------------------------------------|-------|
 // | main      | Point d'entrée de la CLI : dispatch et code de sortie                 | 29    |
 // | run       | Route la commande demandée vers son implémentation                    | 37    |
-// | usage     | Affiche l'aide                                                        | 66    |
-// | newClient | Construit le client API à partir des identifiants locaux ou de l'env  | 92    |
+// | usage     | Affiche l'aide                                                        | 70    |
+// | newClient | Construit le client API à partir des identifiants locaux ou de l'env  | 105   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -53,6 +53,10 @@ func run(args []string) error {
 		return runProject(ctx, args[1:])
 	case "token":
 		return runToken(ctx, args[1:])
+	case "task":
+		return runTask(ctx, args[1:])
+	case "mcp":
+		return runMCP(ctx, args[1:])
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -78,6 +82,15 @@ Usage :
   flowlio token create <KEY> <nom>     Émet un token d'agent pour un projet
   flowlio token list <KEY>             Liste les tokens d'un projet
   flowlio token revoke <id>            Révoque un token
+
+  flowlio task list [--status s]       Backlog du projet du token
+  flowlio task show <CLÉ>              Une tâche et son fil de notes
+  flowlio task create <titre>          Ouvre une tâche
+  flowlio task status <CLÉ> <statut>   todo | in_progress | blocked | done
+  flowlio task note <CLÉ> <texte>      Ajoute une note de progression
+  flowlio task archive <CLÉ>           Sort la tâche du backlog actif
+
+  flowlio mcp                          Serveur MCP sur stdio, pour un agent
 
 Options communes :
   --team <slug>   Team visée (obligatoire avec un token admin)
