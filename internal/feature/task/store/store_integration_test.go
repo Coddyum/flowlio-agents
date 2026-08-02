@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -175,12 +176,15 @@ func TestTaskLifecycle(t *testing.T) {
 	if _, err := st.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "avancement"); err != nil {
 		t.Fatalf("AddNote: %v", err)
 	}
-	notes, err := st.ListNotes(ctx, sc.teamID, sc.projectID, task.Number)
+	notes, total, err := st.ListNotes(ctx, sc.teamID, sc.projectID, task.Number, 10)
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
 	}
 	if len(notes) != 1 || notes[0].Body != "avancement" {
 		t.Fatalf("ListNotes renvoie %d notes, attendu la note ajoutée", len(notes))
+	}
+	if total != 1 {
+		t.Errorf("total = %d, attendu 1", total)
 	}
 
 	archived, err := st.ArchiveTask(ctx, sc.teamID, sc.projectID, task.Number)
@@ -193,6 +197,70 @@ func TestTaskLifecycle(t *testing.T) {
 
 	if _, err := st.ArchiveTask(ctx, sc.teamID, sc.projectID, task.Number); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("second archivage: erreur = %v, attendu ErrNotFound", err)
+	}
+}
+
+// Le fil de notes est BORNÉ par la query, et le total reste exact.
+//
+// Sans LIMIT, `get CORE-34` sérialisait le fil entier : mesuré sur cette base, 1 000 notes de
+// 64 KiB donnaient 62,6 Mio en 669 ms, écrites sans être throttlées en 659 ms. C'est l'outil qu'un
+// agent appelle pour REPRENDRE une tâche — un fil non borné, c'est un appel qui remplit son
+// contexte sur une lecture qu'il croyait anodine.
+//
+// Ce test utilise des notes de 1 KiB : ce qu'il vérifie n'est pas un volume, c'est que la taille
+// rendue NE CROÎT PLUS avec le fil. Le chiffre de 62,6 Mio est une mesure, pas une suite à rejouer
+// à chaque `make test-integration`.
+//
+// MUTATION : retirer `LIMIT @lim` de ListTaskNotes fait tomber ce test sur les trois assertions.
+func TestNoteThreadIsBoundedByTheQuery(t *testing.T) {
+	st, db := newStore(t)
+	ctx := context.Background()
+	sc := newProject(t, db, "CORE")
+	task := createTask(t, st, sc, "fil long")
+
+	// created_at est explicite et distinct par note : un INSERT en masse leur donnerait toutes le
+	// même now(), et le départage retomberait sur un uuid aléatoire. Le vrai trafic écrit une note
+	// par requête, donc une par transaction, donc un created_at par note — c'est ce qu'on simule.
+	const written = 1000
+	if _, err := db.Exec(`
+		INSERT INTO task_notes (task_id, body_md, created_at)
+		SELECT $1, repeat('x', 1024) || ' #' || g, now() - make_interval(secs => $2 - g)
+		FROM generate_series(1, $2) AS g`,
+		task.ID, written,
+	); err != nil {
+		t.Fatalf("seed du fil: %v", err)
+	}
+
+	const window = 10
+	notes, total, err := st.ListNotes(ctx, sc.teamID, sc.projectID, task.Number, window)
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+
+	if len(notes) != window {
+		t.Errorf("%d notes rendues, attendu %d : le fil n'est pas borné", len(notes), window)
+	}
+	if total != written {
+		t.Errorf("total = %d, attendu %d : l'agent ne sait pas qu'il ne lit qu'une fenêtre", total, written)
+	}
+
+	raw, err := json.Marshal(notes)
+	if err != nil {
+		t.Fatalf("sérialisation: %v", err)
+	}
+	if len(raw) > 64<<10 {
+		t.Errorf("%d octets sérialisés pour %d notes écrites : la taille rendue suit encore le fil",
+			len(raw), written)
+	}
+
+	// Ce sont les DERNIÈRES notes qui portent l'état, rendues dans l'ordre d'écriture.
+	if !strings.HasSuffix(notes[len(notes)-1].Body, "#1000") {
+		t.Errorf("dernière note rendue = %q, attendu la note #1000",
+			notes[len(notes)-1].Body[max(0, len(notes[len(notes)-1].Body)-8):])
+	}
+	if !strings.HasSuffix(notes[0].Body, "#991") {
+		t.Errorf("première note rendue = %q, attendu la note #991 (fenêtre des 10 dernières)",
+			notes[0].Body[max(0, len(notes[0].Body)-8):])
 	}
 }
 
@@ -247,7 +315,7 @@ func TestTasksAreIsolatedAcrossProjectsOfSameTeam(t *testing.T) {
 	})
 
 	t.Run("lecture des notes", func(t *testing.T) {
-		notes, err := st.ListNotes(ctx, front.teamID, front.projectID, task.Number)
+		notes, _, err := st.ListNotes(ctx, front.teamID, front.projectID, task.Number, 10)
 		if err != nil {
 			t.Fatalf("ListNotes: %v", err)
 		}
@@ -403,7 +471,7 @@ func TestPatchAndNoteRollBackTogether(t *testing.T) {
 			reread.Title, "titre d'origine")
 	}
 
-	notes, err := st.ListNotes(ctx, sc.teamID, sc.projectID, task.Number)
+	notes, _, err := st.ListNotes(ctx, sc.teamID, sc.projectID, task.Number, 10)
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
 	}

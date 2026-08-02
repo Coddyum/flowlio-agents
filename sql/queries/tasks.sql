@@ -64,6 +64,17 @@ RETURNING *;
 
 -- L'insertion d'une note passe par un SELECT scopé sur la tâche : impossible d'écrire dans le
 -- fil d'une tâche d'un autre projet, même en connaissant son identifiant.
+--
+-- TRANCHÉ — l'ÉCRITURE n'est PAS bornée, ni en nombre de notes ni en taille cumulée.
+-- Le coût qu'il fallait fermer était celui de la LECTURE : un fil non borné remplissait le
+-- contexte d'un agent qui reprenait une tâche. C'est fait, dans ListTaskNotes.
+-- Refuser une écriture, en revanche, coûterait la trace au moment précis où elle vaut le plus :
+-- le fil est le journal que relira la session suivante, et un agent qui en écrit beaucoup est un
+-- agent en difficulté, pas un attaquant — l'auteur est authentifié et enfermé dans un seul projet.
+-- La réponse à un agent en boucle est de le voir, pas de lui murer la porte au milieu de son
+-- explication.
+-- Ce qui rouvrirait la question : le mode hosted, où le stockage est facturé à un tiers. C'est un
+-- quota par projet, donc un sujet de M7, pas une borne à deviner ici.
 -- name: CreateTaskNote :one
 INSERT INTO task_notes (task_id, body_md)
 SELECT t.id, @body_md
@@ -74,10 +85,27 @@ WHERE t.team_id = @team_id
   AND t.archived_at IS NULL
 RETURNING *;
 
+-- ListTaskNotes rend la FIN du fil, bornée, et son total.
+--
+-- Sans LIMIT, `get CORE-34` sérialisait le fil entier : mesuré sur la base de dev, 1 000 notes de
+-- 64 KiB donnaient 62,6 Mio en 669 ms. C'est l'outil qu'un agent appelle pour reprendre une
+-- tâche : un fil non borné, c'est un appel qui remplit son contexte entier sur une lecture qu'il
+-- croyait anodine. Le dépôt borne partout ailleurs pour cette raison exacte — list_tasks exclut
+-- la description, list_issues plafonne à 100, check_inbox à 10 lignes et 500 caractères, et le fil
+-- d'une issue à 10 messages avec son total. Le fil de notes était le seul à y échapper.
+--
+-- `count(*) OVER ()` est évalué APRÈS le WHERE et AVANT le LIMIT : le total est exact et coûte le
+-- même aller-retour. Une seconde query de comptage aurait ajouté un aller-retour au chemin de
+-- lecture le plus appelé du produit.
+--
+-- ORDER BY DESC parce que ce sont les DERNIÈRES notes qui portent l'état ; l'appelant remet le fil
+-- dans l'ordre d'écriture, qui est celui dans lequel un journal se lit.
 -- name: ListTaskNotes :many
-SELECT n.* FROM task_notes n
+SELECT n.*, count(*) OVER () AS total
+FROM task_notes n
 JOIN tasks t ON t.id = n.task_id
 WHERE t.team_id = @team_id
   AND t.project_id = @project_id
   AND t.number = @number
-ORDER BY n.created_at, n.id;
+ORDER BY n.created_at DESC, n.id DESC
+LIMIT @lim;

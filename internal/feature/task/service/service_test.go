@@ -23,6 +23,10 @@ type fakeStore struct {
 	lastFiler store.TaskFilter
 	lastNote  string
 
+	// noteLimit est la borne que le service a demandée au store pour le fil de notes. C'est le
+	// seul endroit d'où on peut vérifier qu'il n'en réclame pas la totalité.
+	noteLimit int32
+
 	// txCalls compte les ouvertures de transaction. C'est ce qui prouve qu'une écriture composée
 	// en ouvre une, et qu'une écriture simple n'en paie pas le coût.
 	txCalls int
@@ -98,8 +102,11 @@ func (f *fakeStore) AddNote(_ context.Context, _, _ uuid.UUID, _ int64, body str
 	return store.Note{Body: body}, nil
 }
 
-func (f *fakeStore) ListNotes(context.Context, uuid.UUID, uuid.UUID, int64) ([]store.Note, error) {
-	return []store.Note{{Body: "note"}}, nil
+// ListNotes enregistre la borne reçue : c'est elle qui prouve que le service ne demande PAS le
+// fil entier, et le faux store est le seul endroit d'où on peut l'observer.
+func (f *fakeStore) ListNotes(_ context.Context, _, _ uuid.UUID, _ int64, limit int32) ([]store.Note, int, error) {
+	f.noteLimit = limit
+	return []store.Note{{Body: "note"}}, 42, nil
 }
 
 // newService renvoie un service adossé au faux store, avec un scope de projet valide.
@@ -466,5 +473,32 @@ func TestDeadlineYearIsBounded(t *testing.T) {
 	}
 	if _, err := json.Marshal(task); err != nil {
 		t.Errorf("tâche acceptée mais non sérialisable: %v", err)
+	}
+}
+
+// GetTask demande au store une FENÊTRE, pas le fil entier, et dit à l'agent ce qu'il ne lit pas.
+//
+// La borne doit être portée par la query : un `[:10]` en Go aurait quand même tiré 62,6 Mio
+// depuis Postgres, ce qui est exactement le coût qu'on refuse. Le seul endroit d'où on peut
+// vérifier que le service ne réclame pas tout, c'est ce que le store a reçu.
+//
+// MUTATION : passer 0 (ou rien) comme borne à store.ListNotes fait tomber ce test.
+func TestGetTaskAsksForABoundedThread(t *testing.T) {
+	svc, fake, teamID, projectID := newService()
+
+	detail, err := svc.GetTask(context.Background(), teamID, projectID, 1)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+
+	if fake.noteLimit <= 0 {
+		t.Errorf("borne demandée au store = %d : le service réclame le fil entier", fake.noteLimit)
+	}
+	if fake.noteLimit > 50 {
+		t.Errorf("borne demandée au store = %d : trop large pour un contexte d'agent", fake.noteLimit)
+	}
+	if detail.NotesTotal != 42 {
+		t.Errorf("notes_total = %d, attendu 42 : l'agent ne sait pas qu'il ne lit qu'une fenêtre",
+			detail.NotesTotal)
 	}
 }

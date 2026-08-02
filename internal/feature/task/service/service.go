@@ -9,10 +9,10 @@ package service
 // | New             | Crée le service task                                            | 68    |
 // | Task            | Une tâche telle qu'exposée par l'API                            | 74    |
 // | Note            | Une note de progression exposée par l'API                       | 87    |
-// | TaskDetail      | Une tâche et son fil de notes                                   | 93    |
-// | CreateTaskInput | Entrée de création d'une tâche                                  | 100   |
-// | ListTasksInput  | Critères de lecture du backlog                                  | 115   |
-// | UpdateTaskInput | Patch partiel d'une tâche, note de progression comprise         | 128   |
+// | TaskDetail      | Une tâche et son fil de notes                                   | 98    |
+// | CreateTaskInput | Entrée de création d'une tâche                                  | 106   |
+// | ListTasksInput  | Critères de lecture du backlog                                  | 121   |
+// | UpdateTaskInput | Patch partiel d'une tâche, note de progression comprise         | 134   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -89,10 +89,16 @@ type Note struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// TaskDetail est une tâche accompagnée de son fil de notes, du plus ancien au plus récent.
+// TaskDetail est une tâche accompagnée de la FIN de son fil de notes, du plus ancien au plus
+// récent.
+//
+// NotesTotal existe pour que l'agent sache qu'il ne lit qu'une fenêtre — même raison que
+// MessagesTotal côté issue. Sans ce compteur, un fil tronqué est indiscernable d'un fil court, et
+// l'agent conclut qu'il n'y a rien d'autre à savoir sur la tâche qu'il reprend.
 type TaskDetail struct {
 	Task
-	Notes []Note `json:"notes"`
+	Notes      []Note `json:"notes"`
+	NotesTotal int    `json:"notes_total"`
 }
 
 // CreateTaskInput porte les données de création. TeamID et ProjectID viennent du token et ne

@@ -10,8 +10,8 @@ package store
 // | TaskFilter | Critères de lecture du backlog d'un projet                           | 80    |
 // | TaskPatch  | Patch partiel d'une tâche : un champ nil laisse la valeur en place   | 92    |
 // | Store      | Contrat de persistance de la feature task                            | 110   |
-// | store      | Implémentation adossée aux queries générées par sqlc                 | 131   |
-// | New        | Crée le store task                                                   | 140   |
+// | store      | Implémentation adossée aux queries générées par sqlc                 | 134   |
+// | New        | Crée le store task                                                   | 143   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -123,7 +123,10 @@ type Store interface {
 	ArchiveTask(ctx context.Context, teamID, projectID uuid.UUID, number int64) (Task, error)
 
 	AddNote(ctx context.Context, teamID, projectID uuid.UUID, number int64, body string) (Note, error)
-	ListNotes(ctx context.Context, teamID, projectID uuid.UUID, number int64) ([]Note, error)
+	// ListNotes rend la fin du fil — au plus limit notes, dans l'ordre d'écriture — et le nombre
+	// total de notes écrites. La borne est DANS la query : un `[:limit]` en Go aurait quand même
+	// tiré le fil entier depuis Postgres, ce qui est précisément le coût qu'on refuse.
+	ListNotes(ctx context.Context, teamID, projectID uuid.UUID, number int64, limit int32) ([]Note, int, error)
 }
 
 // store adosse le contrat aux queries générées. db ne sert qu'à ouvrir une transaction dans
