@@ -73,8 +73,52 @@ Un seul port `Auth()` dans `CoreServices`, deux adaptateurs. `buildModules()` ne
 - Comparaison de secret en temps constant.
 - Aucun secret en dur dans le binaire ni dans le repo ; `.env` ignoré par git, `.env.example`
   sans valeur réelle.
-- Rate limiting sur la résolution de token.
+- Rate limiting sur la résolution de token — calibré ci-dessous.
 - Révocation : `revoked_at`, vérifiée à chaque requête.
+
+### Calibrage du rate limiting
+
+Livré dans `internal/core/auth/rate_limit.go` et `trusted_tokens.go`. Deux seaux à fenêtre fixe
+d'une minute, consommés **avant** l'aller-retour store — compter après laissait passer toute une
+rafale concurrente pendant la latence de la base.
+
+| Seau                     | Seuil | Ce qu'il borne                                             |
+| ------------------------ | ----- | ----------------------------------------------------------- |
+| `maxAttemptsPerIP`       | 120   | le balayage de préfixes distincts depuis une même source     |
+| `maxAttemptsPerPrefix`   | 10    | l'acharnement sur un token précis, même en changeant d'IP    |
+
+Le seuil par IP est volontairement large : ce seau ne protège pas contre la force brute — 36^12
+préfixes et 2^256 secrets s'en chargent — il borne la mémoire et le débit brut. Le serrer
+refuserait des agents légitimes derrière un même NAT sans rien gagner.
+
+**Décision structurante — un token valide ne consomme jamais de quota.** Prise ici parce que la
+version précédente, sans elle, refusait des clients légitimes de deux façons mesurées :
+
+- un agent seul qui lançait plus de 10 requêtes **simultanées** en voyait refuser le surplus (11
+  concurrentes → 1 refusée), avec un `401` indistinguable d'un token invalide ;
+- un attaquant coupait un agent pour le reste de la fenêtre en brûlant 10 essais sur son
+  **préfixe**, qui est la partie publique du token.
+
+Deux mécanismes, tous deux indexés sur l'empreinte SHA-256 du **token complet** — jamais sur le
+préfixe, sans quoi ils s'ouvriraient à qui a seulement vu passer un préfixe :
+
+1. les requêtes concurrentes portant le même token partagent **une seule** charge ;
+2. un token qui s'est authentifié est exempté de quota (24 h), exemption **retirée au premier
+   refus**, ce qui fait tomber un token révoqué.
+
+Ce n'est pas un cache d'authentification : chaque requête va quand même au store et compare le
+secret, la révocation reste immédiate.
+
+Limites connues, assumées, non compensées ailleurs :
+
+- la boucle locale est exemptée du seau par IP (sinon un agent en boucle de retry refuserait le
+  service à tous les autres agents de la machine) ; un balayage de préfixes distincts depuis
+  `127.0.0.1` n'est donc pas borné, et la mémoire des compteurs non plus ;
+- le chemin bloqué répond sans toucher la base : sa **latence** distingue « limité » de « refusé ».
+  L'aligner supposerait d'offrir la requête que le limiteur existe pour refuser ;
+- NAT, conteneur ou proxy partagé : le contournement reste ouvert. À traiter le jour où un proxy
+  de confiance existe, par configuration explicite, jamais en faisant confiance à
+  `X-Forwarded-For`.
 
 ## Schéma
 

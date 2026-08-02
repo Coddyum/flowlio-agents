@@ -4,17 +4,18 @@ package auth
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | Scope              | Portée d'un token : administration ou projet unique          | 37    |
-// | Principal          | Identité authentifiée portée par une requête                 | 49    |
-// | Principal.IsAdmin  | Vrai si le principal peut administrer la team                | 57    |
-// | Service            | Contrat d'authentification exposé via CoreServices           | 62    |
-// | service            | Implémentation, dépendante de l'interface Store              | 72    |
-// | New                | Crée le service d'authentification                           | 80    |
+// | Scope              | Portée d'un token : administration ou projet unique          | 38    |
+// | Principal          | Identité authentifiée portée par une requête                 | 50    |
+// | Principal.IsAdmin  | Vrai si le principal peut administrer la team                | 58    |
+// | Service            | Contrat d'authentification exposé via CoreServices           | 63    |
+// | service            | Implémentation, dépendante de l'interface Store              | 73    |
+// | New                | Crée le service d'authentification                           | 83    |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// CONTRAT UNIQUEMENT — l'implémentation est dans authenticate.go et middleware.go.
+// CONTRAT UNIQUEMENT — l'implémentation est dans authenticate.go, middleware.go et
+// rate_limit.go.
 
 import (
 	"context"
@@ -74,9 +75,15 @@ type service struct {
 	// touchInterval limite la fréquence d'écriture de last_used_at : sans ça, chaque requête
 	// authentifiée déclencherait un UPDATE.
 	touchInterval time.Duration
+	// limiter freine le balayage de préfixes. Détail et arbitrages : rate_limit.go.
+	limiter *attemptLimiter
 }
 
 // New crée le service d'authentification.
 func New(store Store) Service {
-	return &service{store: store, touchInterval: time.Minute}
+	return &service{
+		store:         store,
+		touchInterval: time.Minute,
+		limiter:       newAttemptLimiter(maxAttemptsPerIP, maxAttemptsPerPrefix, attemptWindow),
+	}
 }

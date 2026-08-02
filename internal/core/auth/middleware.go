@@ -4,18 +4,19 @@ package auth
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | contextKey         | Type privé de clé de contexte, non collisionnable            | 24    |
-// | FromContext        | Récupère le Principal déposé par le middleware               | 30    |
-// | service.Middleware | Exige un token valide et dépose le Principal dans le contexte| 37    |
-// | service.AdminOnly  | Exige en plus une portée admin                               | 57    |
-// | bearerToken        | Extrait le token de l'en-tête Authorization                  | 70    |
-// | deny               | Répond une erreur d'auth sans divulguer la cause             | 81    |
+// | contextKey         | Type privé de clé de contexte, non collisionnable            | 25    |
+// | FromContext        | Récupère le Principal déposé par le middleware               | 31    |
+// | service.Middleware | Exige un token valide et dépose le Principal dans le contexte| 43    |
+// | service.AdminOnly  | Exige en plus une portée admin                               | 108   |
+// | bearerToken        | Extrait le token de l'en-tête Authorization                  | 121   |
+// | deny               | Répond une erreur d'auth sans divulguer la cause             | 132   |
 //
 // Fin du sommaire.
 // =====================================================================
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 )
@@ -34,19 +35,69 @@ func FromContext(ctx context.Context) (Principal, bool) {
 
 // Middleware exige un token valide. Il est lié une seule fois, dans le module.go de chaque
 // feature, jamais à l'intérieur d'un handler.
+//
+// C'est ici, et pas dans Authenticate, que le rate limiting s'applique : Authenticate ne voit
+// pas la requête, donc pas l'IP source. Toute route authentifiée passe par Middleware — y
+// compris via AdminOnly, qui l'enveloppe — donc une route ajoutée demain est protégée sans que
+// son auteur ait à y penser.
 func (s *service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, ok := bearerToken(r)
 		if !ok {
+			// Aucun token présenté : ce n'est pas une tentative de deviner un token, donc ce
+			// n'est pas compté. Sinon un client mal configuré consommerait le quota d'une IP
+			// partagée avec des agents légitimes.
+			deny(w, http.StatusUnauthorized)
+			return
+		}
+
+		ip, prefix := clientIP(r), presentedPrefix(raw)
+
+		// L'empreinte identifie le token PRÉSENTÉ, préfixe et secret compris. Elle sert au
+		// limiteur à reconnaître deux requêtes portant exactement le même token — pour ne les
+		// compter qu'une fois, et pour exempter un token qui s'est déjà authentifié. Le token
+		// brut ne quitte jamais cette fonction : voir trusted_tokens.go.
+		fingerprint := tokenFingerprint(raw)
+
+		// Le quota est consommé AVANT l'aller-retour store, pas après : compter le résultat
+		// laissait passer toute une rafale concurrente pendant la latence de la base. Détail de
+		// l'arbitrage, et de la restitution du quota plus bas : rate_limit.go.
+		//
+		// Quota dépassé : le CORPS, le CODE et les EN-TÊTES sont ceux d'un échec ordinaire. Pas
+		// de 429, pas de Retry-After, pas d'en-tête de quota — un code distinct apprendrait à
+		// l'attaquant que son balayage progresse.
+		//
+		// Ce que ce court-circuit ne masque PAS : la LATENCE. Le chemin bloqué ne fait ni requête
+		// Postgres ni SHA-256, il répond donc environ deux ordres de grandeur plus vite qu'un
+		// échec normal, et un attaquant qui chronomètre distingue les deux états. C'est un
+		// COMPROMIS ASSUMÉ : aligner les temps supposerait d'aller quand même en base, c'est-à-
+		// dire d'offrir gratuitement la requête que le limiteur existe précisément pour refuser.
+		// On préfère payer un oracle sur l'état « limité » — qui ne dit rien sur la validité d'un
+		// token — plutôt que de rendre le limiteur inopérant.
+		reserved, allowed := s.limiter.reserve(ip, prefix, fingerprint)
+		if !allowed {
 			deny(w, http.StatusUnauthorized)
 			return
 		}
 
 		principal, err := s.Authenticate(r.Context(), raw)
 		if err != nil {
+			// Seul un refus avéré garde sa charge. Une panne du store n'est pas un échec
+			// d'authentification : la compter reviendrait à bloquer les clients légitimes
+			// pendant l'incident, et à offrir un levier de déni de service.
+			outcome := outcomeRejected
+			if !errors.Is(err, ErrUnauthenticated) {
+				outcome = outcomeUnavailable
+			}
+			s.limiter.release(reserved, outcome)
 			deny(w, http.StatusUnauthorized)
 			return
 		}
+
+		// Succès : la charge est rendue, et le token devient de confiance — il ne consommera
+		// plus de quota tant qu'il reste valide. Sans quoi un agent légitime se bloquerait avec
+		// ses propres requêtes, ou se ferait bloquer par un attaquant qui vise son préfixe.
+		s.limiter.release(reserved, outcomeAuthenticated)
 
 		ctx := context.WithValue(r.Context(), principalKey, principal)
 		next.ServeHTTP(w, r.WithContext(ctx))
