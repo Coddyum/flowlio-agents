@@ -1,9 +1,12 @@
 # Postgres de développement. Une commande, aucune installation locale :
 #   docker compose up -d
 # Port 5433 pour ne pas entrer en conflit avec un Postgres déjà installé sur 5432.
+#
+# Même version majeure qu'en production (Neon, Postgres 18) : un écart de version majeure entre
+# dev et prod, c'est une classe de bugs qu'on ne voit qu'après déploiement.
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     container_name: flowlio-postgres
     restart: unless-stopped
     environment:
@@ -13,7 +16,9 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - flowlio-pgdata:/var/lib/postgresql/data
+      # Postgres 18 attend le montage sur /var/lib/postgresql (et non .../data) : les données
+      # vont dans un sous-répertoire, ce qui rend `pg_upgrade --link` possible plus tard.
+      - flowlio-pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U flowlio -d flowlio"]
       interval: 5s

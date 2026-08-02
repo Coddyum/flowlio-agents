@@ -53,17 +53,35 @@ inbox), qui est le cœur différenciant du produit.
 
 ## Stack
 
-| Outil          | Version | Notes                                        |
-| -------------- | ------- | -------------------------------------------- |
-| Golang         | 1.26.1  |                                              |
-| Postgres       | 17      | driver pgx v5 via l'adaptateur `database/sql` |
-| net/http       | stdlib  | Pas de framework HTTP externe                 |
-| sqlc           | 1.30    | Génération des queries                        |
-| golang-migrate | 4.19    | Migrations manuelles uniquement               |
-| go-cache       | latest  | Cache mémoire process. Pas de Redis.          |
+| Outil          | Version | Notes                                                        |
+| -------------- | ------- | ------------------------------------------------------------ |
+| Golang         | 1.26.1  |                                                              |
+| Postgres       | 18      | dev : docker compose ; prod : **Neon**                        |
+| pgx            | v5      | via l'adaptateur `database/sql` (requis par le `Transactor`)  |
+| net/http       | stdlib  | Pas de framework HTTP externe                                 |
+| sqlc           | 1.30    | Génération des queries                                        |
+| golang-migrate | 4.19    | Migrations manuelles uniquement                               |
+| go-cache       | latest  | Cache mémoire process. Pas de Redis.                          |
 
-Pas d'ORM. Pas de framework HTTP. Pas de Redis. Pas de dépendance externe ajoutée sans que ce
-soit demandé.
+Pas d'ORM. Pas de framework HTTP. Pas de Redis. **Pas de SQLite** : une seule base, Postgres, en
+dev comme en prod. Pas de dépendance externe ajoutée sans que ce soit demandé.
+
+### Neon
+
+Le dev tourne sur la même version majeure que la prod (18) : un écart de majeure est une classe
+de bugs qui n'apparaît qu'après déploiement.
+
+Deux endpoints, deux usages :
+
+| Endpoint            | Usage                        | DSN                                                    |
+| ------------------- | ---------------------------- | ------------------------------------------------------ |
+| direct              | migrations (`make up-prod`)  | `?sslmode=require`                                      |
+| mutualisé `-pooler` | l'API                        | `?sslmode=require&default_query_exec_mode=exec`         |
+
+PgBouncer en mode transaction ne garantit pas qu'une requête préparée survive d'une requête à
+l'autre : sans `default_query_exec_mode=exec`, pgx échoue par intermittence **sous charge, en
+production uniquement**. `database.Connect` refuse donc de démarrer sur un endpoint `-pooler`
+sans ce paramètre.
 
 ---
 

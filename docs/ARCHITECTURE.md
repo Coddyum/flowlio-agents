@@ -23,7 +23,7 @@ Tâches (M2) et issues inter-projets (M3) à venir. Décisions de conception :
 | `internal/database/`          | Généré par sqlc. Ne jamais éditer à la main.                          |
 | `internal/pkg/cache/`         | Port `Cache` + implémentation mémoire (go-cache).                     |
 | `internal/pkg/config/`        | `Config` + `Load()` depuis l'environnement, fail fast.                |
-| `internal/pkg/database/`      | `Connect(dsn)` → pool `*sql.DB` (driver pgx v5 en mode `database/sql`). |
+| `internal/pkg/database/`      | `Connect(dsn)` → pool `*sql.DB` (driver pgx v5 en mode `database/sql`), et refus d'un endpoint Neon mutualisé mal configuré. |
 | `sql/migrations/`             | golang-migrate — humain uniquement.                                   |
 | `sql/queries/`                | Source des queries lues par sqlc.                                     |
 | `sql/schema/`                 | Source de vérité du modèle, mise à jour après chaque migration.       |

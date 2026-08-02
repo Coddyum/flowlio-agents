@@ -12,6 +12,7 @@ construit en v1 ; `docs/ARCHITECTURE.md` reste la carte technique du repo.
 | 3 | **La mémoire = décisions + contrats typés** (v2, modèle déjà anticipé). | Pas de blob mémoire ni d'embeddings. Recherche Postgres FTS + tags. |
 | 4 | **Multi-tenant dès j1**, `team_id` dans chaque query store. | Adaptateur d'auth `local` en v1, `hosted` + billing ajoutés sans toucher aux stores. |
 | 5 | **Zéro IA dans le produit.** | Tout comportement est déterministe et testable. |
+| 6 | **Postgres 18 partout, jamais SQLite.** Prod hébergée sur Neon. | Un seul dialecte SQL, un seul jeu de queries sqlc, aucune migration en double. La friction d'installation en self-host est assumée et compensée par `docker compose`. |
 
 ## Modèle de domaine
 

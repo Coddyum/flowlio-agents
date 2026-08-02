@@ -29,7 +29,7 @@ Prérequis : Go 1.26, Docker, [golang-migrate](https://github.com/golang-migrate
 ```bash
 git clone https://github.com/Coddyum/flowlio-ia && cd flowlio-ia
 cp .env.example .env
-make dev-up        # Postgres 17 dans Docker
+make dev-up        # Postgres 18 dans Docker
 make up-dev        # applique les migrations
 make run           # démarre l'API — affiche le token d'administration, une seule fois
 ```
@@ -70,6 +70,17 @@ Le dépôt est open source et destiné à l'auto-hébergement, donc :
 - tous les échecs d'authentification sont indiscernables (aucun oracle d'énumération) ;
 - le filtrage par team est appliqué **dans les requêtes SQL**, pas dans les handlers ;
 - le fichier d'identifiants local est en `0600`, hors du dépôt.
+
+## Base de données
+
+Postgres 18, en dev comme en production — pas de SQLite, pas de second dialecte à maintenir.
+L'auto-hébergement utilise le `docker-compose.yml` fourni ; l'offre hébergée tourne sur
+[Neon](https://neon.tech).
+
+Sur Neon, l'API se branche sur l'endpoint mutualisé (`-pooler`) avec
+`default_query_exec_mode=exec` dans le DSN : PgBouncer en mode transaction est incompatible avec
+le cache de requêtes préparées de pgx. Les migrations passent par l'endpoint direct. Le serveur
+refuse de démarrer si le DSN est mal formé plutôt que d'échouer plus tard, sous charge.
 
 ## Développement
 

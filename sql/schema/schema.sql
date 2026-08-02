@@ -2,10 +2,10 @@
 -- PostgreSQL database dump
 --
 
-\restrict dx6OiRpJrM1ZwjbSeg1T8718P4dIbOdn8UzL4aEF6FP9qpQwTj2nuDlep3g9ZAR
+\restrict quQJA2zMjEngtXBath16gUvREGa7IDSaVd6pNnAr2hxddekbPvdca2wippM3hds
 
--- Dumped from database version 17.10
--- Dumped by pg_dump version 17.10
+-- Dumped from database version 18.4
+-- Dumped by pg_dump version 18.4
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -81,13 +81,13 @@ CREATE TABLE public.teams (
 --
 
 CREATE TABLE public.tokens (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() CONSTRAINT agent_tokens_id_not_null NOT NULL,
     team_id uuid,
     project_id uuid,
-    name text NOT NULL,
-    prefix text NOT NULL,
-    secret_hash text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    name text CONSTRAINT agent_tokens_name_not_null NOT NULL,
+    prefix text CONSTRAINT agent_tokens_prefix_not_null NOT NULL,
+    secret_hash text CONSTRAINT agent_tokens_secret_hash_not_null NOT NULL,
+    created_at timestamp with time zone DEFAULT now() CONSTRAINT agent_tokens_created_at_not_null NOT NULL,
     last_used_at timestamp with time zone,
     revoked_at timestamp with time zone,
     scope public.token_scope NOT NULL,
@@ -195,5 +195,5 @@ ALTER TABLE ONLY public.projects
 -- PostgreSQL database dump complete
 --
 
-\unrestrict dx6OiRpJrM1ZwjbSeg1T8718P4dIbOdn8UzL4aEF6FP9qpQwTj2nuDlep3g9ZAR
+\unrestrict quQJA2zMjEngtXBath16gUvREGa7IDSaVd6pNnAr2hxddekbPvdca2wippM3hds
 
