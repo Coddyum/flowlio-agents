@@ -5,12 +5,30 @@
 
 ## Démarrage de session
 
-Avant toute tâche, charger :
+**Premier geste, avant toute autre chose : lire le board Flowlio.** Ce projet se développe sur
+plusieurs sessions ; l'état réel de ce qui reste à faire n'est pas dans cette conversation, il
+est dans le tracker.
+
+```
+mcp__flowlio__list_teams → team « Flowlio » (FLOWL)
+mcp__flowlio__list_projects → projet « FLOWLIO_IA » (FLWL)
+mcp__flowlio__list_project_tasks → colonnes In progress, puis Blocked / decision, puis Ready
+```
+
+Une tâche restée dans `In progress` signale une session interrompue : la reprendre avant d'en
+ouvrir une nouvelle. Protocole complet (choix, mise à jour, archivage, secrets) :
+**`.claude/rules/flowlio-workflow.md`**.
+
+Aucun fichier de suivi en markdown dans ce dépôt (`PROGRESS.md`, `TODO.md`, `NEXT-STEPS.md`…) :
+le board porte l'état, `docs/` porte les décisions.
+
+Charger ensuite, selon la zone touchée :
 
 - `.claude/rules/module-system.md`, `feature-structure.md`, `code-conventions.md`,
   `file-sommaire.md` si la tâche touche une zone qu'ils couvrent.
 - `docs/ARCHITECTURE.md` (carte des domaines + interfaces inter-modules) avant d'éditer une
   zone inconnue.
+- `docs/DESIGN-V1.md` pour le périmètre des jalons et les décisions déjà tranchées.
 
 ---
 
@@ -168,6 +186,9 @@ inter-features + sommaire), exit 2 bloquant.
 
 ## Ce que Claude ne fait pas
 
+- Commencer à coder sans avoir lu le board Flowlio, ou finir une session sans l'avoir mis à jour.
+- Créer un fichier de suivi markdown là où le board fait le travail.
+- Écrire un token, un DSN ou un secret dans une description de tâche Flowlio.
 - Mettre de l'implémentation dans `store/store.go` ou une méthode dans `service.go` (contrats uniquement).
 - Mettre du code service dans un fichier handler, ou inversement.
 - Mélanger plusieurs actions métier dans `service/service.go`.
