@@ -4,13 +4,13 @@ package main
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | callParams         | Corps d'un appel tools/call                                  | 34    |
-// | mcpServer.callTool | Exécute un outil et emballe son résultat                     | 44    |
-// | mcpServer.invoke   | Route vers l'implémentation de l'outil demandé               | 67    |
-// | writeResult        | Emballe un retour d'écriture sous la forme {ref, objet}      | 96    |
-// | textResult         | Emballe un résultat d'outil pour le client MCP               | 102   |
-// | errText            | Emballe une erreur d'outil, lisible par l'agent              | 113   |
-// | parseDeadline      | Lit une échéance RFC 3339, absente si la chaîne est vide      | 134   |
+// | callParams         | Corps d'un appel tools/call                                  | 35    |
+// | mcpServer.callTool | Exécute un outil et emballe son résultat                     | 45    |
+// | mcpServer.invoke   | Route vers l'implémentation de l'outil demandé               | 68    |
+// | writeResult        | Emballe un retour d'écriture sous la forme {ref, objet}      | 97    |
+// | textResult         | Emballe un résultat d'outil pour le client MCP               | 113   |
+// | errText            | Emballe une erreur d'outil, lisible par l'agent              | 129   |
+// | parseDeadline      | Lit une échéance RFC 3339, absente si la chaîne est vide      | 150   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -19,6 +19,7 @@ package main
 // mcp_issue_tools.go.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -99,13 +100,28 @@ func writeResult(kind, ref string, value any) map[string]any {
 
 // textResult emballe un résultat d'outil. Le contenu est du JSON : un agent le reparse sans
 // ambiguïté, là où un rendu textuel demanderait de deviner un format.
+//
+// L'échappement HTML est DÉSACTIVÉ, et ce n'est pas cosmétique. Par défaut, encoding/json écrit
+// `<` en `<` pour rendre le JSON sûr à coller dans une balise <script> — un souci que ce
+// binaire n'a pas, puisque sa sortie part sur stdout dans un flux JSON-RPC. Avec l'échappement,
+// le balisage du contenu externe arrivait à l'agent sous la forme `<externe:…>` : un
+// marquage qui n'est lisible qu'après un second décodage n'est pas un marquage. Voir
+// mcp_untrusted.go.
+//
+// Le champ text est de toute façon ré-encodé par writeResponse, et c'est là que l'échappement de
+// transport a lieu — le client MCP le défait avant de rendre la main à l'agent.
 func textResult(value any) map[string]any {
-	raw, err := json.Marshal(value)
-	if err != nil {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
 		return errText(fmt.Errorf("encodage du résultat: %w", err))
 	}
+
 	return map[string]any{
-		"content": []map[string]any{{"type": "text", "text": string(raw)}},
+		// Encode ajoute un saut de ligne final : le retirer évite de payer un octet inutile dans
+		// le contexte de l'agent à chaque appel d'outil.
+		"content": []map[string]any{{"type": "text", "text": strings.TrimRight(buf.String(), "\n")}},
 	}
 }
 

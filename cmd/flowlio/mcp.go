@@ -13,9 +13,9 @@ package main
 // | mcpServer.dispatch | Route une méthode MCP vers son implémentation                | 178   |
 // | mcpServer.initialize | Répond à la poignée de main MCP                            | 203   |
 // | mcpServer.instructions | Dit à l'agent où il travaille, avant son premier message | 222   |
-// | mcpServer.siblingKeys | Résout les autres projets de la team                      | 244   |
-// | writeResponse      | Écrit une réponse sur stdout, une ligne par message           | 266   |
-// | errorResponse      | Construit une réponse d'erreur JSON-RPC                       | 278   |
+// | mcpServer.siblingKeys | Résout les autres projets de la team                      | 249   |
+// | writeResponse      | Écrit une réponse sur stdout, une ligne par message           | 271   |
+// | errorResponse      | Construit une réponse d'erreur JSON-RPC                       | 283   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -231,6 +231,11 @@ func (s *mcpServer) instructions() string {
 	} else {
 		b.WriteString("Aucun projet frère dans cette team : create_issue n'a personne à qui écrire.\n")
 	}
+
+	// Le cadrage du contenu tiers vit ICI et nulle part ailleurs : c'est une constante du serveur,
+	// payée une fois par session, et qui n'est le paramètre d'aucun outil. Personne ne peut donc
+	// la désactiver depuis un appel. Détail du modèle : mcp_untrusted.go.
+	b.WriteString(framingRule + "\n")
 
 	b.WriteString("Commence par check_inbox : il dit ce qui t'attend et ce que tu avais laissé en cours.")
 	return b.String()

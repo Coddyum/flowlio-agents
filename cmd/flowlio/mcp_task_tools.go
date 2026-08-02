@@ -6,12 +6,12 @@ package main
 // |-------------------------|-------------------------------------------------------|-------|
 // | mcpServer.listTasks     | Backlog du projet courant                               | 41    |
 // | mcpServer.get           | Résout une référence, qu'elle soit tâche ou issue       | 82    |
-// | mcpServer.createTask    | Ouvre une tâche et renvoie sa clé                       | 121   |
-// | mcpServer.updateTask    | Modifie une tâche, la note, ou l'archive                | 160   |
-// | mcpServer.numberFromKey | Résout une clé lisible dans le projet du token          | 224   |
-// | mcpServer.taskPath      | Compose le chemin d'API d'une tâche                     | 247   |
-// | mcpServer.taskRef       | Compose la référence lisible d'un numéro                | 252   |
-// | mcpServer.withRefs      | Ajoute sa référence à chaque tâche d'un listing         | 260   |
+// | mcpServer.createTask    | Ouvre une tâche et renvoie sa clé                       | 134   |
+// | mcpServer.updateTask    | Modifie une tâche, la note, ou l'archive                | 173   |
+// | mcpServer.numberFromKey | Résout une clé lisible dans le projet du token          | 237   |
+// | mcpServer.taskPath      | Compose le chemin d'API d'une tâche                     | 260   |
+// | mcpServer.taskRef       | Compose la référence lisible d'un numéro                | 265   |
+// | mcpServer.withRefs      | Ajoute sa référence à chaque tâche d'un listing         | 273   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -114,7 +114,20 @@ func (s *mcpServer) get(ctx context.Context, args json.RawMessage) (any, error) 
 	if err := s.api.Do(ctx, http.MethodGet, s.issuePath(projectKey, number), nil, &issue); err != nil {
 		return nil, err
 	}
-	return map[string]any{"kind": "issue", "ref": issue.Ref, "issue": issue}, nil
+
+	// C'est le seul outil qui rend des corps de message COMPLETS, écrits par un autre dépôt et
+	// versés dans un contexte qui a un shell. Chaque prise de parole du pair est encadrée, la
+	// mienne ne l'est pas — voir mcp_untrusted.go.
+	f, err := newFraming(s.projectKey)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"kind":    "issue",
+		"ref":     issue.Ref,
+		"lecture": f.notice(),
+		"issue":   f.markIssueDetail(issue),
+	}, nil
 }
 
 // createTask ouvre une tâche et renvoie sa clé, qui est ce dont l'agent a besoin ensuite.

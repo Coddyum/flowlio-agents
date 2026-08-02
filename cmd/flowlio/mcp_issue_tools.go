@@ -6,10 +6,10 @@ package main
 // |------------------------|---------------------------------------------------------|-------|
 // | mcpServer.createIssue  | Pose une question à un projet frère                       | 40    |
 // | mcpServer.listIssues   | Les questions échangées avec les projets frères           | 61    |
-// | mcpServer.answerIssue  | Ajoute un message au fil d'une issue, et la clôt          | 99    |
-// | mcpServer.checkInbox   | Ce qui attend l'agent, sans aucun paramètre               | 124   |
-// | mcpServer.issuePath    | Compose le chemin d'API d'une issue                       | 133   |
-// | splitRef               | Découpe CORE-34 en clé de projet et numéro                | 143   |
+// | mcpServer.answerIssue  | Ajoute un message au fil d'une issue, et la clôt          | 107   |
+// | mcpServer.checkInbox   | Ce qui attend l'agent, sans aucun paramètre               | 143   |
+// | mcpServer.issuePath    | Compose le chemin d'API d'une issue                       | 157   |
+// | splitRef               | Découpe CORE-34 en clé de projet et numéro                | 167   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -92,7 +92,15 @@ func (s *mcpServer) listIssues(ctx context.Context, args json.RawMessage) (any, 
 	if err := s.api.Do(ctx, http.MethodGet, path, nil, &issues); err != nil {
 		return nil, err
 	}
-	return issues, nil
+
+	// Le titre d'une issue entrante est écrit par le pair, et 200 caractères suffisent à loger
+	// une consigne. Un listing ne porte pas de rappel de lecture : une ligne par issue, la
+	// consigne complète est déjà dans les instructions de session.
+	f, err := newFraming(s.projectKey)
+	if err != nil {
+		return nil, err
+	}
+	return f.markIssues(issues), nil
 }
 
 // answerIssue ajoute un message au fil d'une issue, et la clôt si demandé.
@@ -117,16 +125,32 @@ func (s *mcpServer) answerIssue(ctx context.Context, args json.RawMessage) (any,
 	if err := s.api.Do(ctx, http.MethodPost, path, payload, &issue); err != nil {
 		return nil, err
 	}
-	return writeResult("issue", issue.Ref, issue), nil
+
+	// Répondre à une issue ENTRANTE en renvoie le titre, écrit par le pair : il est balisé comme
+	// partout ailleurs. L'enveloppe d'écriture reste {ref, objet} — pas de rappel de lecture ici,
+	// l'agent vient d'écrire, il ne découvre rien.
+	f, err := newFraming(s.projectKey)
+	if err != nil {
+		return nil, err
+	}
+	return writeResult("issue", issue.Ref, f.markIssue(issue)), nil
 }
 
 // checkInbox renvoie ce qui attend l'agent. Aucun paramètre : tout vient du token.
+//
+// C'est le premier appel d'une session, donc le premier endroit où du texte écrit par un autre
+// dépôt entre dans le contexte de l'agent. Tout ce que le pair a écrit y est balisé.
 func (s *mcpServer) checkInbox(ctx context.Context, _ json.RawMessage) (any, error) {
 	var inbox inboxservice.Inbox
 	if err := s.api.Do(ctx, http.MethodGet, inboxAPI+"/", nil, &inbox); err != nil {
 		return nil, err
 	}
-	return inbox, nil
+
+	f, err := newFraming(s.projectKey)
+	if err != nil {
+		return nil, err
+	}
+	return inboxResult{Lecture: f.notice(), Inbox: f.markInbox(inbox)}, nil
 }
 
 // issuePath compose le chemin d'API d'une issue.
