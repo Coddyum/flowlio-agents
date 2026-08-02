@@ -3,10 +3,12 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -33,7 +35,13 @@ func attempt(svc *service, ip, rawToken string) *httptest.ResponseRecorder {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/whatever", nil)
-	req.RemoteAddr = ip + ":54321"
+	// Une IPv6 se met entre crochets dans RemoteAddr : sans eux, net.SplitHostPort échoue et
+	// chaque adresse resterait une chaîne distincte, donc un compteur distinct.
+	if strings.Contains(ip, ":") {
+		req.RemoteAddr = "[" + ip + "]:54321"
+	} else {
+		req.RemoteAddr = ip + ":54321"
+	}
 	req.Header.Set("Authorization", "Bearer "+rawToken)
 
 	rec := httptest.NewRecorder()
@@ -201,10 +209,11 @@ func TestConcurrentValidRequestsFromOneAgentAreNeverRefused(t *testing.T) {
 	}
 }
 
-// Le groupement des requêtes en vol ne doit pas devenir un contournement. Une revue adversariale
-// a mesuré 3 200 requêtes parvenues au store en 480 ms sur une version où le groupe survivait
-// tant qu'un porteur restait en vol : un flux pipeliné entretenait le groupe indéfiniment et
-// passait sans jamais payer. Un groupe cesse donc d'accueillir dès sa première réponse.
+// Répétitions SÉQUENTIELLES du même token : chacune paie, le plafond mord.
+//
+// Ce test ne prouve rien sur le correctif du groupement — sans recouvrement, aucun groupe ne
+// survit à sa requête. C'est le test concurrent juste en dessous qui porte cette garantie, et
+// c'est lui seul qui tombe quand on retire le drapeau resolved.
 func TestPipelinedRepeatsOfOneTokenStayCapped(t *testing.T) {
 	const (
 		perIP    = 3
@@ -339,7 +348,9 @@ func TestColdValidTokenSurvivesAnAttackOnItsPrefix(t *testing.T) {
 	if svc.limiter.isTrusted(tokenFingerprint(victim.Plain)) {
 		t.Fatalf("la victime est déjà de confiance — le test ne prouve rien sur le cas à froid")
 	}
-	if code := attempt(svc, "127.0.0.1", victim.Plain).Code; code != http.StatusOK {
+	// La victime est sur une IP PUBLIQUE distincte, et surtout PAS sur 127.0.0.1 : la boucle
+	// locale est exemptée du seul seau restant, elle aurait rendu le test vert sans rien prouver.
+	if code := attempt(svc, "198.51.100.77", victim.Plain).Code; code != http.StatusOK {
 		t.Errorf("code = %d, attendu 200 : un préfixe public ne doit pas pouvoir couper son porteur", code)
 	}
 }
@@ -354,6 +365,7 @@ func TestInFlightAttemptsOfTheSameTokenShareOneCharge(t *testing.T) {
 	limiter.now = func() time.Time { return now }
 
 	const ip = "203.0.113.42"
+	const groupKey = ip + "|empreinte"
 	reservations := make([]reservation, 0, holders)
 	for i := range holders {
 		res, allowed := limiter.reserve(ip, "empreinte")
@@ -363,7 +375,7 @@ func TestInFlightAttemptsOfTheSameTokenShareOneCharge(t *testing.T) {
 		reservations = append(reservations, res)
 	}
 
-	group := limiter.pending["empreinte"]
+	group := limiter.pending[groupKey]
 	if group == nil {
 		t.Fatalf("aucune charge enregistrée")
 	}
@@ -377,7 +389,7 @@ func TestInFlightAttemptsOfTheSameTokenShareOneCharge(t *testing.T) {
 	for _, res := range reservations {
 		limiter.release(res, outcomeRejected)
 	}
-	if _, still := limiter.pending["empreinte"]; still {
+	if _, still := limiter.pending[groupKey]; still {
 		t.Errorf("la charge survit à sa dernière requête")
 	}
 }
@@ -591,6 +603,123 @@ func TestClientIP(t *testing.T) {
 
 			if got := clientIP(req); got != tc.want {
 				t.Errorf("clientIP = %q, attendu %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// L'EXEMPTION DES TOKENS AUTHENTIFIÉS DOIT ÊTRE COUVERTE, sans quoi on peut la supprimer sans
+// qu'un seul test s'en aperçoive — une revue l'a vérifié par mutation, et aucun test ne tombait.
+//
+// Ce qu'elle achète, depuis la suppression du seau par préfixe : derrière une IP partagée (NAT,
+// conteneur), un voisin bruyant sature le seau commun. Un agent qui s'est déjà authentifié doit
+// continuer à passer ; un agent à froid, non — et c'est la limite documentée du modèle par IP.
+func TestTrustedTokenSurvivesASaturatedSharedIP(t *testing.T) {
+	const perIP = 3
+
+	now := time.Now()
+	warm := newTokenOrFail(t)
+	store := &fakeStore{found: true, record: adminRecord(warm.Hash)}
+	svc := limitedService(store, perIP, &now)
+
+	const sharedIP = "203.0.113.80"
+	if code := attempt(svc, sharedIP, warm.Plain).Code; code != http.StatusOK {
+		t.Fatalf("première authentification : code = %d, attendu 200", code)
+	}
+
+	// Le voisin bruyant sature le seau de l'IP partagée.
+	svc.store = &fakeStore{found: false}
+	for range perIP * 5 {
+		attempt(svc, sharedIP, newTokenOrFail(t).Plain)
+	}
+
+	svc.store = store
+	if code := attempt(svc, sharedIP, warm.Plain).Code; code != http.StatusOK {
+		t.Errorf("code = %d, attendu 200 : un token authentifié doit survivre à un voisin bruyant", code)
+	}
+}
+
+// UNE TENTATIVE EXEMPTÉE QUI FINIT SANS VERDICT EST FACTURÉE. Sans ça, le porteur d'un token
+// révoqué gardait une exemption illimitée : la confiance ne tombe que sur un refus AVÉRÉ, et
+// couper la connexion avant la réponse du store n'en produit aucun. Une revue a mesuré 5 000
+// allers-retours Postgres avec le compteur resté à zéro.
+func TestAbandonedRequestOfATrustedTokenIsStillCharged(t *testing.T) {
+	now := time.Now()
+	token := newTokenOrFail(t)
+	store := &fakeStore{found: true, record: adminRecord(token.Hash)}
+	svc := limitedService(store, 1000, &now)
+
+	const ip = "203.0.113.81"
+	if code := attempt(svc, ip, token.Plain).Code; code != http.StatusOK {
+		t.Fatalf("première authentification : code = %d, attendu 200", code)
+	}
+	if !svc.limiter.isTrusted(tokenFingerprint(token.Plain)) {
+		t.Fatalf("le token n'est pas de confiance")
+	}
+
+	// Le token est révoqué et son porteur abandonne chaque requête avant la réponse : le store
+	// ne rend ni « trouvé » ni « absent », donc aucun refus avéré.
+	svc.store = brokenStore{}
+	const abandons = 20
+	for range abandons {
+		attempt(svc, ip, token.Plain)
+	}
+
+	count := svc.limiter.add(svc.limiter.bucket(bucketIP, sourceKey(ip)), 0)
+	if count < abandons {
+		t.Fatalf("compteur = %d après %d abandons, attendu au moins %d : les abandons sont gratuits",
+			count, abandons, abandons)
+	}
+}
+
+// Une adresse IPv6 exacte ne compte rien : le plus petit bloc attribué à un client est un /64,
+// soit 2^64 adresses. Sans normalisation, l'attaquant change d'adresse à chaque requête et le
+// plafond ne mord jamais.
+func TestIPv6RotationInsideOnePrefixDoesNotEscapeTheBucket(t *testing.T) {
+	const perIP = 3
+
+	now := time.Now()
+	svc := limitedService(&fakeStore{found: false}, perIP, &now)
+
+	// Toutes ces adresses vivent dans le MÊME /64 : c'est une seule source.
+	for i := range perIP {
+		ip := fmt.Sprintf("2001:db8:1:1::%d", i+1)
+		if code := attempt(svc, ip, newTokenOrFail(t).Plain).Code; code != http.StatusUnauthorized {
+			t.Fatalf("tentative %d : code = %d, attendu 401", i+1, code)
+		}
+	}
+
+	valid := newTokenOrFail(t)
+	svc.store = &fakeStore{found: true, record: adminRecord(valid.Hash)}
+	if code := attempt(svc, "2001:db8:1:1::ffff", valid.Plain).Code; code != http.StatusUnauthorized {
+		t.Errorf("code = %d, attendu 401 : changer d'adresse dans son /64 ne doit rien rouvrir", code)
+	}
+
+	// Un /64 DIFFÉRENT est bien une autre source.
+	other := newTokenOrFail(t)
+	svc.store = &fakeStore{found: true, record: adminRecord(other.Hash)}
+	if code := attempt(svc, "2001:db8:1:2::1", other.Plain).Code; code != http.StatusOK {
+		t.Errorf("/64 distinct : code = %d, attendu 200", code)
+	}
+}
+
+func TestSourceKey(t *testing.T) {
+	cases := []struct {
+		name string
+		ip   string
+		want string
+	}{
+		{name: "ipv4 telle quelle", ip: "203.0.113.5", want: "203.0.113.5"},
+		{name: "ipv6 réduite à son /64", ip: "2001:db8:1:1::42", want: "2001:db8:1:1::/64"},
+		{name: "même /64, adresse différente", ip: "2001:db8:1:1::ffff", want: "2001:db8:1:1::/64"},
+		{name: "/64 voisin, clé distincte", ip: "2001:db8:1:2::1", want: "2001:db8:1:2::/64"},
+		{name: "adresse illisible comptée telle quelle", ip: "pas-une-ip", want: "pas-une-ip"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sourceKey(tc.ip); got != tc.want {
+				t.Errorf("sourceKey(%q) = %q, attendu %q", tc.ip, got, tc.want)
 			}
 		})
 	}

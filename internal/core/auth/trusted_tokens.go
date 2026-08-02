@@ -4,22 +4,25 @@ package auth
 //
 // | Élément                   | Résumé                                                    | Ligne |
 // |---------------------------|-----------------------------------------------------------|-------|
-// | attemptLimiter.isTrusted  | Dit si ce token exact a déjà prouvé sa validité             | 59    |
-// | attemptLimiter.trust      | Marque le token comme authentifié, donc exempté de quota    | 69    |
-// | attemptLimiter.distrust   | Retire la confiance dès qu'un token de confiance est refusé | 78    |
-// | trustKey                  | Compose la clé de cache d'un token de confiance             | 84    |
-// | tokenFingerprint          | Empreinte d'un token présenté, jamais le token lui-même     | 94    |
+// | attemptLimiter.isTrusted  | Dit si ce token exact a déjà prouvé sa validité             | 71    |
+// | attemptLimiter.trust      | Marque le token comme authentifié, donc exempté de quota    | 81    |
+// | attemptLimiter.distrust   | Retire la confiance dès qu'un token de confiance est refusé | 90    |
+// | trustKey                  | Compose la clé de cache d'un token de confiance             | 96    |
+// | tokenFingerprint          | Empreinte d'un token présenté, jamais le token lui-même     | 106   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
 // POURQUOI — un token qui s'est déjà authentifié ne consomme plus aucun quota.
 //
-// Sans cette exemption, le seau par préfixe se retourne contre son propriétaire : le préfixe est
-// la partie PUBLIQUE du token, un attaquant qui l'a vu passer brûle maxAttemptsPerPrefix essais
-// dessus en une seconde, et l'agent légitime se fait refuser son token parfaitement valide
-// jusqu'à la fin de la fenêtre. Dix requêtes pour couper un agent : ce n'est pas acceptable, et
-// un correctif de sécurité qui casse les clients légitimes est un échec, pas un compromis.
+// Cette exemption est née pour neutraliser un seau par préfixe qui coupait les agents légitimes.
+// Ce seau a depuis été SUPPRIMÉ (voir rate_limit.go), et l'exemption a survécu parce qu'elle
+// achète autre chose : derrière une IP partagée — NAT, conteneur, machine de CI — un voisin
+// bruyant sature le seau commun, et un agent qui s'est déjà authentifié doit continuer à passer.
+// Un correctif de sécurité qui casse les clients légitimes est un échec, pas un compromis.
+//
+// Un agent à FROID derrière cette même IP, lui, est bien refusé : c'est la limite connue du
+// modèle par source, écrite comme telle dans docs/DESIGN-V1.md.
 //
 // CE QUI EST INDEXÉ — l'empreinte du TOKEN COMPLET, jamais le préfixe. Un attaquant qui ne
 // connaît que le préfixe ne peut donc pas se glisser dans l'exemption : il lui faudrait le
@@ -32,8 +35,17 @@ package auth
 //
 // RÉVOCATION — un token révoqué garde sa marque de confiance jusqu'à sa prochaine utilisation,
 // où le refus la fait tomber (distrust). Le porteur d'un token fraîchement révoqué obtient donc
-// une salve non comptée avant de repasser sous quota. C'est assumé : il possédait un token
-// valide il y a un instant, il avait déjà tout le débit qu'il voulait.
+// une salve non comptée avant de repasser sous quota.
+//
+// Ce retour sous quota n'était PAS garanti : la confiance ne tombant que sur un refus AVÉRÉ, il
+// suffisait de couper la connexion avant la réponse du store pour n'en produire aucun et rester
+// exempté jusqu'au TTL. Fermé en facturant toute tentative exemptée qui finit sans verdict
+// (release, rate_limit.go). Une revue a mesuré la portée réelle de ce défaut contre un vrai
+// Postgres : une requête au contexte DÉJÀ annulé n'émet aucune transaction, donc la version
+// fiable de l'attaque ne coûtait rien à la base ; la version coûteuse suppose de viser une
+// fenêtre de 183 µs des milliers de fois sans un seul raté, un raté suffisant à faire tomber la
+// confiance. Le défaut était donc mineur — il est corrigé quand même, parce qu'une issue que
+// l'attaquant choisit ne doit jamais être gratuite.
 //
 // TTL — largement plus long que la fenêtre de comptage, à dessein. Un TTL court rouvrirait la
 // fenêtre de blocage décrite plus haut pour tout agent resté silencieux quelques minutes, ce qui

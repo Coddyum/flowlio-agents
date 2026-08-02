@@ -4,39 +4,34 @@ package auth
 //
 // | Élément                | Résumé                                                       | Ligne |
 // |------------------------|---------------------------------------------------------------|-------|
-// | attemptOutcome         | Issue d'une tentative, qui décide du sort de sa charge          | 97    |
-// | reservation            | Ce qu'une tentative a consommé, et à quel titre                 | 118   |
-// | inflight               | Charge partagée par les tentatives d'un même token en vol       | 131   |
-// | attemptLimiter         | Compteur de tentatives d'authentification par IP source         | 147   |
-// | newAttemptLimiter      | Crée le limiteur et son cache mémoire borné par TTL             | 162   |
-// | attemptLimiter.reserve | Consomme le quota avant le store et dit si on continue          | 185   |
-// | attemptLimiter.release | Solde la tentative selon son issue                              | 219   |
-// | attemptLimiter.charge  | Incrémente le seau de la source et dit si la tentative passe    | 253   |
-// | attemptLimiter.add     | Applique un delta au compteur d'une clé, jamais sous zéro       | 266   |
-// | attemptLimiter.bucket  | Compose la clé de cache seau + fenêtre courante                 | 290   |
+// | attemptOutcome         | Issue d'une tentative, qui décide du sort de sa charge          | 93    |
+// | reservation            | Ce qu'une tentative a consommé, et à quel titre                 | 111   |
+// | inflight               | Charge partagée par les tentatives d'un même token en vol       | 130   |
+// | attemptLimiter         | Compteur de tentatives d'authentification par IP source         | 146   |
+// | newAttemptLimiter      | Crée le limiteur et son cache mémoire borné par TTL             | 161   |
+// | attemptLimiter.reserve | Consomme le quota avant le store et dit si on continue          | 180   |
+// | attemptLimiter.release | Solde la tentative selon son issue                              | 213   |
+// | attemptLimiter.charge  | Incrémente le seau de la source et dit si la tentative passe    | 259   |
+// | attemptLimiter.add     | Applique un delta au compteur d'une clé, jamais sous zéro       | 272   |
+// | attemptLimiter.bucket  | Compose la clé de cache seau + fenêtre courante                 | 296   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
 // CE QUE CE LIMITEUR PROTÈGE, ET CE QU'IL NE PROTÈGE PAS.
 //
-// Il ne protège PAS contre la découverte d'un token. Un secret fait 32 octets tirés au hasard :
-// 2^256 possibilités, aucune attaque par dictionnaire, aucun raccourci. Aucun seuil, si serré
-// soit-il, ne change cette arithmétique — c'est l'entropie qui tient, pas le limiteur.
+// Il ne protège PAS contre la découverte d'un token : un secret fait 32 octets tirés au hasard,
+// soit 2^256 possibilités — c'est l'entropie qui tient, pas le limiteur. Il protège contre la
+// CONSOMMATION DE RESSOURCES par une source qui échoue en boucle : un aller-retour Postgres et
+// un SHA-256 par tentative, sans rien pour la freiner.
 //
-// Il protège contre la CONSOMMATION DE RESSOURCES par une source qui échoue en boucle : un
-// aller-retour Postgres et un SHA-256 par tentative, sans rien pour la freiner.
-//
-// Cette distinction commande tout le reste. Puisque la chose contre laquelle on se défend est
-// déjà impossible, tout mécanisme capable de refuser un token VALIDE est un bilan négatif : il
-// coûte une panne réelle pour empêcher une attaque irréalisable.
+// Cette distinction commande tout le reste : puisque ce contre quoi on se défend est déjà
+// impossible, tout mécanisme capable de refuser un token VALIDE est un bilan négatif.
 //
 // POURQUOI IL N'Y A PLUS DE SEAU PAR PRÉFIXE. Une première version en portait un, censé freiner
-// l'acharnement sur un token précis. Le préfixe est la partie PUBLIQUE du token : n'importe qui
-// l'ayant vu passer saturait le seau de sa victime pour 11 requêtes par minute, et lui faisait
-// refuser son token valide fenêtre après fenêtre — mesuré sur dix fenêtres consécutives, et
-// 4 400 requêtes depuis UNE source suffisaient à couper 400 victimes à la fois. En face, ce seau
-// ne rachetait rien : il ralentissait une force brute que l'entropie rend déjà impossible.
+// l'acharnement sur un token précis. Le préfixe étant PUBLIC, il donnait surtout à n'importe qui
+// le moyen de couper une victime pour 11 requêtes par minute — mesuré sur dix fenêtres
+// consécutives, 4 400 requêtes coupant 400 victimes à la fois. En face il ne rachetait rien.
 // Un dispositif qui ne défend rien et qui coupe les légitimes se supprime, il ne se recalibre pas.
 //
 // CE QUI EST COMPTÉ — les TENTATIVES, pas les échecs. Compter les échecs supposait de lire le
@@ -46,12 +41,10 @@ package auth
 // seule opération, AVANT de toucher le store.
 //
 // UNE SEULE ISSUE REND LA CHARGE : l'authentification RÉUSSIE. Ni l'échec, ni la panne du store,
-// ni l'abandon du client. Une version précédente remboursait aussi les pannes, au nom de la
-// disponibilité pendant un incident — c'était un contournement complet : l'attaquant provoquait
-// lui-même cette issue en abandonnant sa requête HTTP, ce qui remontait un context.Canceled
-// classé « panne », et rendait la charge que sa requête jumelle venait de payer. Le quota ne
-// montait jamais. Une issue que l'attaquant contrôle ne peut pas décider d'un remboursement ;
-// celle-ci exige un token valide, c'est-à-dire précisément ce qu'il n'a pas.
+// ni l'abandon du client. Rembourser les pannes était un contournement complet — l'attaquant
+// provoque lui-même cette issue en coupant sa requête, ce qui rendait la charge que sa jumelle
+// venait de payer. Une issue que l'attaquant contrôle ne décide de rien ; celle-ci exige un
+// token valide, c'est-à-dire ce qu'il n'a pas.
 //
 // DEUX GARDE-FOUS CONTRE L'AUTO-BLOCAGE, tous deux indexés sur l'EMPREINTE DU TOKEN COMPLET :
 //
@@ -67,9 +60,12 @@ package auth
 // glissante suppose de garder l'horodatage de chaque tentative. Défaut connu, la rafale de bord
 // — jusqu'à 2×limite à cheval sur deux fenêtres — sans portée pratique face à 2^256 secrets.
 //
-// MÉMOIRE — une clé « ip:<source> » par source et par fenêtre, purgée par son TTL, plus une
-// marque de confiance par token réellement valide. La boucle locale étant exemptée du seau, elle
-// ne crée AUCUNE clé : aucune famille de clés n'est fabricable en masse par un attaquant.
+// MÉMOIRE — une clé par source et par fenêtre, purgée par son TTL, plus une marque de confiance
+// par token réellement valide. La boucle locale, exemptée du seau, ne crée aucune clé. La source
+// n'est pas l'adresse exacte mais son /64 en IPv6 (sourceKey) : sans cette réduction, 2^64
+// adresses ouvraient un compteur neuf à chaque requête. Un attaquant disposant de nombreuses
+// sources crée quand même une clé par source : c'est borné par ce dont il dispose, pas par le
+// limiteur.
 //
 // Seuil, arbitrages et limites connues : docs/DESIGN-V1.md § Calibrage du rate limiting.
 
@@ -109,18 +105,21 @@ const (
 	outcomeUnavailable
 )
 
-// reservation retient ce qu'une tentative a consommé et à quel titre. release s'en sert pour
-// solder exactement ce qui a été pris.
-//
-// Le groupe est retenu par POINTEUR, pas cherché par empreinte au moment de solder : deux
-// générations de requêtes peuvent porter la même empreinte, et une requête doit solder la charge
-// qu'elle a réellement rejointe.
+// reservation retient ce qu'une tentative a consommé et à quel titre. Le groupe est retenu par
+// POINTEUR et non recherché au moment de solder : deux générations de requêtes portent la même
+// clé, et une requête doit solder la charge qu'elle a réellement rejointe.
 type reservation struct {
 	// fingerprint identifie le token présenté sans jamais le stocker en clair. Toujours
 	// renseignée, y compris pour un token malformé : deux requêtes identiques restent groupées.
 	fingerprint string
-	// trusted signale une tentative exemptée : rien n'a été consommé, il n'y a rien à rendre.
+	// ip est la source, retenue pour facturer après coup une tentative exemptée finie sans
+	// verdict. Voir release.
+	ip string
+	// trusted signale une tentative exemptée du seau à la réservation.
 	trusted bool
+	// groupKey est la clé sous laquelle le groupe est rangé : elle porte l'IP, sinon une charge
+	// payée par une source en abriterait gratuitement une autre.
+	groupKey string
 	// group est la charge rejointe, nil si la tentative n'a rien consommé.
 	group *inflight
 }
@@ -173,27 +172,23 @@ func newAttemptLimiter(perIP int, window time.Duration) *attemptLimiter {
 // L'incrément et la comparaison ont lieu dans le MÊME verrou : deux requêtes concurrentes ne
 // peuvent pas lire toutes les deux un compteur en dessous de la limite.
 //
-// Trois chemins, du moins cher au plus cher :
-//
-//   - token de confiance — il a déjà prouvé sa validité : rien n'est compté ;
-//   - token déjà en vol et pas encore résolu — une autre requête porte exactement le même token
-//     et attend sa réponse : on rejoint sa charge au lieu d'en créer une deuxième ;
-//   - sinon — le seau de la source est incrémenté, et la tentative passe s'il ne déborde pas.
-//
-// L'incrément est inconditionnel, y compris quand la tentative est refusée : une source déjà
-// au-delà du seuil n'a aucune raison de voir son compteur figé.
+// Trois chemins, du moins cher au plus cher : un token de CONFIANCE ne compte rien ; un token
+// déjà EN VOL et pas encore résolu rejoint la charge de sa jumelle au lieu d'en créer une
+// seconde ; sinon le seau de la source est incrémenté, et la tentative passe s'il ne déborde pas.
+// L'incrément est inconditionnel : une source déjà au-delà du seuil n'a aucune raison de voir
+// son compteur figé.
 func (l *attemptLimiter) reserve(ip, fingerprint string) (reservation, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	res := reservation{fingerprint: fingerprint}
+	res := reservation{fingerprint: fingerprint, ip: ip, groupKey: ip + "|" + fingerprint}
 
 	if l.isTrusted(fingerprint) {
 		res.trusted = true
 		return res, true
 	}
 
-	if group, found := l.pending[fingerprint]; found && !group.resolved {
+	if group, found := l.pending[res.groupKey]; found && !group.resolved {
 		group.holders++
 		res.group = group
 		return res, true
@@ -205,17 +200,16 @@ func (l *attemptLimiter) reserve(ip, fingerprint string) (reservation, bool) {
 	}
 
 	group := &inflight{holders: 1, ipKey: ipKey}
-	l.pending[fingerprint] = group
+	l.pending[res.groupKey] = group
 	res.group = group
 
 	return res, true
 }
 
-// release solde la tentative selon son issue : rendre la charge ou la conserver, et mettre à
-// jour la confiance accordée au token.
-//
-// Le groupe n'est démonté que par sa DERNIÈRE requête, et seulement s'il est encore celui que le
-// cache désigne : une génération suivante a pu prendre sa place sous la même empreinte.
+// release solde la tentative selon son issue : rendre la charge ou la conserver, et mettre à jour
+// la confiance accordée au token. Le groupe n'est démonté que par sa DERNIÈRE requête, et
+// seulement s'il est encore celui que le cache désigne — une génération suivante a pu prendre sa
+// place sous la même clé.
 func (l *attemptLimiter) release(res reservation, outcome attemptOutcome) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -230,6 +224,18 @@ func (l *attemptLimiter) release(res reservation, outcome attemptOutcome) {
 	case outcomeUnavailable:
 	}
 
+	// UNE TENTATIVE EXEMPTÉE QUI FINIT SANS VERDICT EST FACTURÉE APRÈS COUP. Sans ça, le porteur
+	// d'un token révoqué gardait son exemption jusqu'au TTL : la confiance ne tombe que sur un
+	// refus AVÉRÉ, et couper la connexion avant la réponse du store n'en produit aucun. L'issue
+	// est à la portée de l'attaquant, elle ne peut donc jamais être gratuite. Un agent légitime
+	// dont une requête expire de temps en temps paie 1 : sans conséquence.
+	if res.trusted {
+		if outcome == outcomeUnavailable {
+			l.add(l.bucket(bucketIP, sourceKey(res.ip)), 1)
+		}
+		return
+	}
+
 	if res.group == nil {
 		return
 	}
@@ -242,8 +248,8 @@ func (l *attemptLimiter) release(res reservation, outcome attemptOutcome) {
 	}
 
 	group.holders--
-	if group.holders <= 0 && l.pending[res.fingerprint] == group {
-		delete(l.pending, res.fingerprint)
+	if group.holders <= 0 && l.pending[res.groupKey] == group {
+		delete(l.pending, res.groupKey)
 	}
 }
 
@@ -255,7 +261,7 @@ func (l *attemptLimiter) charge(ip string) (ipKey string, allowed bool) {
 		return "", true
 	}
 
-	ipKey = l.bucket(bucketIP, ip)
+	ipKey = l.bucket(bucketIP, sourceKey(ip))
 	return ipKey, l.add(ipKey, 1) <= l.perIP
 }
 

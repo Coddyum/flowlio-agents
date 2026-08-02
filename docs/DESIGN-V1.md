@@ -98,6 +98,10 @@ après laissait passer toute une rafale concurrente pendant la latence de la bas
 | ------------------ | ----- | --------------------------------------------------------- |
 | `maxAttemptsPerIP` | 120   | les tentatives de tokens distincts depuis une même source   |
 
+La « source » n'est pas l'adresse exacte : en IPv6 elle est réduite à son **/64**. Le plus petit
+bloc attribué à un client vaut 2^64 adresses — compter l'adresse exacte revenait à ne rien
+compter, un attaquant ouvrant un compteur neuf à chaque requête.
+
 Le seuil est volontairement large : il borne une consommation de ressources, pas une force
 brute. Le serrer refuserait des agents légitimes à froid derrière un même NAT sans rien gagner.
 
@@ -117,7 +121,9 @@ SHA-256 du **token complet** — jamais sur le préfixe :
    exacte est donc `maxAttemptsPerIP × concurrence`, et seulement pour des requêtes portant le
    même token, dont la répétition n'apprend rien à l'attaquant ;
 2. un token qui s'est authentifié est exempté de quota (24 h), exemption **retirée au premier
-   refus**, ce qui fait tomber un token révoqué.
+   refus**, ce qui fait tomber un token révoqué. Une tentative exemptée qui finit **sans
+   verdict** — client qui abandonne — est facturée après coup : sinon il suffisait de couper la
+   connexion pour ne jamais produire de refus, donc pour garder l'exemption jusqu'au TTL.
 
 Ce n'est pas un cache d'authentification : chaque requête va quand même au store et compare le
 secret, la révocation reste immédiate.
@@ -128,7 +134,8 @@ disponibilité pendant un incident ; c'était un contournement complet, parce qu
 provoque lui-même cette issue en abandonnant sa requête HTTP — le contexte annulé remonte comme
 une panne et rembourse la charge que la requête jumelle vient de payer. Le prix de ce
 renversement est borné : pendant un incident l'API ne répond de toute façon pas, et un token déjà
-authentifié reste exempté, donc les agents en session ne sont pas touchés.
+authentifié reste exempté, donc les agents en session ne sont pas touchés — **sauf si l'incident
+se termine par un redémarrage**, le cache de confiance vivant en mémoire du process.
 
 Limites connues, assumées, non compensées ailleurs :
 
@@ -136,8 +143,10 @@ Limites connues, assumées, non compensées ailleurs :
   cohérent avec le modèle de menace, pas un oubli : un attaquant capable d'émettre depuis
   `127.0.0.1` lit déjà le fichier de credentials, il n'a aucune raison de deviner un token. Ce
   limiteur défend le mode hosted, où la source d'une requête est une information ; en local,
-  c'est le système de fichiers qui protège. Corollaire utile : la boucle locale ne crée **aucune**
-  clé de cache, donc aucune famille de clés n'est fabricable en masse ;
+  c'est le système de fichiers qui protège. Corollaire : la boucle locale ne crée **aucune** clé
+  de cache. **Attention** : un reverse proxy installé sur la même machine que l'API fait
+  apparaître tout le trafic comme du loopback, donc désarme le limiteur sans le dire. Tant
+  qu'aucune configuration de proxy de confiance n'existe, ne pas en mettre un devant ;
 - le chemin bloqué calcule bien un SHA-256 mais ne touche pas la base : sa **latence** distingue
   « limité » de « refusé ». L'aligner supposerait d'offrir la requête que le limiteur existe pour
   refuser ;
