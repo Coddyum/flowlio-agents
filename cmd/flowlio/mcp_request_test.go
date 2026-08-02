@@ -176,15 +176,50 @@ func TestUpdateTaskWithOnlyANoteReachesTheAPI(t *testing.T) {
 }
 
 // Un appel vide n'écrit rien : le garde doit couper AVANT le réseau, pas après.
+//
+// Le cas de l'échéance faite de BLANCS est le même appel vide, écrit autrement. Il franchissait
+// le garde (`in.Deadline != ""` est vrai pour trois espaces) pour être ignoré juste après par
+// parseDeadline (`TrimSpace(...) == ""`) : le PATCH partait avec TOUS les champs à nil, l'API
+// rendait la tâche inchangée, et l'agent lisait un SUCCÈS en croyant avoir posé une échéance.
+// Le même appel sans `deadline` rendait, lui, « aucune modification demandée ».
+//
+// MUTATION : rétablir `in.Deadline != ""` dans le garde de updateTask fait tomber ce test.
 func TestUpdateTaskWithNothingToChangeSendsNoRequest(t *testing.T) {
+	cas := map[string]string{
+		"aucun champ":            `{"ref":"CORE-34"}`,
+		"échéance vide":          `{"ref":"CORE-34","deadline":""}`,
+		"échéance de blancs":     `{"ref":"CORE-34","deadline":"   "}`,
+		"échéance de tabulation": `{"ref":"CORE-34","deadline":"\t\n"}`,
+	}
+
+	for name, args := range cas {
+		t.Run(name, func(t *testing.T) {
+			srv, rec := newRecordingServer(t, taskAPIReply)
+
+			_, err := srv.updateTask(context.Background(), json.RawMessage(args))
+			if err == nil {
+				t.Fatal("un appel qui ne demande aucun changement doit être une erreur, pas un succès")
+			}
+			if err.Error() != "aucune modification demandée" {
+				t.Errorf("message = %q, attendu \"aucune modification demandée\"", err)
+			}
+			if got := rec.all(); len(got) != 0 {
+				t.Errorf("%d requêtes émises: %+v", len(got), got)
+			}
+		})
+	}
+}
+
+// Une échéance renseignée, elle, part bien — le garde ne doit pas devenir un filtre trop large.
+func TestUpdateTaskSendsARealDeadline(t *testing.T) {
 	srv, rec := newRecordingServer(t, taskAPIReply)
 
 	if _, err := srv.updateTask(context.Background(),
-		json.RawMessage(`{"ref":"CORE-34"}`)); err == nil {
-		t.Fatal("un appel sans aucun champ doit être une erreur")
+		json.RawMessage(`{"ref":"CORE-34","deadline":"2027-01-02T03:04:05Z"}`)); err != nil {
+		t.Fatalf("update_task: %v", err)
 	}
-	if got := rec.all(); len(got) != 0 {
-		t.Errorf("%d requêtes émises sur un appel vide: %+v", len(got), got)
+	if got := rec.only(t).fields(t)["deadline"]; got != "2027-01-02T03:04:05Z" {
+		t.Errorf("échéance envoyée = %v, attendu 2027-01-02T03:04:05Z", got)
 	}
 }
 

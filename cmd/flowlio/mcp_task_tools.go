@@ -8,10 +8,10 @@ package main
 // | mcpServer.get           | Résout une référence, qu'elle soit tâche ou issue       | 82    |
 // | mcpServer.createTask    | Ouvre une tâche et renvoie sa clé                       | 134   |
 // | mcpServer.updateTask    | Modifie une tâche, la note, ou l'archive                | 173   |
-// | mcpServer.numberFromKey | Résout une clé lisible dans le projet du token          | 237   |
-// | mcpServer.taskPath      | Compose le chemin d'API d'une tâche                     | 260   |
-// | mcpServer.taskRef       | Compose la référence lisible d'un numéro                | 265   |
-// | mcpServer.withRefs      | Ajoute sa référence à chaque tâche d'un listing         | 273   |
+// | mcpServer.numberFromKey | Résout une clé lisible dans le projet du token          | 244   |
+// | mcpServer.taskPath      | Compose le chemin d'API d'une tâche                     | 267   |
+// | mcpServer.taskRef       | Compose la référence lisible d'un numéro                | 272   |
+// | mcpServer.withRefs      | Ajoute sa référence à chaque tâche d'un listing         | 280   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -194,9 +194,16 @@ func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, 
 	// Le patch part avant l'archivage : archiver d'abord rendrait la tâche non modifiable, et le
 	// même appel échouerait à moitié. La note suit le même chemin, donc elle est écrite tant que
 	// la tâche est encore active.
+	//
+	// L'échéance est jugée sur sa forme TAILLÉE, comme dans parseDeadline. Les deux bornes ont
+	// divergé un temps — ici `!= ""`, là-bas `TrimSpace(...) == ""` — et une échéance faite de
+	// blancs franchissait alors ce garde pour être ignorée juste après : le PATCH partait avec
+	// TOUS les champs à nil, l'API rendait la tâche inchangée, et l'agent lisait un succès en
+	// croyant avoir posé une échéance. Une échéance faite de blancs est une échéance absente,
+	// partout et de la même façon.
 	var task taskservice.Task
 	if in.Title != nil || in.Body != nil || in.Status != nil || in.Priority != nil ||
-		in.Deadline != "" || in.ClearDeadline || in.Note != nil {
+		strings.TrimSpace(in.Deadline) != "" || in.ClearDeadline || in.Note != nil {
 
 		payload := taskservice.UpdateTaskInput{
 			Title:         in.Title,

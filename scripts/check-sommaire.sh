@@ -68,8 +68,13 @@ check_one() {
 if [[ $# -gt 0 ]]; then
 	for f in "$@"; do check_one "$f"; done
 else
+	# Le périmètre vient de git, pas de `find .` : suivis + non suivis non ignorés.
+	#
+	# `find .` descendait dans .claude/worktrees/, où les agents montent des copies JETABLES du
+	# dépôt : la cible échouait sur un fichier disparu entre le find et la lecture. Un garde-fou
+	# qui échoue par intermittence sur du code qui n'est pas le sien ne garde rien.
 	while IFS= read -r -d '' f; do check_one "$f"; done \
-		< <(find . -type f -name '*.go' -print0)
+		< <(git ls-files -z --cached --others --exclude-standard -- '*.go')
 fi
 
 if [[ $status -eq 0 ]]; then

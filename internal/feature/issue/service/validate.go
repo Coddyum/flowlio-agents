@@ -4,13 +4,13 @@ package service
 //
 // | Élément          | Résumé                                                      | Ligne |
 // |------------------|-------------------------------------------------------------|-------|
-// | validateTitle    | Vérifie qu'un titre n'est ni vide ni démesuré                 | 46    |
-// | validateBody     | Vérifie qu'un corps de message est présent et borné           | 61    |
-// | validateRole     | Vérifie qu'un rôle fait partie du vocabulaire                 | 73    |
-// | validateState    | Vérifie qu'un état fait partie du vocabulaire                 | 82    |
-// | validateScope    | Refuse un scope de tenancy incomplet                          | 92    |
-// | clampLimit       | Ramène une limite de listing dans les bornes                  | 100   |
-// | translateStore   | Traduit une erreur de store en erreur domaine                 | 115   |
+// | validateTitle    | Vérifie qu'un titre n'est ni vide ni démesuré                 | 53    |
+// | validateBody     | Vérifie qu'un corps de message est présent et borné           | 68    |
+// | validateRole     | Vérifie qu'un rôle fait partie du vocabulaire                 | 80    |
+// | validateState    | Vérifie qu'un état fait partie du vocabulaire                 | 89    |
+// | validateScope    | Refuse un scope de tenancy incomplet                          | 99    |
+// | clampLimit       | Ramène une limite de listing dans les bornes                  | 107   |
+// | translateStore   | Traduit une erreur de store en erreur domaine                 | 122   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -28,9 +28,16 @@ import (
 	"github.com/google/uuid"
 )
 
+// MaxBodyLen est la taille maximale du corps markdown d'une issue ou d'un message.
+//
+// Exportée pour la même raison que son homologue de la feature task : le handler doit DÉRIVER sa
+// borne de transport de ce que le service accepte, au lieu de la choisir à côté. Une borne de
+// champ qu'une requête ne peut pas atteindre n'est pas une borne.
+const MaxBodyLen = 64 << 10
+
 const (
 	maxTitleLen = 200
-	maxBodyLen  = 64 << 10
+	maxBodyLen  = MaxBodyLen
 
 	defaultLimit = 20
 	maxLimit     = 100

@@ -1,10 +1,73 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/Coddyum/flowlio-ia/internal/feature/task/service"
 )
+
+// Les deux plus grands champs qu'une mise à jour peut porter doivent tenir dans UNE requête.
+//
+// `service.MaxBodyLen` borne chaque texte, `maxBodyBytes` borne la requête entière : deux bornes
+// différentes, qui doivent rester cohérentes. Elles ne l'étaient plus depuis que la note voyage
+// dans le patch — 2 × 64 KiB pèsent 131 093 octets contre 131 072 autorisés, et la requête était
+// rejetée AVANT toute validation, avec `http: request body too large` pour seule explication.
+// L'agent n'apprenait ni quel champ était en cause, ni quelle borne il avait dépassée.
+//
+// MUTATION : ramener maxBodyBytes à `128 << 10` fait tomber ce test.
+func TestLargestAcceptedFieldsFitInOneRequest(t *testing.T) {
+	payload, err := json.Marshal(map[string]any{
+		"title": strings.Repeat("t", 200),
+		"body":  strings.Repeat("a", service.MaxBodyLen),
+		"note":  strings.Repeat("b", service.MaxBodyLen),
+	})
+	if err != nil {
+		t.Fatalf("encodage de la charge: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/task/34", bytes.NewReader(payload))
+	rec := httptest.NewRecorder()
+
+	var in service.UpdateTaskInput
+	if err := New(nil).decodeBody(rec, req, &in); err != nil {
+		t.Fatalf("requête de %d octets refusée alors que chaque champ est dans sa borne: %v",
+			len(payload), err)
+	}
+	if in.Body == nil || len(*in.Body) != service.MaxBodyLen {
+		t.Errorf("description reçue tronquée: %d octets, attendu %d", len(*in.Body), service.MaxBodyLen)
+	}
+	if in.Note == nil || len(*in.Note) != service.MaxBodyLen {
+		t.Errorf("note reçue tronquée: %d octets, attendu %d", len(*in.Note), service.MaxBodyLen)
+	}
+}
+
+// Au-delà du garde-fou de transport, le message doit dire QUELLE borne a été dépassée. Sans lui,
+// `http: request body too large` laisse l'agent réessayer à l'identique.
+//
+// MUTATION : rendre `errors.Join(service.ErrInvalidInput, err)` sur ce chemin fait tomber ce test.
+func TestOversizedBodySaysWhichLimitWasHit(t *testing.T) {
+	payload, err := json.Marshal(map[string]any{"body": strings.Repeat("a", 16*service.MaxBodyLen)})
+	if err != nil {
+		t.Fatalf("encodage de la charge: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/task/34", bytes.NewReader(payload))
+	rec := httptest.NewRecorder()
+
+	var in service.UpdateTaskInput
+	err = New(nil).decodeBody(rec, req, &in)
+	if err == nil {
+		t.Fatalf("un corps de %d octets doit être refusé", len(payload))
+	}
+	if !strings.Contains(err.Error(), "65536") {
+		t.Errorf("le message ne nomme pas la borne par champ: %v", err)
+	}
+}
 
 // unserializable ne peut pas être encodé en JSON : les canaux n'ont pas de représentation.
 type unserializable struct {

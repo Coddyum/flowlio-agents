@@ -4,14 +4,14 @@ package service
 //
 // | Élément          | Résumé                                                      | Ligne |
 // |------------------|-------------------------------------------------------------|-------|
-// | validateStatus   | Vérifie qu'un statut fait partie du vocabulaire du produit    | 55    |
-// | validatePriority | Vérifie qu'une priorité fait partie du vocabulaire            | 64    |
-// | validateTitle    | Vérifie qu'un titre n'est ni vide ni démesuré                 | 74    |
-// | validateBody     | Vérifie qu'un corps markdown ne dépasse pas la borne          | 86    |
-// | validateDeadline | Refuse une échéance dont l'année n'est pas sérialisable       | 105   |
-// | validateScope    | Refuse un scope de tenancy incomplet                          | 118   |
-// | clampLimit       | Ramène une limite de listing dans les bornes                  | 128   |
-// | translateStore   | Traduit une erreur de store en erreur domaine                 | 144   |
+// | validateStatus   | Vérifie qu'un statut fait partie du vocabulaire du produit    | 65    |
+// | validatePriority | Vérifie qu'une priorité fait partie du vocabulaire            | 74    |
+// | validateTitle    | Vérifie qu'un titre n'est ni vide ni démesuré                 | 84    |
+// | validateBody     | Vérifie qu'un corps markdown ne dépasse pas la borne          | 96    |
+// | validateDeadline | Refuse une échéance dont l'année n'est pas sérialisable       | 115   |
+// | validateScope    | Refuse un scope de tenancy incomplet                          | 128   |
+// | clampLimit       | Ramène une limite de listing dans les bornes                  | 138   |
+// | translateStore   | Traduit une erreur de store en erreur domaine                 | 154   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -30,11 +30,21 @@ import (
 	"github.com/google/uuid"
 )
 
+// MaxBodyLen est la taille maximale d'un texte markdown accepté par le service : description
+// d'une tâche, ou note de progression.
+//
+// Elle est EXPORTÉE parce que le handler doit en dériver sa propre borne de transport. Les deux
+// ont vécu séparément le temps d'un commit, et le résultat était qu'une requête portant les deux
+// plus grands champs que ce service accepte était rejetée avant toute validation, avec un message
+// qui ne disait pas lequel des deux était en cause. Une borne de champ qui n'est pas atteignable
+// n'est pas une borne, c'est une promesse fausse.
+const MaxBodyLen = 64 << 10
+
 // Bornes de taille. Le corps est large — une tâche porte une consigne complète pour un agent —
 // mais il reste borné : un backlog n'est pas un espace de stockage.
 const (
 	maxTitleLen = 200
-	maxBodyLen  = 64 << 10
+	maxBodyLen  = MaxBodyLen
 
 	defaultLimit = 50
 	maxLimit     = 200

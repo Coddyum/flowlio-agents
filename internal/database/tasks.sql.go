@@ -308,6 +308,13 @@ type UpdateTaskParams struct {
 // serait impossible d'effacer une échéance.
 // Une tâche archivée n'est pas modifiable : la clause archived_at IS NULL la rend introuvable
 // pour cette query, ce qui remonte le même ErrNotFound qu'un numéro inexistant.
+//
+// TRANCHÉ — un patch ne portant QU'UNE NOTE déplace quand même updated_at, et c'est voulu.
+// Une note EST une progression : la tâche remonte en tête du seau `in_progress` de check_inbox,
+// qui trie par updated_at DESC, donc la session suivante retrouve d'abord ce que la précédente
+// a réellement touché en dernier. L'ancien POST /notes ne le déplaçait pas — c'était l'anomalie,
+// pas la référence : il laissait une tâche travaillée pendant une heure au fond de la pile.
+// Ce qui n'allait pas, c'est que ce changement de comportement soit arrivé sans être décidé.
 func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, error) {
 	row := q.db.QueryRowContext(ctx, updateTask,
 		arg.Title,

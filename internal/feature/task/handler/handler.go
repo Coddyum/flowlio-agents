@@ -4,14 +4,14 @@ package handler
 //
 // | Élément            | Résumé                                                    | Ligne |
 // |--------------------|-----------------------------------------------------------|-------|
-// | Handler            | Adaptateur HTTP de la feature task                          | 36    |
-// | New                | Crée le handler task                                        | 41    |
-// | Handler.writeJSON  | Sérialise une réponse JSON                                  | 51    |
-// | Handler.writeError | Répond une erreur domaine, sans fuite d'interne             | 79    |
-// | Handler.decodeBody | Décode un corps JSON en refusant les champs inconnus        | 97    |
-// | Handler.scope      | Extrait la paire team + projet du token de la requête       | 112   |
-// | Handler.number     | Lit le numéro de tâche du chemin                            | 125   |
-// | errorBody          | Forme unique des réponses d'erreur                          | 138   |
+// | Handler            | Adaptateur HTTP de la feature task                          | 49    |
+// | New                | Crée le handler task                                        | 54    |
+// | Handler.writeJSON  | Sérialise une réponse JSON                                  | 64    |
+// | Handler.writeError | Répond une erreur domaine, sans fuite d'interne             | 92    |
+// | Handler.decodeBody | Décode un corps JSON en refusant les champs inconnus        | 114   |
+// | Handler.scope      | Extrait la paire team + projet du token de la requête       | 134   |
+// | Handler.number     | Lit le numéro de tâche du chemin                            | 147   |
+// | errorBody          | Forme unique des réponses d'erreur                          | 160   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -19,6 +19,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -28,9 +29,21 @@ import (
 	"github.com/google/uuid"
 )
 
-// maxBodyBytes borne le corps d'une requête. Il est plus large que celui de workspace : une
-// description de tâche est une consigne complète destinée à un agent.
-const maxBodyBytes = 128 << 10
+// maxBodyBytes borne le corps d'une requête. Ce n'est PAS une règle métier — les bornes de champ
+// vivent dans le service — mais un garde-fou de transport, et il est DÉRIVÉ de ce que le service
+// accepte au lieu d'être choisi à côté.
+//
+// Une mise à jour porte au plus deux textes bornés à service.MaxBodyLen (la description et la
+// note), plus un titre. Le facteur 2 paie l'échappement JSON : un octet de texte peut en coûter
+// deux une fois encodé (`"` → `\"`), et six sur un caractère de contrôle — un texte qui les
+// enchaîne n'est pas un cas légitime, et c'est précisément là que ce garde-fou doit reprendre la
+// main plutôt que de laisser la validation de champ le faire.
+//
+// Les deux bornes ont vécu séparément le temps d'un commit : 128 KiB ici, 2 × 64 KiB de champs
+// là-bas, et la combinaison des deux maxima pesait 131 304 octets pour 131 072 autorisés. La
+// requête était rejetée AVANT toute validation, donc le message ne disait pas quel champ était en
+// cause. Une borne de champ inatteignable n'est pas une borne.
+const maxBodyBytes = 2*2*service.MaxBodyLen + 4<<10
 
 // Handler traduit HTTP ↔ service. Aucune logique métier ici.
 type Handler struct {
@@ -94,10 +107,19 @@ func (h *Handler) writeError(w http.ResponseWriter, err error) {
 
 // decodeBody décode le corps JSON. La taille est bornée et les champs inconnus sont refusés :
 // une faute de frappe dans un script d'agent doit échouer bruyamment, pas être ignorée.
+//
+// Le dépassement de taille porte son propre message. `http: request body too large`, seul, ne dit
+// ni quelle borne a été dépassée ni par quel champ : un agent le relit comme une panne et
+// réessaie à l'identique.
 func (h *Handler) decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return fmt.Errorf("%w: requête au-delà de %d octets ; chaque texte est borné à %d",
+				service.ErrInvalidInput, maxBodyBytes, service.MaxBodyLen)
+		}
 		return errors.Join(service.ErrInvalidInput, err)
 	}
 	return nil

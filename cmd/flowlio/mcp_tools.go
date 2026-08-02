@@ -9,7 +9,7 @@ package main
 // | prop            | Construit une propriété de schéma JSON                         | 69    |
 // | enumProp        | Construit une propriété contrainte à un jeu de valeurs         | 78    |
 // | tools           | Les huit outils exposés, et rien de plus                        | 87    |
-// | toolsListResult | Réponse de tools/list                                          | 210   |
+// | toolsListResult | Réponse de tools/list                                          | 212   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -131,7 +131,8 @@ func tools() []toolDef {
 			Name: "update_task",
 			Description: "Modifie une tâche du projet courant, et note au passage ce qui a été " +
 				"fait. Seuls les champs fournis changent ; les autres restent en l'état. " +
-				"Une tâche archivée n'est plus modifiable.",
+				"ref + note seuls suffisent : c'est ainsi qu'on laisse une trace sans rien " +
+				"changer d'autre. Une tâche archivée n'est plus modifiable.",
 			InputSchema: object(map[string]any{
 				"ref": prop("string",
 					"Référence de la tâche, par exemple CORE-34. Le numéro seul est accepté."),
@@ -145,7 +146,8 @@ func tools() []toolDef {
 				"note": prop("string",
 					"Note de progression ajoutée au fil, en markdown. C'est la trace que relira "+
 						"la session suivante : y écrire ce qui a été fait et ce qui reste. "+
-						"Écrite avec le reste du changement, ou pas du tout."),
+						"Écrite avec le reste du changement, ou pas du tout. Seule avec ref, "+
+						"elle remonte la tâche en tête de ce qui est en cours."),
 				"archive": prop("boolean",
 					"Sort la tâche du backlog actif. Elle reste lisible, avec ses notes."),
 			}, "ref"),
