@@ -13,8 +13,7 @@ import (
 
 const claimNextNumber = `-- name: ClaimNextNumber :one
 UPDATE projects
-SET next_number = next_number + 1,
-    updated_at  = now()
+SET next_number = next_number + 1
 WHERE id = $1 AND team_id = $2
 RETURNING (next_number - 1)::bigint AS claimed_number
 `
@@ -25,9 +24,17 @@ type ClaimNextNumberParams struct {
 }
 
 // ClaimNextNumber réserve le prochain identifiant lisible du projet (FRNT-34).
-// Le UPDATE ... RETURNING sérialise les appels concurrents sur la ligne du projet.
-// Le cast en bigint est explicite : sans lui, sqlc infère un int32 pour l'expression
-// `next_number - 1`, alors que la colonne est un bigint.
+// Le UPDATE ... RETURNING sérialise les appels concurrents sur la ligne du projet, et rollback
+// avec sa transaction : aucun trou dans la numérotation.
+//
+// CONTRAINTE DE VERROUILLAGE — ne jamais ajouter ici l'écriture d'une colonne de clé (ni une
+// colonne couverte par un index unique). Tant que l'UPDATE ne touche que des colonnes non-clé,
+// Postgres prend un FOR NO KEY UPDATE, compatible avec le FOR KEY SHARE que l'INSERT d'issue
+// pose sur ses DEUX projets parents. Le jour où ce n'est plus vrai, deux agents symétriques
+// (FRNT→CORE et CORE→FRNT) s'interbloquent.
+//
+// `updated_at` n'est volontairement PAS touché : créer une tâche ou une issue n'est pas modifier
+// le projet. L'y écrire ferait de projects.updated_at une « date du dernier objet créé ».
 func (q *Queries) ClaimNextNumber(ctx context.Context, arg ClaimNextNumberParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, claimNextNumber, arg.ID, arg.TeamID)
 	var claimed_number int64

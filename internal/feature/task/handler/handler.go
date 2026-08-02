@@ -6,12 +6,12 @@ package handler
 // |--------------------|-----------------------------------------------------------|-------|
 // | Handler            | Adaptateur HTTP de la feature task                          | 36    |
 // | New                | Crée le handler task                                        | 41    |
-// | Handler.writeJSON  | Sérialise une réponse JSON                                  | 47    |
-// | Handler.writeError | Répond une erreur domaine, sans fuite d'interne             | 63    |
-// | Handler.decodeBody | Décode un corps JSON en refusant les champs inconnus        | 81    |
-// | Handler.scope      | Extrait la paire team + projet du token de la requête       | 96    |
-// | Handler.number     | Lit le numéro de tâche du chemin                            | 109   |
-// | errorBody          | Forme unique des réponses d'erreur                          | 122   |
+// | Handler.writeJSON  | Sérialise une réponse JSON                                  | 51    |
+// | Handler.writeError | Répond une erreur domaine, sans fuite d'interne             | 79    |
+// | Handler.decodeBody | Décode un corps JSON en refusant les champs inconnus        | 97    |
+// | Handler.scope      | Extrait la paire team + projet du token de la requête       | 112   |
+// | Handler.number     | Lit le numéro de tâche du chemin                            | 125   |
+// | errorBody          | Forme unique des réponses d'erreur                          | 138   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -42,16 +42,32 @@ func New(svc service.Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-// writeJSON sérialise la réponse. Une erreur d'encodage est journalisée : les en-têtes sont déjà
-// partis, on ne peut plus changer le statut.
+// writeJSON sérialise la réponse AVANT d'engager le code de statut.
+//
+// L'ordre inverse — écrire le statut puis encoder dans le flux — transforme tout échec de
+// sérialisation en succès à corps vide : le client a déjà reçu 200, et l'agent en déduit « aucune
+// tâche » là où le serveur sait qu'il a échoué. Sérialiser d'abord permet de répondre 500, qui
+// est la vérité.
 func (h *Handler) writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
 	if v == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
 		return
 	}
-	if err := json.NewEncoder(w).Encode(v); err != nil {
+
+	body, err := json.Marshal(v)
+	if err != nil {
 		log.Printf("task handler: encode response: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"internal error"}`))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	if _, err := w.Write(body); err != nil {
+		log.Printf("task handler: write response: %v", err)
 	}
 }
 

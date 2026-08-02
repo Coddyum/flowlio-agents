@@ -11,7 +11,7 @@ package store
 // | TaskPatch  | Patch partiel d'une tâche : un champ nil laisse la valeur en place   | 90    |
 // | Store      | Contrat de persistance de la feature task                            | 108   |
 // | store      | Implémentation adossée aux queries générées par sqlc                 | 129   |
-// | New        | Crée le store task                                                   | 135   |
+// | New        | Crée le store task                                                   | 138   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -129,6 +129,9 @@ type Store interface {
 type store struct {
 	q  *database.Queries
 	db *sql.DB
+	// inTx marque un store qui porte déjà une transaction, pour que WithTx refuse l'imbrication
+	// au lieu d'en ouvrir une seconde sur une autre connexion.
+	inTx bool
 }
 
 // New crée le store task.

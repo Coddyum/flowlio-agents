@@ -13,6 +13,91 @@ import (
 	"github.com/google/uuid"
 )
 
+type EventSubject string
+
+const (
+	EventSubjectTask  EventSubject = "task"
+	EventSubjectIssue EventSubject = "issue"
+)
+
+func (e *EventSubject) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = EventSubject(s)
+	case string:
+		*e = EventSubject(s)
+	default:
+		return fmt.Errorf("unsupported scan type for EventSubject: %T", src)
+	}
+	return nil
+}
+
+type NullEventSubject struct {
+	EventSubject EventSubject `json:"event_subject"`
+	Valid        bool         `json:"valid"` // Valid is true if EventSubject is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullEventSubject) Scan(value interface{}) error {
+	if value == nil {
+		ns.EventSubject, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.EventSubject.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullEventSubject) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.EventSubject), nil
+}
+
+type IssueState string
+
+const (
+	IssueStateOpen     IssueState = "open"
+	IssueStateAnswered IssueState = "answered"
+	IssueStateClosed   IssueState = "closed"
+)
+
+func (e *IssueState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = IssueState(s)
+	case string:
+		*e = IssueState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for IssueState: %T", src)
+	}
+	return nil
+}
+
+type NullIssueState struct {
+	IssueState IssueState `json:"issue_state"`
+	Valid      bool       `json:"valid"` // Valid is true if IssueState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullIssueState) Scan(value interface{}) error {
+	if value == nil {
+		ns.IssueState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.IssueState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullIssueState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.IssueState), nil
+}
+
 type TaskPriority string
 
 const (
@@ -143,6 +228,38 @@ func (ns NullTokenScope) Value() (driver.Value, error) {
 	return string(ns.TokenScope), nil
 }
 
+type Event struct {
+	ID             int64        `json:"id"`
+	TeamID         uuid.UUID    `json:"team_id"`
+	ProjectID      uuid.UUID    `json:"project_id"`
+	ActorProjectID uuid.UUID    `json:"actor_project_id"`
+	Kind           string       `json:"kind"`
+	SubjectType    EventSubject `json:"subject_type"`
+	SubjectID      uuid.UUID    `json:"subject_id"`
+	CreatedAt      time.Time    `json:"created_at"`
+}
+
+type Issue struct {
+	ID              uuid.UUID    `json:"id"`
+	TeamID          uuid.UUID    `json:"team_id"`
+	ProjectID       uuid.UUID    `json:"project_id"`
+	AuthorProjectID uuid.UUID    `json:"author_project_id"`
+	Number          int64        `json:"number"`
+	Title           string       `json:"title"`
+	State           IssueState   `json:"state"`
+	CreatedAt       time.Time    `json:"created_at"`
+	UpdatedAt       time.Time    `json:"updated_at"`
+	ClosedAt        sql.NullTime `json:"closed_at"`
+}
+
+type IssueMessage struct {
+	ID              uuid.UUID `json:"id"`
+	IssueID         uuid.UUID `json:"issue_id"`
+	AuthorProjectID uuid.UUID `json:"author_project_id"`
+	BodyMd          string    `json:"body_md"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 type Project struct {
 	ID         uuid.UUID `json:"id"`
 	TeamID     uuid.UUID `json:"team_id"`
@@ -194,4 +311,10 @@ type Token struct {
 	LastUsedAt sql.NullTime  `json:"last_used_at"`
 	RevokedAt  sql.NullTime  `json:"revoked_at"`
 	Scope      TokenScope    `json:"scope"`
+}
+
+type TokenCursor struct {
+	TokenID     uuid.UUID `json:"token_id"`
+	LastEventID int64     `json:"last_event_id"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }

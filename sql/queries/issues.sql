@@ -1,0 +1,125 @@
+-- Le scope est DANS la query, sans exception. La clause de visibilité canonique est
+--   team_id = @team_id AND (project_id = @project_id OR author_project_id = @project_id)
+-- où @project_id vient EXCLUSIVEMENT de Principal.ProjectID. `team_id` y figure toujours, même
+-- s'il est redondant avec le projet : c'est la défense en profondeur si le projet provenait un
+-- jour d'une mauvaise résolution.
+--
+-- Ni auteur ni destinataire ⇒ zéro ligne, strictement indiscernable d'un numéro inexistant. Il
+-- n'existe aucun 403 sur une clé d'issue, donc aucun oracle permettant d'énumérer le backlog
+-- d'un repo frère par answer_issue("CORE-1"), ("CORE-2"), …
+
+-- CreateIssue résout le destinataire, réserve son numéro et insère l'issue en UNE instruction.
+--
+-- Une clé inconnue — ou connue mais appartenant à une autre team — ne matche pas la CTE, donc
+-- l'INSERT ne produit rien ET aucun numéro n'est consommé. C'est ce qui empêche de faire avancer
+-- le compteur d'un projet tiers en le devinant, et ce qui rend « inexistant » et « hors team »
+-- indistinguables sans que le code ait à s'en préoccuper.
+--
+-- Cette instruction doit être la PREMIÈRE de sa transaction : c'est la seule prise de verrou de
+-- ligne longue durée du chemin d'écriture, et il ne doit y en avoir qu'une (cf. ClaimNextNumber).
+-- name: CreateIssue :one
+WITH claimed AS (
+    UPDATE projects p
+    SET next_number = p.next_number + 1
+    WHERE p.team_id = @team_id AND p.key = @to_project_key
+    RETURNING p.id AS project_id, (p.next_number - 1)::bigint AS number
+)
+INSERT INTO issues (team_id, project_id, author_project_id, number, title, state)
+SELECT @team_id, c.project_id, @author_project_id, c.number, @title, 'open'
+FROM claimed c
+RETURNING *;
+
+-- name: AppendFirstMessage :one
+INSERT INTO issue_messages (issue_id, author_project_id, body_md)
+VALUES (@issue_id, @author_project_id, @body_md)
+RETURNING *;
+
+-- GetIssueByRef résout CORE-34 pour un appelant donné. Le projet est désigné par sa CLÉ, jamais
+-- par un UUID : un agent n'en manipule pas, donc il ne peut pas en injecter un.
+-- name: GetIssueByRef :one
+SELECT i.*, p.key AS project_key, a.key AS author_project_key
+FROM issues i
+JOIN projects p ON p.id = i.project_id        AND p.team_id = i.team_id
+JOIN projects a ON a.id = i.author_project_id AND a.team_id = i.team_id
+WHERE i.team_id = @team_id
+  AND p.key     = @project_key
+  AND i.number  = @number
+  AND (i.project_id = @caller_project_id OR i.author_project_id = @caller_project_id);
+
+-- Le fil est scopé par jointure sur son issue : impossible de lire les messages d'une issue
+-- qu'on ne voit pas, même en connaissant son identifiant.
+-- name: ListIssueMessages :many
+SELECT m.body_md, m.created_at, ap.key AS author_key
+FROM issue_messages m
+JOIN issues i    ON i.id  = m.issue_id
+JOIN projects ap ON ap.id = m.author_project_id
+WHERE i.team_id = @team_id
+  AND i.id      = @issue_id
+  AND (i.project_id = @caller_project_id OR i.author_project_id = @caller_project_id)
+ORDER BY m.created_at, m.id;
+
+-- Une seule query pour les trois cas de rôle : trois queries seraient trois occasions de
+-- re-sécuriser. `role` n'est JAMAIS une autorisation — c'est une restriction posée par-dessus la
+-- clause de visibilité complète, qui reste inconditionnelle.
+-- Filtre d'état par sqlc.narg et jamais par une sentinelle '' castée en enum : SQL ne garantit
+-- aucun court-circuit sur OR, et ''::issue_state lève un 22P02 selon le plan choisi.
+-- name: ListIssues :many
+SELECT i.number, i.state, i.title, i.updated_at,
+       p.key AS project_key,
+       a.key AS author_project_key,
+       (i.project_id = @project_id) AS incoming
+FROM issues i
+JOIN projects p ON p.id = i.project_id        AND p.team_id = i.team_id
+JOIN projects a ON a.id = i.author_project_id AND a.team_id = i.team_id
+WHERE i.team_id = @team_id
+  AND (i.project_id = @project_id OR i.author_project_id = @project_id)
+  AND (NOT @only_incoming::boolean OR i.project_id        = @project_id)
+  AND (NOT @only_outgoing::boolean OR i.author_project_id = @project_id)
+  AND (sqlc.narg('state')::issue_state IS NULL OR i.state = sqlc.narg('state')::issue_state)
+  AND (@include_closed::boolean OR i.state <> 'closed')
+ORDER BY i.updated_at DESC, i.number DESC
+LIMIT @max_rows::int;
+
+-- AnswerIssue ajoute un message ET applique la transition d'état en UNE instruction.
+--
+-- Deux statements séparés laisseraient passer ceci : l'appelant poste son message, le
+-- correspondant ferme l'issue, la transition ne matche plus — le message existe dans une issue
+-- close, updated_at n'a pas bougé, et l'inbox (dérivée de l'état) ne le montrera jamais. Une
+-- réponse écrite qui disparaît.
+--
+-- L'état n'est jamais un paramètre : il est calculé depuis QUI parle. Un agent ne peut pas
+-- mentir sur l'état qu'il produit.
+--   - close = true                → closed (les deux participants peuvent fermer, c'est terminal)
+--   - message du destinataire     → answered
+--   - message de l'auteur         → open (la relance remet le destinataire en dette)
+--
+-- `AND i.state <> 'closed'` est non négociable : sans lui, répondre à une issue fermée la
+-- ressuscite. `closed_at` n'est jamais écrasé par NULL : un CASE ... ELSE NULL effacerait la
+-- date de clôture à chaque message.
+-- name: AnswerIssue :one
+WITH target AS (
+    UPDATE issues i
+    SET state = CASE
+                    WHEN @close::boolean            THEN 'closed'
+                    WHEN i.project_id = @project_id THEN 'answered'
+                    ELSE                                 'open'
+                END::issue_state,
+        closed_at  = CASE WHEN @close::boolean THEN now() ELSE i.closed_at END,
+        updated_at = now()
+    WHERE i.team_id    = @team_id
+      AND i.project_id = @target_project_id
+      AND i.number     = @number
+      AND (i.project_id = @project_id OR i.author_project_id = @project_id)
+      AND i.state <> 'closed'
+    RETURNING i.id, i.number, i.state
+),
+appended AS (
+    INSERT INTO issue_messages (issue_id, author_project_id, body_md)
+    SELECT t.id, @project_id, @body_md FROM target t
+    RETURNING issue_id
+)
+SELECT t.id, t.number, t.state FROM target t;
+
+-- name: AppendEvent :exec
+INSERT INTO events (team_id, project_id, actor_project_id, kind, subject_type, subject_id)
+VALUES (@team_id, @project_id, @actor_project_id, @kind, @subject_type, @subject_id);

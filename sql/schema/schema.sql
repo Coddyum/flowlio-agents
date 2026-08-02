@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict AetEj6cQNvGdVWIO82Ggom0ehZgjmkA4MEyWyoqxenmMMUmcgKdem2vTQVh44Ue
+\restrict yMoetANy8eGuLM5uxZ5zHDoS7QPJJ2xBm78KXkzx9d6nbz7WQxiL54qbnZCvdw5
 
 -- Dumped from database version 18.4
 -- Dumped by pg_dump version 18.4
@@ -18,6 +18,27 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: event_subject; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.event_subject AS ENUM (
+    'task',
+    'issue'
+);
+
+
+--
+-- Name: issue_state; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.issue_state AS ENUM (
+    'open',
+    'answered',
+    'closed'
+);
+
 
 --
 -- Name: task_priority; Type: TYPE; Schema: public; Owner: -
@@ -56,6 +77,74 @@ CREATE TYPE public.token_scope AS ENUM (
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
+
+--
+-- Name: events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.events (
+    id bigint NOT NULL,
+    team_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    actor_project_id uuid NOT NULL,
+    kind text NOT NULL,
+    subject_type public.event_subject NOT NULL,
+    subject_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT events_kind_format CHECK ((kind ~ '^[a-z_]+\.[a-z_]+$'::text))
+);
+
+
+--
+-- Name: events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.events ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: issue_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_messages (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    issue_id uuid NOT NULL,
+    author_project_id uuid NOT NULL,
+    body_md text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_messages_body_not_blank CHECK ((btrim(body_md) <> ''::text))
+);
+
+
+--
+-- Name: issues; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issues (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    team_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    author_project_id uuid NOT NULL,
+    number bigint NOT NULL,
+    title text NOT NULL,
+    state public.issue_state DEFAULT 'open'::public.issue_state NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    closed_at timestamp with time zone,
+    CONSTRAINT issues_closed_at_shape CHECK (((state = 'closed'::public.issue_state) = (closed_at IS NOT NULL))),
+    CONSTRAINT issues_not_self CHECK ((author_project_id <> project_id)),
+    CONSTRAINT issues_number_positive CHECK ((number >= 1)),
+    CONSTRAINT issues_title_length CHECK ((char_length(title) <= 200)),
+    CONSTRAINT issues_title_not_blank CHECK ((btrim(title) <> ''::text))
+);
+
 
 --
 -- Name: projects; Type: TABLE; Schema: public; Owner: -
@@ -115,6 +204,7 @@ CREATE TABLE public.tasks (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     archived_at timestamp with time zone,
+    CONSTRAINT tasks_deadline_bounded CHECK (((deadline IS NULL) OR (deadline < '9999-01-01 00:00:00+00'::timestamp with time zone))),
     CONSTRAINT tasks_number_positive CHECK ((number >= 1)),
     CONSTRAINT tasks_title_length CHECK ((char_length(title) <= 200)),
     CONSTRAINT tasks_title_not_blank CHECK ((btrim(title) <> ''::text))
@@ -137,6 +227,18 @@ CREATE TABLE public.teams (
 
 
 --
+-- Name: token_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.token_cursors (
+    token_id uuid NOT NULL,
+    last_event_id bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT token_cursors_last_event_id_positive CHECK ((last_event_id >= 0))
+);
+
+
+--
 -- Name: tokens; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -155,6 +257,38 @@ CREATE TABLE public.tokens (
     CONSTRAINT agent_tokens_prefix_format CHECK ((prefix ~ '^[a-z0-9]{12}$'::text)),
     CONSTRAINT tokens_scope_shape CHECK ((((scope = 'project'::public.token_scope) AND (team_id IS NOT NULL) AND (project_id IS NOT NULL)) OR ((scope = 'admin'::public.token_scope) AND (project_id IS NULL))))
 );
+
+
+--
+-- Name: events events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.events
+    ADD CONSTRAINT events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_messages issue_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_messages
+    ADD CONSTRAINT issue_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issues issues_number_unique_per_project; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_number_unique_per_project UNIQUE (project_id, number);
+
+
+--
+-- Name: issues issues_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_pkey PRIMARY KEY (id);
 
 
 --
@@ -230,6 +364,14 @@ ALTER TABLE ONLY public.teams
 
 
 --
+-- Name: token_cursors token_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.token_cursors
+    ADD CONSTRAINT token_cursors_pkey PRIMARY KEY (token_id);
+
+
+--
 -- Name: tokens tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -243,6 +385,55 @@ ALTER TABLE ONLY public.tokens
 
 ALTER TABLE ONLY public.tokens
     ADD CONSTRAINT tokens_prefix_key UNIQUE (prefix);
+
+
+--
+-- Name: events_actor_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX events_actor_idx ON public.events USING btree (actor_project_id);
+
+
+--
+-- Name: events_subject_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX events_subject_idx ON public.events USING btree (subject_id, id);
+
+
+--
+-- Name: events_team_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX events_team_idx ON public.events USING btree (team_id, id);
+
+
+--
+-- Name: issue_messages_author_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_messages_author_idx ON public.issue_messages USING btree (author_project_id);
+
+
+--
+-- Name: issue_messages_thread_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_messages_thread_idx ON public.issue_messages USING btree (issue_id, created_at, id);
+
+
+--
+-- Name: issues_incoming_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issues_incoming_idx ON public.issues USING btree (project_id, team_id, state, updated_at DESC);
+
+
+--
+-- Name: issues_outgoing_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issues_outgoing_idx ON public.issues USING btree (author_project_id, team_id, state, updated_at DESC);
 
 
 --
@@ -290,6 +481,54 @@ ALTER TABLE ONLY public.tokens
 
 
 --
+-- Name: events events_actor_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.events
+    ADD CONSTRAINT events_actor_fk FOREIGN KEY (actor_project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
+
+
+--
+-- Name: events events_project_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.events
+    ADD CONSTRAINT events_project_fk FOREIGN KEY (project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_messages issue_messages_author_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_messages
+    ADD CONSTRAINT issue_messages_author_project_id_fkey FOREIGN KEY (author_project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_messages issue_messages_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_messages
+    ADD CONSTRAINT issue_messages_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issues issues_author_project_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_author_project_fk FOREIGN KEY (author_project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
+
+
+--
+-- Name: issues issues_project_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_project_fk FOREIGN KEY (project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
+
+
+--
 -- Name: projects projects_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -314,8 +553,16 @@ ALTER TABLE ONLY public.tasks
 
 
 --
+-- Name: token_cursors token_cursors_token_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.token_cursors
+    ADD CONSTRAINT token_cursors_token_id_fkey FOREIGN KEY (token_id) REFERENCES public.tokens(id) ON DELETE CASCADE;
+
+
+--
 -- PostgreSQL database dump complete
 --
 
-\unrestrict AetEj6cQNvGdVWIO82Ggom0ehZgjmkA4MEyWyoqxenmMMUmcgKdem2vTQVh44Ue
+\unrestrict yMoetANy8eGuLM5uxZ5zHDoS7QPJJ2xBm78KXkzx9d6nbz7WQxiL54qbnZCvdw5
 

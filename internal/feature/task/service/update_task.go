@@ -17,6 +17,9 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 	if err := validateScope(in.TeamID, in.ProjectID); err != nil {
 		return Task{}, err
 	}
+	if err := validateDeadline(in.Deadline); err != nil {
+		return Task{}, err
+	}
 
 	patch := store.TaskPatch{
 		TeamID:        in.TeamID,

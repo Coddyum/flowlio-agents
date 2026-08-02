@@ -6,13 +6,13 @@ package handler
 // |---------------------|----------------------------------------------------------|-------|
 // | Handler             | Adaptateur HTTP de la feature workspace                   | 36    |
 // | New                 | Crée le handler avec l'auth partagée et le service        | 42    |
-// | Handler.writeJSON   | Sérialise une réponse JSON                                | 48    |
-// | Handler.writeError  | Répond une erreur domaine, sans fuite d'interne           | 62    |
-// | Handler.decodeBody  | Décode un corps JSON en refusant les champs inconnus      | 80    |
-// | Handler.principal   | Récupère le Principal déposé par le middleware            | 91    |
-// | Handler.teamFor     | Résout la team de la requête selon la portée du token     | 103   |
-// | errorBody           | Forme unique des réponses d'erreur                        | 118   |
-// | whoamiResponse      | Portée du token ajoutée à l'identité résolue              | 123   |
+// | Handler.writeJSON   | Sérialise une réponse JSON                                | 51    |
+// | Handler.writeError  | Répond une erreur domaine, sans fuite d'interne           | 77    |
+// | Handler.decodeBody  | Décode un corps JSON en refusant les champs inconnus      | 95    |
+// | Handler.principal   | Récupère le Principal déposé par le middleware            | 106   |
+// | Handler.teamFor     | Résout la team de la requête selon la portée du token     | 118   |
+// | errorBody           | Forme unique des réponses d'erreur                        | 133   |
+// | whoamiResponse      | Portée du token ajoutée à l'identité résolue              | 138   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -43,16 +43,31 @@ func New(authSvc auth.Service, svc service.Service) *Handler {
 	return &Handler{auth: authSvc, svc: svc}
 }
 
-// writeJSON sérialise la réponse. Une erreur d'encodage est journalisée : les en-têtes sont
-// déjà partis, on ne peut plus changer le statut.
+// writeJSON sérialise la réponse AVANT d'engager le code de statut.
+//
+// L'ordre inverse transformerait tout échec de sérialisation en succès à corps vide : le client
+// aurait déjà reçu 200, alors que le serveur sait qu'il a échoué. Sérialiser d'abord permet de
+// répondre 500, qui est la vérité.
 func (h *Handler) writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
 	if v == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
 		return
 	}
-	if err := json.NewEncoder(w).Encode(v); err != nil {
+
+	body, err := json.Marshal(v)
+	if err != nil {
 		log.Printf("workspace handler: encode response: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"internal error"}`))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	if _, err := w.Write(body); err != nil {
+		log.Printf("workspace handler: write response: %v", err)
 	}
 }
 

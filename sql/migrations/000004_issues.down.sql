@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS token_cursors;
+DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS issue_messages;
+DROP TABLE IF EXISTS issues;
+DROP TYPE IF EXISTS event_subject;
+DROP TYPE IF EXISTS issue_state;

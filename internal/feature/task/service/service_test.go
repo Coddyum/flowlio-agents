@@ -2,9 +2,11 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Coddyum/flowlio-ia/internal/feature/task/service"
 	"github.com/Coddyum/flowlio-ia/internal/feature/task/store"
@@ -327,5 +329,47 @@ func TestStoreErrorsAreTranslated(t *testing.T) {
 	fake.writeErr = store.ErrConflict
 	if _, err := svc.ArchiveTask(context.Background(), teamID, projectID, 42); !errors.Is(err, service.ErrConflict) {
 		t.Errorf("ArchiveTask: erreur = %v, attendu ErrConflict", err)
+	}
+}
+
+// Une échéance dont l'année sort de [0, 9999] doit être refusée à l'entrée.
+//
+// Sans cette barrière, la tâche s'insère très bien puis rend illisible le listing du projet
+// entier : time.Time refuse d'encoder une telle année, et l'encodage a lieu APRÈS l'écriture en
+// base. Le serveur répondait 200 avec un corps vide, et un agent en concluait « backlog vide ».
+func TestDeadlineYearIsBounded(t *testing.T) {
+	teamID, projectID := uuid.New(), uuid.New()
+
+	// La charge exacte qui reproduisait le défaut : l'année écrite est 9999, mais le décalage de
+	// fuseau la fait basculer en l'an 10000 une fois ramenée en UTC.
+	overflow := time.Date(9999, 12, 31, 23, 30, 0, 0, time.FixedZone("test", -5*60*60))
+	if overflow.UTC().Year() != 10000 {
+		t.Fatalf("la charge de test ne déborde plus : année UTC = %d", overflow.UTC().Year())
+	}
+
+	svc := service.New(&fakeStore{})
+	if _, err := svc.CreateTask(context.Background(), service.CreateTaskInput{
+		TeamID: teamID, ProjectID: projectID, Title: "x", Deadline: &overflow,
+	}); !errors.Is(err, service.ErrInvalidInput) {
+		t.Errorf("CreateTask: erreur = %v, attendu ErrInvalidInput", err)
+	}
+
+	if _, err := svc.UpdateTask(context.Background(), service.UpdateTaskInput{
+		TeamID: teamID, ProjectID: projectID, Number: 1, Deadline: &overflow,
+	}); !errors.Is(err, service.ErrInvalidInput) {
+		t.Errorf("UpdateTask: erreur = %v, attendu ErrInvalidInput", err)
+	}
+
+	// Une échéance ordinaire reste acceptée, et ce qui est accepté doit être sérialisable :
+	// c'est l'invariant réel que la validation protège.
+	sane := time.Date(2027, 3, 1, 12, 0, 0, 0, time.UTC)
+	task, err := svc.CreateTask(context.Background(), service.CreateTaskInput{
+		TeamID: teamID, ProjectID: projectID, Title: "x", Deadline: &sane,
+	})
+	if err != nil {
+		t.Fatalf("échéance ordinaire refusée: %v", err)
+	}
+	if _, err := json.Marshal(task); err != nil {
+		t.Errorf("tâche acceptée mais non sérialisable: %v", err)
 	}
 }

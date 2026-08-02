@@ -24,6 +24,9 @@ func (s *service) CreateTask(ctx context.Context, in CreateTaskInput) (Task, err
 	if err := validateBody("description", in.Body); err != nil {
 		return Task{}, err
 	}
+	if err := validateDeadline(in.Deadline); err != nil {
+		return Task{}, err
+	}
 
 	// Un agent qui ouvre une tâche sans préciser l'état veut le cas nominal : à faire, priorité
 	// normale. Exiger ces deux champs ne rendrait aucune écriture plus sûre.
