@@ -138,6 +138,12 @@ func clampLimit(limit int) int32 {
 // translateStore ramène les erreurs du store aux erreurs domaine du service, en conservant la
 // cause pour le log.
 func translateStore(err error, op string) error {
+	// Le succès traverse cette fonction sans dommage : sans ce cas, fmt.Errorf envelopperait nil
+	// et fabriquerait une erreur là où il n'y en a pas.
+	if err == nil {
+		return nil
+	}
+
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return fmt.Errorf("%w: %s", ErrNotFound, op)

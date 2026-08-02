@@ -4,23 +4,22 @@ package main
 //
 // | Élément                 | Résumé                                                | Ligne |
 // |-------------------------|-------------------------------------------------------|-------|
-// | mcpServer.whoami        | Identité du token courant                               | 30    |
-// | mcpServer.listTasks     | Backlog du projet courant                               | 30    |
-// | mcpServer.getTask       | Une tâche et son fil de notes                           | 30    |
-// | mcpServer.createTask    | Ouvre une tâche et renvoie sa clé                       | 30    |
-// | mcpServer.updateTask    | Modifie une tâche, ou l'archive                         | 30    |
-// | mcpServer.addNote       | Ajoute une note de progression                          | 30    |
-// | mcpServer.parseKey      | Lit un argument key et le résout en numéro              | 30    |
-// | mcpServer.numberFromKey | Résout une clé lisible dans le projet du token          | 30    |
-// | mcpServer.taskPath      | Compose le chemin d'API d'une tâche                     | 30    |
-// | mcpServer.taskKey       | Compose la clé lisible d'un numéro                      | 30    |
-// | mcpServer.withKeys      | Ajoute sa clé lisible à chaque tâche d'un listing       | 30    |
+// | mcpServer.listTasks     | Backlog du projet courant                               | 42    |
+// | mcpServer.get           | Résout une référence, qu'elle soit tâche ou issue       | 83    |
+// | mcpServer.createTask    | Ouvre une tâche et renvoie sa clé                       | 122   |
+// | mcpServer.updateTask    | Modifie une tâche, ou l'archive                         | 158   |
+// | mcpServer.addNote       | Ajoute une note de progression                          | 215   |
+// | mcpServer.numberFromKey | Résout une clé lisible dans le projet du token          | 242   |
+// | mcpServer.taskPath      | Compose le chemin d'API d'une tâche                     | 265   |
+// | mcpServer.taskKey       | Compose la clé lisible d'un numéro                      | 270   |
+// | mcpServer.withKeys      | Ajoute sa clé lisible à chaque tâche d'un listing       | 275   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Implémentation des six outils. Le projet n'est JAMAIS un paramètre : il vient du token, résolu
-// une fois au démarrage. Aucun appel MCP ne peut donc désigner le backlog d'un autre projet.
+// Implémentation des outils de tâche. Le projet n'est JAMAIS un paramètre : il vient du token,
+// résolu une fois au démarrage. Aucun appel MCP ne peut donc désigner le backlog d'un autre
+// projet. Les outils d'issue et d'inbox sont dans mcp_issue_tools.go.
 
 import (
 	"context"
@@ -32,28 +31,12 @@ import (
 	"strconv"
 	"strings"
 
+	issueservice "github.com/Coddyum/flowlio-ia/internal/feature/issue/service"
 	taskservice "github.com/Coddyum/flowlio-ia/internal/feature/task/service"
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/service"
+	"github.com/Coddyum/flowlio-ia/internal/pkg/client"
 )
 
 const taskAPI = "/api/task"
-
-// whoami renvoie l'identité du token courant.
-func (s *mcpServer) whoami(ctx context.Context) (any, error) {
-	var out struct {
-		Scope string `json:"scope"`
-		service.Identity
-	}
-	if err := s.api.Do(ctx, http.MethodGet, workspaceAPI+"/whoami", nil, &out); err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"team":    out.TeamSlug,
-		"project": out.ProjectKey,
-		"name":    out.ProjectName,
-		"scope":   out.Scope,
-	}, nil
-}
 
 // listTasks renvoie le backlog du projet courant, chaque tâche portant sa clé lisible.
 func (s *mcpServer) listTasks(ctx context.Context, args json.RawMessage) (any, error) {
@@ -89,18 +72,50 @@ func (s *mcpServer) listTasks(ctx context.Context, args json.RawMessage) (any, e
 	return s.withKeys(tasks), nil
 }
 
-// getTask renvoie une tâche et son fil de notes.
-func (s *mcpServer) getTask(ctx context.Context, args json.RawMessage) (any, error) {
-	number, err := s.parseKey(args)
+// get résout une référence, qu'elle désigne une tâche ou une issue.
+//
+// Le compteur du projet est partagé entre les deux : un agent qui lit CORE-34 dans un commit,
+// une inbox ou un message d'issue ne SAIT PAS laquelle des deux c'est. Deux outils typés
+// échoueraient donc une fois sur deux — cet outil essaie les deux et dit ce qu'il a trouvé.
+//
+// Une référence portant la clé d'un projet frère ne peut désigner qu'une issue : les tâches d'un
+// autre repo ne sont accessibles à personne.
+func (s *mcpServer) get(ctx context.Context, args json.RawMessage) (any, error) {
+	var in struct {
+		Ref string `json:"ref"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, errors.New("arguments illisibles")
+	}
+
+	projectKey, number, err := splitRef(in.Ref, s.projectKey)
 	if err != nil {
 		return nil, err
 	}
 
-	var detail taskservice.TaskDetail
-	if err := s.api.Do(ctx, http.MethodGet, s.taskPath(number), nil, &detail); err != nil {
+	if projectKey == s.projectKey {
+		var detail taskservice.TaskDetail
+		err := s.api.Do(ctx, http.MethodGet, s.taskPath(number), nil, &detail)
+		if err == nil {
+			return map[string]any{
+				"kind": "task",
+				"ref":  s.taskKey(detail.Number),
+				"task": detail,
+			}, nil
+		}
+		// Toute erreur autre qu'une absence est définitive : réessayer en issue masquerait une
+		// panne derrière un « introuvable ».
+		var apiErr *client.APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
+			return nil, err
+		}
+	}
+
+	var issue issueservice.IssueDetail
+	if err := s.api.Do(ctx, http.MethodGet, s.issuePath(projectKey, number), nil, &issue); err != nil {
 		return nil, err
 	}
-	return map[string]any{"key": s.taskKey(detail.Number), "task": detail}, nil
+	return map[string]any{"kind": "issue", "ref": issue.Ref, "issue": issue}, nil
 }
 
 // createTask ouvre une tâche et renvoie sa clé, qui est ce dont l'agent a besoin ensuite.
@@ -142,7 +157,7 @@ func (s *mcpServer) createTask(ctx context.Context, args json.RawMessage) (any, 
 // d'abord passer la tâche en done.
 func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, error) {
 	var in struct {
-		Key           string  `json:"key"`
+		Ref           string  `json:"ref"`
 		Title         *string `json:"title"`
 		Body          *string `json:"body"`
 		Status        *string `json:"status"`
@@ -155,7 +170,7 @@ func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, 
 		return nil, errors.New("arguments illisibles")
 	}
 
-	number, err := s.numberFromKey(in.Key)
+	number, err := s.numberFromKey(in.Ref)
 	if err != nil {
 		return nil, err
 	}
@@ -199,14 +214,14 @@ func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, 
 // addNote ajoute une note de progression au fil d'une tâche.
 func (s *mcpServer) addNote(ctx context.Context, args json.RawMessage) (any, error) {
 	var in struct {
-		Key  string `json:"key"`
+		Ref  string `json:"ref"`
 		Body string `json:"body"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, errors.New("arguments illisibles")
 	}
 
-	number, err := s.numberFromKey(in.Key)
+	number, err := s.numberFromKey(in.Ref)
 	if err != nil {
 		return nil, err
 	}
@@ -217,17 +232,6 @@ func (s *mcpServer) addNote(ctx context.Context, args json.RawMessage) (any, err
 		return nil, err
 	}
 	return map[string]any{"key": s.taskKey(number), "note": note}, nil
-}
-
-// parseKey lit un argument `key` et le résout en numéro.
-func (s *mcpServer) parseKey(args json.RawMessage) (int64, error) {
-	var in struct {
-		Key string `json:"key"`
-	}
-	if err := json.Unmarshal(args, &in); err != nil {
-		return 0, errors.New("arguments illisibles")
-	}
-	return s.numberFromKey(in.Key)
 }
 
 // numberFromKey résout une clé lisible en numéro, DANS le projet du token.
@@ -275,4 +279,3 @@ func (s *mcpServer) withKeys(tasks []taskservice.Task) []map[string]any {
 	}
 	return out
 }
-

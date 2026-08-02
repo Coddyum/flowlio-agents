@@ -133,10 +133,12 @@ func TestProtocolErrors(t *testing.T) {
 }
 
 // La surface MCP est un budget : chaque outil est réinjecté dans le contexte de l'agent à chaque
-// tour. Ce test échoue si quelqu'un en ajoute un sans y penser.
+// tour. Ce test échoue si quelqu'un en ajoute un sans y penser, et l'ordre est vérifié parce
+// qu'il est celui dans lequel un agent découvre le produit.
 func TestToolSurfaceIsSmallAndWellFormed(t *testing.T) {
 	expected := []string{
-		"whoami", "list_tasks", "get_task", "create_task", "update_task", "add_task_note",
+		"list_tasks", "get", "create_task", "update_task", "add_task_note",
+		"create_issue", "list_issues", "answer_issue", "check_inbox",
 	}
 
 	defs := tools()
@@ -168,7 +170,13 @@ func TestToolSurfaceIsSmallAndWellFormed(t *testing.T) {
 		// Aucun outil ne doit accepter un projet en paramètre : le projet vient du token, et un
 		// paramètre serait une surface où le scope pourrait être contourné.
 		properties, _ := def.InputSchema["properties"].(map[string]any)
-		for _, forbidden := range []string{"project", "project_id", "team", "team_id"} {
+		// `to_project` est le seul paramètre de projet toléré : il désigne le DESTINATAIRE d'une
+		// question, pas un scope de lecture. Aucun outil ne peut choisir le projet qu'il LIT.
+		forbidden := []string{"project", "project_id", "team", "team_id"}
+		if def.Name == "create_issue" {
+			forbidden = []string{"project", "project_id", "team", "team_id", "from_project"}
+		}
+		for _, forbidden := range forbidden {
 			if _, found := properties[forbidden]; found {
 				t.Errorf("outil %q accepte %q en paramètre : le scope vient du token, jamais de l'appel",
 					def.Name, forbidden)
@@ -240,6 +248,59 @@ func TestKeyOfAnotherProjectIsRefusedExplicitly(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "FRNT") || !strings.Contains(err.Error(), "CORE") {
 		t.Errorf("message = %q, il doit nommer le projet demandé et celui du token", err)
+	}
+}
+
+// splitRef doit accepter la clé d'un projet frère : une issue appartient à son destinataire,
+// qui n'est pas toujours l'appelant. C'est la différence avec une référence de tâche.
+func TestSplitRefAcceptsSiblingProjects(t *testing.T) {
+	tests := []struct {
+		ref        string
+		wantKey    string
+		wantNumber int64
+	}{
+		{"CORE-34", "CORE", 34},
+		{"frnt-7", "FRNT", 7},
+		{"12", "CORE", 12},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.ref, func(t *testing.T) {
+			key, number, err := splitRef(tc.ref, "CORE")
+			if err != nil {
+				t.Fatalf("splitRef(%q): %v", tc.ref, err)
+			}
+			if key != tc.wantKey || number != tc.wantNumber {
+				t.Errorf("splitRef(%q) = (%s, %d), attendu (%s, %d)",
+					tc.ref, key, number, tc.wantKey, tc.wantNumber)
+			}
+		})
+	}
+
+	for _, bad := range []string{"", "  ", "CORE-", "CORE-0", "-3", "abc"} {
+		if _, _, err := splitRef(bad, "CORE"); err == nil {
+			t.Errorf("splitRef(%q) accepté, attendu une erreur", bad)
+		}
+	}
+}
+
+// Les instructions remplacent l'outil whoami : elles doivent dire à l'agent où il travaille et
+// à qui il peut s'adresser, sans qu'il ait à appeler quoi que ce soit.
+func TestInstructionsCarryTheIdentity(t *testing.T) {
+	srv := newTestServer(&bytes.Buffer{})
+	srv.siblings = []string{"WEB", "API"}
+
+	got := srv.instructions()
+	for _, expected := range []string{"CORE", "omiros", "WEB", "API", "check_inbox"} {
+		if !strings.Contains(got, expected) {
+			t.Errorf("les instructions ne mentionnent pas %q:\n%s", expected, got)
+		}
+	}
+
+	// Sans projet frère, create_issue n'a personne à qui écrire : le dire évite un aller-retour.
+	srv.siblings = nil
+	if !strings.Contains(srv.instructions(), "Aucun projet frère") {
+		t.Errorf("sans projet frère, les instructions doivent le dire:\n%s", srv.instructions())
 	}
 }
 

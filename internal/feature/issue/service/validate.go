@@ -113,6 +113,13 @@ func clampLimit(limit int) int32 {
 // serveur, pas une faute de l'appelant. Il remonte tel quel et le handler en fera un 500 —
 // répondre 409 ferait réessayer indéfiniment un agent qui n'a rien fait de mal.
 func translateStore(err error, op string) error {
+	// Le succès traverse cette fonction : les appels de la forme
+	// `return translateStore(tx.AppendEvent(...), "…")` sont le chemin nominal. Sans ce cas,
+	// fmt.Errorf envelopperait nil et fabriquerait une erreur là où il n'y en a pas.
+	if err == nil {
+		return nil
+	}
+
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return fmt.Errorf("%w: %s", ErrNotFound, op)

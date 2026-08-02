@@ -4,16 +4,18 @@ package main
 //
 // | Élément            | Résumé                                                    | Ligne |
 // |--------------------|-----------------------------------------------------------|-------|
-// | rpcRequest         | Message entrant JSON-RPC 2.0                                | 64    |
-// | rpcResponse        | Message sortant JSON-RPC 2.0                                | 72    |
-// | rpcError           | Erreur JSON-RPC 2.0                                         | 80    |
-// | mcpServer          | État du serveur MCP : client API et projet du token          | 86    |
-// | runMCP             | Lance le serveur MCP sur stdio                               | 98    |
-// | mcpServer.serve    | Boucle de lecture des messages, une ligne JSON par message    | 130   |
-// | mcpServer.dispatch | Route une méthode MCP vers son implémentation                | 170   |
-// | mcpServer.initialize | Répond à la poignée de main MCP                            | 195   |
-// | writeResponse      | Écrit une réponse sur stdout, une ligne par message           | 212   |
-// | errorResponse      | Construit une réponse d'erreur JSON-RPC                       | 224   |
+// | rpcRequest         | Message entrant JSON-RPC 2.0                                | 66    |
+// | rpcResponse        | Message sortant JSON-RPC 2.0                                | 74    |
+// | rpcError           | Erreur JSON-RPC 2.0                                         | 82    |
+// | mcpServer          | État du serveur MCP : client API et projet du token          | 88    |
+// | runMCP             | Lance le serveur MCP sur stdio                               | 104   |
+// | mcpServer.serve    | Boucle de lecture des messages, une ligne JSON par message    | 138   |
+// | mcpServer.dispatch | Route une méthode MCP vers son implémentation                | 178   |
+// | mcpServer.initialize | Répond à la poignée de main MCP                            | 203   |
+// | mcpServer.instructions | Dit à l'agent où il travaille, avant son premier message | 222   |
+// | mcpServer.siblingKeys | Résout les autres projets de la team                      | 244   |
+// | writeResponse      | Écrit une réponse sur stdout, une ligne par message           | 266   |
+// | errorResponse      | Construit une réponse d'erreur JSON-RPC                       | 278   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -88,6 +90,10 @@ type mcpServer struct {
 	out        io.Writer
 	projectKey string
 	teamSlug   string
+	// siblings est la liste des clés de projets frères, résolue au démarrage. Elle sert à
+	// composer les instructions d'initialisation : sans elle, un agent ne saurait pas à qui
+	// il peut adresser une question.
+	siblings []string
 }
 
 // runMCP lance le serveur MCP sur stdio.
@@ -119,6 +125,8 @@ func runMCP(ctx context.Context, _ []string) error {
 		projectKey: identity.ProjectKey,
 		teamSlug:   identity.TeamSlug,
 	}
+	srv.siblings = srv.siblingKeys(ctx)
+
 	return srv.serve(ctx, os.Stdin)
 }
 
@@ -202,7 +210,53 @@ func (s *mcpServer) initialize() map[string]any {
 			"name":    serverName,
 			"version": serverVersion,
 		},
+		"instructions": s.instructions(),
 	}
+}
+
+// instructions dit à l'agent où il travaille, avant son premier message.
+//
+// C'est ce qui remplace un outil `whoami` : son contenu est constant sur la vie du token, donc
+// le facturer en schéma à chaque tour ET en aller-retour au premier serait payer deux fois pour
+// une information qu'on connaît déjà au démarrage.
+func (s *mcpServer) instructions() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Tu es l'agent du projet %s, dans la team %s.\n", s.projectKey, s.teamSlug)
+	b.WriteString("Une référence se lit CLE-NUMERO (par exemple " + s.projectKey + "-34) ; " +
+		"tâches et issues partagent la même numérotation, donc une référence désigne un seul objet.\n")
+
+	if len(s.siblings) > 0 {
+		fmt.Fprintf(&b, "Projets frères, à qui tu peux adresser une question : %s.\n",
+			strings.Join(s.siblings, ", "))
+	} else {
+		b.WriteString("Aucun projet frère dans cette team : create_issue n'a personne à qui écrire.\n")
+	}
+
+	b.WriteString("Commence par check_inbox : il dit ce qui t'attend et ce que tu avais laissé en cours.")
+	return b.String()
+}
+
+// siblingKeys résout les autres projets de la team.
+//
+// Best effort : un échec ne doit pas empêcher la session de démarrer, il retire seulement une
+// phrase des instructions. L'erreur part sur stderr — jamais sur stdout, qui appartient au
+// protocole.
+func (s *mcpServer) siblingKeys(ctx context.Context) []string {
+	var projects []struct {
+		Key string `json:"key"`
+	}
+	if err := s.api.Do(ctx, http.MethodGet, workspaceAPI+"/projects", nil, &projects); err != nil {
+		fmt.Fprintf(os.Stderr, "flowlio mcp: liste des projets frères indisponible: %v\n", err)
+		return nil
+	}
+
+	keys := make([]string, 0, len(projects))
+	for _, p := range projects {
+		if p.Key != s.projectKey {
+			keys = append(keys, p.Key)
+		}
+	}
+	return keys
 }
 
 // writeResponse écrit une réponse sur stdout, une ligne par message.

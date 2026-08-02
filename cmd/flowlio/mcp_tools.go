@@ -4,18 +4,18 @@ package main
 //
 // | Élément         | Résumé                                                       | Ligne |
 // |-----------------|--------------------------------------------------------------|-------|
-// | toolDef         | Définition d'un outil MCP telle qu'annoncée au client          | 36    |
-// | object          | Construit un schéma JSON d'objet                               | 43    |
-// | prop            | Construit une propriété de schéma JSON                         | 55    |
-// | enumProp        | Construit une propriété contrainte à un jeu de valeurs         | 64    |
-// | tools           | Les six outils exposés, et rien de plus                        | 73    |
-// | toolsListResult | Réponse de tools/list                                          | 153   |
+// | toolDef         | Définition d'un outil MCP telle qu'annoncée au client          | 44    |
+// | object          | Construit un schéma JSON d'objet                               | 51    |
+// | prop            | Construit une propriété de schéma JSON                         | 63    |
+// | enumProp        | Construit une propriété contrainte à un jeu de valeurs         | 72    |
+// | tools           | Les neuf outils exposés, et rien de plus                        | 81    |
+// | toolsListResult | Réponse de tools/list                                          | 209   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
 // La surface MCP est un BUDGET, pas une liste de souhaits : chaque outil est réinjecté dans le
-// contexte de l'agent à CHAQUE tour. Six outils, des descriptions courtes, aucun paramètre
+// contexte de l'agent à CHAQUE tour. Neuf outils, des descriptions courtes, aucun paramètre
 // décoratif. Tout ajout ici se paie sur toutes les sessions, indéfiniment.
 //
 // Ce que ces outils n'exposent volontairement pas :
@@ -23,6 +23,13 @@ package main
 //     capable de désigner le backlog d'un autre projet.
 //   - les UUID : un agent travaille sur des clés lisibles (CORE-34).
 //   - la suppression : une tâche s'archive, l'historique d'un repo ne s'efface pas.
+//   - whoami : son contenu est constant sur la vie du token, donc il est injecté dans les
+//     instructions d'initialize. Zéro schéma, zéro tour, et l'information est dans le contexte
+//     de l'agent avant son premier message.
+//
+// `get` n'est pas typé (get_task / get_issue) parce que tâches et issues partagent le compteur du
+// projet : l'agent qui lit CORE-34 dans un commit ou une inbox ne sait PAS laquelle des deux
+// c'est. Deux outils typés échoueraient donc une fois sur deux.
 
 // statuts et priorités reprennent exactement le vocabulaire du serveur. Les redire ici les rend
 // visibles dans le schéma, donc dans le contexte de l'agent : il n'a pas à deviner ni à échouer
@@ -30,6 +37,7 @@ package main
 var (
 	taskStatuses   = []string{"todo", "in_progress", "blocked", "done"}
 	taskPriorities = []string{"low", "normal", "high", "urgent"}
+	issueStates    = []string{"open", "answered", "closed"}
 )
 
 // toolDef est la définition d'un outil telle qu'annoncée dans tools/list.
@@ -69,19 +77,13 @@ func enumProp(values []string, description string) map[string]any {
 	}
 }
 
-// tools est la surface exposée. Six outils, décidés dans docs/DESIGN-V1.md.
+// tools est la surface exposée. Neuf outils, arbitrés dans docs/DESIGN-M3.md.
 func tools() []toolDef {
 	return []toolDef{
 		{
-			Name: "whoami",
-			Description: "Identité du token courant : team, projet et portée. À appeler en " +
-				"début de session pour savoir dans quel repo on travaille.",
-			InputSchema: object(map[string]any{}),
-		},
-		{
 			Name: "list_tasks",
 			Description: "Backlog du projet courant, de la tâche la plus récente à la plus " +
-				"ancienne. La description n'est pas incluse : utiliser get_task pour la lire.",
+				"ancienne. La description n'est pas incluse : utiliser get pour la lire.",
 			InputSchema: object(map[string]any{
 				"status": enumProp(taskStatuses, "Ne renvoyer que les tâches de ce statut."),
 				"limit": map[string]any{
@@ -95,13 +97,14 @@ func tools() []toolDef {
 			}),
 		},
 		{
-			Name: "get_task",
-			Description: "Une tâche du projet courant, avec sa description complète et son fil " +
-				"de notes de progression. C'est ce qu'on lit pour reprendre une tâche.",
+			Name: "get",
+			Description: "Le détail de ce que désigne une référence : une tâche avec son fil de " +
+				"notes, ou une issue avec son fil de messages. Le champ kind dit laquelle. " +
+				"C'est ce qu'on lit pour reprendre un sujet.",
 			InputSchema: object(map[string]any{
-				"key": prop("string",
-					"Clé de la tâche, par exemple CORE-34. Le numéro seul est accepté."),
-			}, "key"),
+				"ref": prop("string",
+					"Référence, par exemple CORE-34. Le numéro seul désigne le projet courant."),
+			}, "ref"),
 		},
 		{
 			Name: "create_task",
@@ -123,8 +126,8 @@ func tools() []toolDef {
 			Description: "Modifie une tâche du projet courant. Seuls les champs fournis " +
 				"changent ; les autres restent en l'état. Une tâche archivée n'est plus modifiable.",
 			InputSchema: object(map[string]any{
-				"key": prop("string",
-					"Clé de la tâche, par exemple CORE-34. Le numéro seul est accepté."),
+				"ref": prop("string",
+					"Référence de la tâche, par exemple CORE-34. Le numéro seul est accepté."),
 				"title":    prop("string", "Nouveau titre."),
 				"body":     prop("string", "Nouvelle description en markdown."),
 				"status":   enumProp(taskStatuses, "Nouveau statut."),
@@ -134,17 +137,70 @@ func tools() []toolDef {
 					"Efface l'échéance. Nécessaire parce qu'un champ absent signifie déjà « ne change pas »."),
 				"archive": prop("boolean",
 					"Sort la tâche du backlog actif. Elle reste lisible, avec ses notes."),
-			}, "key"),
+			}, "ref"),
 		},
 		{
 			Name: "add_task_note",
 			Description: "Ajoute une note de progression au fil d'une tâche. C'est la trace que " +
 				"relira la session suivante : y écrire ce qui a été fait et ce qui reste.",
 			InputSchema: object(map[string]any{
-				"key": prop("string",
-					"Clé de la tâche, par exemple CORE-34. Le numéro seul est accepté."),
+				"ref": prop("string",
+					"Référence de la tâche, par exemple CORE-34. Le numéro seul est accepté."),
 				"body": prop("string", "La note, en markdown."),
-			}, "key", "body"),
+			}, "ref", "body"),
+		},
+		{
+			Name: "create_issue",
+			Description: "Pose une question à un projet frère de la team et renvoie sa " +
+				"référence. À utiliser quand la réponse ne peut venir que de l'autre repo — " +
+				"pour son propre travail, ouvrir une tâche.",
+			InputSchema: object(map[string]any{
+				"to_project": prop("string",
+					"Clé du projet destinataire, par exemple CORE."),
+				"title": prop("string",
+					"La question en une ligne, 200 caractères au plus."),
+				"body": prop("string",
+					"Le contexte complet : ce qui est attendu, et ce qui a déjà été essayé."),
+			}, "to_project", "title", "body"),
+		},
+		{
+			Name: "list_issues",
+			Description: "Les questions échangées avec les projets frères : celles qui vous " +
+				"sont adressées et celles que vous avez posées. Les closes sont exclues " +
+				"par défaut.",
+			InputSchema: object(map[string]any{
+				"role": enumProp([]string{"incoming", "outgoing"},
+					"incoming : ce qu'on attend de vous. outgoing : ce que vous attendez. "+
+						"Omis : les deux."),
+				"state": enumProp(issueStates, "Ne renvoyer que les issues dans cet état."),
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Nombre maximum d'issues (défaut 20, maximum 100).",
+					"minimum":     1,
+					"maximum":     100,
+				},
+				"closed": prop("boolean", "Inclure les issues closes. Exclues par défaut."),
+			}),
+		},
+		{
+			Name: "answer_issue",
+			Description: "Ajoute un message au fil d'une issue, et la clôt si close vaut vrai. " +
+				"C'est le seul moyen de répondre comme de fermer. Un message est obligatoire " +
+				"même pour clore : sans motif, le correspondant ne sait pas pourquoi.",
+			InputSchema: object(map[string]any{
+				"ref": prop("string",
+					"Référence de l'issue, par exemple CORE-34."),
+				"body":  prop("string", "Le message, en markdown."),
+				"close": prop("boolean", "Clôt l'issue. La clôture est définitive."),
+			}, "ref", "body"),
+		},
+		{
+			Name: "check_inbox",
+			Description: "Ce qui vous attend : les questions entrantes à traiter, vos questions " +
+				"qui ont reçu une réponse, et vos tâches en cours. Aucun paramètre. " +
+				"À appeler en début de session. L'état de référence reste list_issues et " +
+				"list_tasks : cet appel est un point de départ, pas un inventaire complet.",
+			InputSchema: object(map[string]any{}),
 		},
 	}
 }

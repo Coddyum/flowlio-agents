@@ -4,12 +4,12 @@ package store
 //
 // | Élément           | Résumé                                                      | Ligne |
 // |-------------------|-------------------------------------------------------------|-------|
-// | store.CreateIssue | Ouvre une issue vers un projet frère, numéro compris          | 31    |
-// | store.IssueByRef  | Lit une issue visible par l'appelant                          | 62    |
-// | store.ListIssues  | Liste les issues visibles, filtrées par rôle et par état      | 79    |
-// | store.Answer      | Ajoute un message et applique la transition d'état            | 121   |
-// | toIssue           | Projette une ligne complète en type domaine                   | 144   |
-// | fromNullTime      | Convertit une date nullable lue en base en pointeur            | 162   |
+// | store.CreateIssue | Ouvre une issue vers un projet frère, numéro compris          | 32    |
+// | store.IssueByRef  | Lit une issue visible par l'appelant                          | 64    |
+// | store.ListIssues  | Liste les issues visibles, filtrées par rôle et par état      | 81    |
+// | store.Answer      | Ajoute un message et applique la transition d'état            | 124   |
+// | toIssue           | Projette une ligne complète en type domaine                   | 148   |
+// | fromNullTime      | Convertit une date nullable lue en base en pointeur            | 167   |
 //
 // Fin du sommaire.
 // =====================================================================

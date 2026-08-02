@@ -7,9 +7,9 @@ package main
 // | callParams         | Corps d'un appel tools/call                                  | 32    |
 // | mcpServer.callTool | Exécute un outil et emballe son résultat                     | 42    |
 // | mcpServer.invoke   | Route vers l'implémentation de l'outil demandé               | 65    |
-// | textResult         | Emballe un résultat d'outil pour le client MCP               | 86    |
-// | errText            | Emballe une erreur d'outil, lisible par l'agent              | 97    |
-// | parseDeadline      | Lit une échéance RFC 3339, absente si la chaîne est vide      | 118   |
+// | textResult         | Emballe un résultat d'outil pour le client MCP               | 92    |
+// | errText            | Emballe une erreur d'outil, lisible par l'agent              | 103   |
+// | parseDeadline      | Lit une échéance RFC 3339, absente si la chaîne est vide      | 124   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -64,18 +64,24 @@ func (s *mcpServer) callTool(ctx context.Context, raw json.RawMessage) (map[stri
 // invoke route vers l'implémentation de l'outil demandé.
 func (s *mcpServer) invoke(ctx context.Context, name string, args json.RawMessage) (any, error) {
 	switch name {
-	case "whoami":
-		return s.whoami(ctx)
 	case "list_tasks":
 		return s.listTasks(ctx, args)
-	case "get_task":
-		return s.getTask(ctx, args)
+	case "get":
+		return s.get(ctx, args)
 	case "create_task":
 		return s.createTask(ctx, args)
 	case "update_task":
 		return s.updateTask(ctx, args)
 	case "add_task_note":
 		return s.addNote(ctx, args)
+	case "create_issue":
+		return s.createIssue(ctx, args)
+	case "list_issues":
+		return s.listIssues(ctx, args)
+	case "answer_issue":
+		return s.answerIssue(ctx, args)
+	case "check_inbox":
+		return s.checkInbox(ctx, args)
 	default:
 		return nil, fmt.Errorf("outil inconnu: %s", name)
 	}
