@@ -1,0 +1,17 @@
+# Binaires
+/bin/
+/tmp/
+flowlio-ia
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Go
+*.test
+*.out
+coverage.*
+
+# OS / éditeurs
+.DS_Store

@@ -1,0 +1,24 @@
+# Postgres de développement. Une commande, aucune installation locale :
+#   docker compose up -d
+# Port 5433 pour ne pas entrer en conflit avec un Postgres déjà installé sur 5432.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: flowlio-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: flowlio
+      POSTGRES_PASSWORD: flowlio
+      POSTGRES_DB: flowlio
+    ports:
+      - "5433:5432"
+    volumes:
+      - flowlio-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowlio -d flowlio"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  flowlio-pgdata:
