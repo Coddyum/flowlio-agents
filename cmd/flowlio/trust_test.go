@@ -40,6 +40,10 @@ func capture(t *testing.T, fn func() error) (string, error) {
 	}
 	saved := os.Stdout
 	os.Stdout = w
+	// defer, et pas une restauration en ligne : si fn panique, os.Stdout resterait branché sur un
+	// tube que personne ne lit et TOUTE la suite du paquet perdrait sa sortie — un échec ailleurs
+	// deviendrait alors indébogable.
+	defer func() { os.Stdout = saved }()
 
 	runErr := fn()
 
