@@ -146,6 +146,19 @@ CREATE TABLE public.issues (
 
 
 --
+-- Name: project_trust; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_trust (
+    team_id uuid NOT NULL,
+    low_project_id uuid NOT NULL,
+    high_project_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_trust_ordered CHECK ((low_project_id < high_project_id))
+);
+
+
+--
 -- Name: projects; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -288,6 +301,14 @@ ALTER TABLE ONLY public.issues
 
 ALTER TABLE ONLY public.issues
     ADD CONSTRAINT issues_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_trust project_trust_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_trust
+    ADD CONSTRAINT project_trust_pkey PRIMARY KEY (team_id, low_project_id, high_project_id);
 
 
 --
@@ -436,6 +457,13 @@ CREATE INDEX issues_outgoing_idx ON public.issues USING btree (author_project_id
 
 
 --
+-- Name: project_trust_high_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_trust_high_idx ON public.project_trust USING btree (high_project_id, team_id);
+
+
+--
 -- Name: projects_team_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -525,6 +553,22 @@ ALTER TABLE ONLY public.issues
 
 ALTER TABLE ONLY public.issues
     ADD CONSTRAINT issues_project_fk FOREIGN KEY (project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_trust project_trust_high_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_trust
+    ADD CONSTRAINT project_trust_high_fk FOREIGN KEY (high_project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_trust project_trust_low_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_trust
+    ADD CONSTRAINT project_trust_low_fk FOREIGN KEY (low_project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
 
 
 --

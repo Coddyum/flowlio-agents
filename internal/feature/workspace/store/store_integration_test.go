@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -247,4 +248,156 @@ func TestDatabaseRejectsMalformedKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ordered rend la paire canonique d'une arête de confiance : low < high, au sens de Postgres.
+//
+// uuid.UUID est un [16]byte, donc l'opérateur < de Go ne s'applique pas ; la comparaison octet par
+// octet est exactement celle que Postgres fait sur le type uuid.
+func ordered(a, b uuid.UUID) (low, high uuid.UUID) {
+	if bytes.Compare(a[:], b[:]) < 0 {
+		return a, b
+	}
+	return b, a
+}
+
+// allowTrust pose une arête de confiance par SQL direct, en la normalisant.
+func allowTrust(t *testing.T, db *sql.DB, teamID, a, b uuid.UUID) error {
+	t.Helper()
+
+	low, high := ordered(a, b)
+	_, err := db.Exec(
+		"INSERT INTO project_trust (team_id, low_project_id, high_project_id) VALUES ($1, $2, $3)",
+		teamID, low, high,
+	)
+	return err
+}
+
+// La base refuse les neuf formes illégales du graphe de confiance — pas le code, la BASE.
+//
+// C'est la doctrine du dépôt appliquée à `project_trust` : on rend la forme illégale NON
+// INSÉRABLE plutôt que seulement non produite. Les FK COMPOSITES `(project_id, team_id)` sont ce
+// qui fait le travail : l'unique colonne `team_id` doit satisfaire les DEUX à la fois, donc une
+// arête entre deux projets de teams différentes est impossible, y compris si l'appelant MENT sur
+// `team_id` — les deux sens du mensonge sont testés.
+//
+// MUTATION : retirer `project_trust_ordered` fait passer l'auto-arête et le miroir ; retirer une
+// des deux FK composites fait passer l'arête inter-team correspondante.
+func TestDatabaseRejectsIllegalTrustEdges(t *testing.T) {
+	st, db := newStore(t)
+	ctx := context.Background()
+
+	teamA := createTeam(t, st, db)
+	teamB := createTeam(t, st, db)
+	teamC := createTeam(t, st, db)
+
+	core, err := st.CreateProject(ctx, teamA.ID, "CORE", "core de A")
+	if err != nil {
+		t.Fatalf("CreateProject CORE: %v", err)
+	}
+	front, err := st.CreateProject(ctx, teamA.ID, "FRNT", "front de A")
+	if err != nil {
+		t.Fatalf("CreateProject FRNT: %v", err)
+	}
+	voisin, err := st.CreateProject(ctx, teamB.ID, "CORE", "core de B")
+	if err != nil {
+		t.Fatalf("CreateProject voisin: %v", err)
+	}
+
+	lowAB, highAB := ordered(core.ID, voisin.ID)
+
+	interdits := []struct {
+		name     string
+		exec     func() error
+		contains string
+	}{
+		{
+			"arête inter-team, team_id du premier projet",
+			func() error { return allowTrust(t, db, teamA.ID, core.ID, voisin.ID) },
+			"project_trust_",
+		},
+		{
+			"arête inter-team, en mentant sur team_id",
+			func() error { return allowTrust(t, db, teamB.ID, core.ID, voisin.ID) },
+			"project_trust_",
+		},
+		{
+			"arête inter-team, team_id d'une troisième team",
+			func() error { return allowTrust(t, db, teamC.ID, core.ID, voisin.ID) },
+			"project_trust_",
+		},
+		{
+			"auto-arête",
+			func() error {
+				_, err := db.Exec(
+					"INSERT INTO project_trust (team_id, low_project_id, high_project_id) VALUES ($1, $2, $2)",
+					teamA.ID, core.ID)
+				return err
+			},
+			"project_trust_ordered",
+		},
+		{
+			"paire non canonique (miroir)",
+			func() error {
+				_, err := db.Exec(
+					"INSERT INTO project_trust (team_id, low_project_id, high_project_id) VALUES ($1, $2, $3)",
+					teamA.ID, highAB, lowAB)
+				return err
+			},
+			"project_trust_ordered",
+		},
+	}
+
+	for _, tc := range interdits {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.exec()
+			if err == nil {
+				t.Fatalf("la base a accepté : %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.contains) {
+				t.Errorf("refusé par autre chose que %s: %v", tc.contains, err)
+			}
+		})
+	}
+
+	// L'arête légale, elle, passe — sans contre-épreuve, une contrainte qui refuserait TOUT
+	// passerait pour correcte.
+	if err := allowTrust(t, db, teamA.ID, core.ID, front.ID); err != nil {
+		t.Fatalf("arête légale refusée: %v", err)
+	}
+
+	t.Run("doublon", func(t *testing.T) {
+		if err := allowTrust(t, db, teamA.ID, front.ID, core.ID); err == nil {
+			t.Fatal("la base a accepté un doublon (la paire est déjà déclarée dans l'autre sens)")
+		} else if !strings.Contains(err.Error(), "project_trust_pkey") {
+			t.Errorf("refusé par autre chose que la clé primaire: %v", err)
+		}
+	})
+
+	t.Run("déplacer un projet vers une autre team", func(t *testing.T) {
+		if _, err := db.Exec("UPDATE projects SET team_id = $1 WHERE id = $2", teamB.ID, core.ID); err == nil {
+			t.Error("un projet portant une arête a pu changer de team")
+		}
+	})
+
+	t.Run("déplacer une arête vers une autre team", func(t *testing.T) {
+		if _, err := db.Exec("UPDATE project_trust SET team_id = $1 WHERE team_id = $2", teamB.ID, teamA.ID); err == nil {
+			t.Error("une arête a pu être déplacée dans une autre team")
+		}
+	})
+
+	t.Run("suppression d'un projet : cascade", func(t *testing.T) {
+		if _, err := db.Exec("DELETE FROM projects WHERE id = $1", front.ID); err != nil {
+			t.Fatalf("suppression du projet: %v", err)
+		}
+		var restantes int
+		if err := db.QueryRow(
+			"SELECT count(*) FROM project_trust WHERE team_id = $1", teamA.ID,
+		).Scan(&restantes); err != nil {
+			t.Fatalf("comptage: %v", err)
+		}
+		if restantes != 0 {
+			t.Errorf("%d arête(s) survivent au projet supprimé, attendu 0", restantes)
+		}
+	})
 }
