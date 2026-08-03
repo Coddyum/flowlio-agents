@@ -77,6 +77,13 @@ jobs:
       - name: Tests unitaires (make check)
         run: make check
 
+      # Sans cette étape, les six garde-fous structurels du dépôt ne tournent QUE si un humain
+      # tape `make lint`. Le garde qui empêche la décision de confiance de quitter la query, celui
+      # qui interdit math/rand pour le sceau, et celui qui tient authtest hors du binaire n'ont
+      # aucune valeur s'ils ne sont pas exécutés par le pipeline.
+      - name: Garde-fous structurels (make lint)
+        run: make lint
+
       - name: Installer golang-migrate
         run: |
           curl -fsSL "https://github.com/golang-migrate/migrate/releases/download/${MIGRATE_VERSION}/migrate.linux-amd64.tar.gz" \

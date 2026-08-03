@@ -245,3 +245,74 @@ func TestTrustNeverCrossesTeams(t *testing.T) {
 		t.Errorf("le graphe du voisin a %d arêtes après ma tentative, attendu 1", len(stillThere))
 	}
 }
+
+// Deux mutations que la première rédaction de ce fichier laissait passer, trouvées par la revue
+// adversariale du jalon. Chacune a son test, et chacun appelle le STORE directement.
+//
+// LEÇON COMMUNE : les tests existants prouvaient ces deux propriétés par le SERVICE, qui coupe en
+// amont. Prouver dans la couche qui valide, plutôt que dans celle qui décide, laisse la query
+// libre de ne rien garantir.
+func TestTrustQueriesGuardTheirOwnScope(t *testing.T) {
+	st, db := newStore(t)
+	ctx := context.Background()
+
+	mine := createTeam(t, st, db)
+	other := createTeam(t, st, db)
+
+	for _, p := range []struct {
+		team store.Team
+		key  string
+	}{{mine, "CORE"}, {mine, "FRNT"}, {other, "CORE"}, {other, "OPS"}} {
+		if _, err := st.CreateProject(ctx, p.team.ID, p.key, "projet "+p.key); err != nil {
+			t.Fatalf("CreateProject %s: %v", p.key, err)
+		}
+	}
+
+	// Le voisin déclare sa paire. Elle ne doit pouvoir être ni lue ni fermée depuis ma team.
+	if _, err := st.AllowTrust(ctx, other.ID, "CORE", "OPS"); err != nil {
+		t.Fatalf("AllowTrust chez le voisin: %v", err)
+	}
+
+	// MUTATION : retirer `a.team_id = @team_id` de la CTE `pair` de RevokeTrust.
+	//
+	// Le test de frontière existant ne la détectait pas : il passait OPS en SECONDE position, et
+	// `b.team_id` — resté en place — suffisait à faire échouer la résolution. Il faut donc une clé
+	// qui n'existe QUE chez le voisin en PREMIÈRE position, et une clé de ma team en seconde :
+	// seule la contrainte sur `a` décide alors.
+	//
+	// Sous la mutation, `a` se résout au OPS du voisin, `b` à mon CORE, la paire se résout, et la
+	// query rend `removed=false` sans erreur — au lieu du ErrNotFound qu'une clé hors de ma team
+	// doit produire.
+	t.Run("RevokeTrust scope les deux clés, pas seulement la seconde", func(t *testing.T) {
+		if _, err := st.RevokeTrust(ctx, mine.ID, "OPS", "CORE"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("erreur = %v, attendu ErrNotFound : OPS n'existe pas dans ma team", err)
+		}
+		// Et la paire du voisin est intacte.
+		edges, err := st.ListTrustEdges(ctx, other.ID)
+		if err != nil {
+			t.Fatalf("ListTrustEdges: %v", err)
+		}
+		if len(edges) != 1 {
+			t.Errorf("le graphe du voisin a %d arêtes, attendu 1", len(edges))
+		}
+	})
+
+	// MUTATION : remplacer `a.id <> b.id` par `true` dans AllowTrust.
+	//
+	// Le refus d'auto-paire n'était prouvé que par le service, qui valide `first != second` AVANT
+	// d'appeler le store. La query doit le refuser elle aussi : c'est le second tour de clé, et
+	// c'est lui qui tient si un appelant atteint le store directement.
+	t.Run("AllowTrust refuse une auto-paire dans la query", func(t *testing.T) {
+		if _, err := st.AllowTrust(ctx, mine.ID, "CORE", "CORE"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("erreur = %v, attendu ErrNotFound : la query doit refuser l'auto-paire sans "+
+				"laisser la CHECK d'ordre lever un second chemin d'erreur", err)
+		}
+		edges, err := st.ListTrustEdges(ctx, mine.ID)
+		if err != nil {
+			t.Fatalf("ListTrustEdges: %v", err)
+		}
+		if len(edges) != 0 {
+			t.Errorf("%d arête(s) créée(s) par une auto-paire", len(edges))
+		}
+	})
+}

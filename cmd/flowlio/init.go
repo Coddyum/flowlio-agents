@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
 	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
@@ -109,11 +110,30 @@ func runInit(ctx context.Context, args []string) error {
 // perdrait — même raison qu'announceMCPConfig, et c'est aussi pourquoi cette fonction ne rend
 // aucune erreur.
 func announceTrustIsClosed(ctx context.Context, c *client.Client, team, project string) {
+	// La clé est normalisée AVANT toute comparaison. `flowlio init --project frnt` est légal — le
+	// serveur met la clé en majuscules — donc comparer le drapeau brut à ce que l'API rend ferait
+	// passer le projet qu'on vient de créer pour un frère, et la commande suggérée serait une
+	// AUTO-PAIRE que `trust allow` refuse. Une aide qui ne marche pas est pire qu'aucune aide.
+	project = strings.ToUpper(strings.TrimSpace(project))
+
 	var projects []service.Project
 	if err := c.Do(ctx, http.MethodGet, workspaceAPI+"/projects"+teamQuery(team), nil, &projects); err != nil {
 		return
 	}
 	if len(projects) < 2 {
+		return
+	}
+
+	// Le graphe est LU avant d'affirmer qu'il est vide. Sans cette lecture, un second `init` sur
+	// une team déjà câblée annonçait « aucune confiance n'est déclarée » alors qu'elle l'était,
+	// et envoyait l'humain retaper une commande déjà passée.
+	var edges []service.TrustEdge
+	if err := c.Do(ctx, http.MethodGet, workspaceAPI+"/trust"+teamQuery(team), nil, &edges); err != nil {
+		// Un token de projet n'a pas le droit de lire le graphe : dans ce cas on se tait plutôt
+		// que d'affirmer quoi que ce soit. Le silence est la seule sortie honnête.
+		return
+	}
+	if len(edges) > 0 {
 		return
 	}
 

@@ -23,6 +23,9 @@ set -uo pipefail
 
 FILE="cmd/flowlio/mcp_untrusted.go"
 
+# Les worktrees jetables des agents ne sont pas le checkout : ce script ne regarde qu'un chemin
+# fixe, donc il y est immunisé par construction.
+
 if [[ ! -f "${FILE}" ]]; then
 	echo "check-seal-source: ${FILE} introuvable — le fichier a-t-il été déplacé ?" >&2
 	exit 1

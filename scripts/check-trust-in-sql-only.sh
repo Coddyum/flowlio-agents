@@ -27,7 +27,8 @@ TABLE="project_trust"
 hits="$(grep -rn --include='*.go' "${TABLE}" . \
 	| grep -v '/internal/database/' \
 	| grep -v '_test\.go:' \
-	| grep -v '/scripts/' || true)"
+	| grep -v '/scripts/' \
+	| grep -v '^\./\.claude/' || true)"
 
 if [[ -n "${hits}" ]]; then
 	echo "VIOLATION : la table ${TABLE} est nommée dans du Go non généré et hors test."

@@ -210,12 +210,20 @@ si l'appelant ment sur le `team_id`.
 ### Où le refus est appliqué
 
 Dans la clause `WHERE` de la CTE de `CreateIssue` (`sql/queries/issues.sql`), et nulle part
-ailleurs. Aucune autre query n'est modifiée. Conséquences, toutes couvertes par mutation :
+ailleurs. Aucune autre query n'est modifiée. Conséquences :
 
 - le refus est **hérité**, pas conçu : zéro ligne → `ErrNotFound` → `404 {"error":"not found"}`,
   strictement le même chemin qu'une clé inconnue ;
 - **aucun numéro n'est consommé et aucun verrou n'est posé** sur un refus, donc l'effet de bord
   n'est pas un oracle et un émetteur refusé ne peut pas ralentir un tiers légitime.
+
+> **CE QUI EST GARDÉ PAR MUTATION, ET CE QUI NE L'EST PAS.** Le placement du prédicat, l'absence de
+> numéro consommé et l'absence de verrou ont chacun un test qu'une mutation fait tomber. La
+> *forme* de la réponse — `404`, `Content-Length: 21`, texte MCP `not found` — n'en a **aucun** :
+> aucun test n'observe le statut ni le corps HTTP d'un `create_issue` refusé pour confiance. Le
+> refus emprunte le chemin d'erreur commun, donc il rend aujourd'hui exactement ce que rend une clé
+> inconnue ; mais c'est une propriété du câblage, pas une propriété gardée. Un `if` qui
+> distinguerait ce refus dans le handler d'issue passerait la suite au vert. Suivi en FLWL-45.
 
 `scripts/check-trust-in-sql-only.sh`, appelé par `make lint`, échoue si la table est nommée dans
 un `.go` non généré hors test. C'est ce qui empêche la décision de quitter la query autrement que

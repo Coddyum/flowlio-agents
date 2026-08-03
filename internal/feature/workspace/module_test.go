@@ -19,6 +19,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -118,20 +119,33 @@ func TestChaqueRouteExigeLaPorteeQuElleAnnonce(t *testing.T) {
 	}
 }
 
-// Le compte de routes est figé.
+// La table du test couvre TOUTES les routes de Routes(), et le compte vient de Routes() lui-même.
 //
-// C'est le seul garde-fou contre l'angle mort de la table écrite à la main : une route ajoutée à
-// Routes() sans l'être ici passerait inaperçue. Ce test ne dit pas laquelle manque — il dit qu'il
-// faut aller voir, ce qui suffit.
+// LA PREMIÈRE VERSION DE CE TEST NE GARDAIT RIEN. Elle comparait `len(routes)` à une constante
+// écrite dix lignes plus haut, dans le MÊME fichier : ajouter une douzième route à Routes(), sous
+// `authed`, laissait toute la suite verte. Un test qui compare une table à sa propre constante
+// mesure sa cohérence interne, pas celle du code — c'est la troisième fois de cette session que ce
+// motif exact apparaît.
 //
-// Le compteur est obtenu en jouant chaque chemin de la table contre le mux : un 404 signale un
-// chemin qui n'existe plus, et le total est comparé à ce que Routes() déclare.
+// Le compte est désormais LU DANS LA SOURCE de module.go. C'est laid, et c'est le prix : ServeMux
+// n'expose pas ses patterns, donc il n'existe aucun moyen de lui demander ce qu'il porte. Compter
+// les `r.Handle(` d'un fichier est le seul lien mécanique possible entre la table du test et la
+// table réelle.
+//
+// MUTATION : ajouter une route à Routes() sans l'ajouter à `routes` → ce test rouge.
 func TestLaTableDeRoutesEstComplete(t *testing.T) {
-	const declarees = 11
+	source, err := os.ReadFile("module.go")
+	if err != nil {
+		t.Fatalf("lecture de module.go: %v", err)
+	}
+	declarees := strings.Count(string(source), "r.Handle(")
 
+	if declarees == 0 {
+		t.Fatal("aucun r.Handle( trouvé dans module.go — le compteur ne mesure plus rien")
+	}
 	if len(routes) != declarees {
-		t.Fatalf("la table du test porte %d routes, Routes() en déclare %d — mettre `routes` à jour",
-			len(routes), declarees)
+		t.Errorf("Routes() déclare %d routes, la table du test en porte %d — une route a été "+
+			"ajoutée ou retirée sans que ce fichier suive", declarees, len(routes))
 	}
 
 	for _, r := range routes {
