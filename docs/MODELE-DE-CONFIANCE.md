@@ -217,13 +217,23 @@ ailleurs. Aucune autre query n'est modifiée. Conséquences :
 - **aucun numéro n'est consommé et aucun verrou n'est posé** sur un refus, donc l'effet de bord
   n'est pas un oracle et un émetteur refusé ne peut pas ralentir un tiers légitime.
 
-> **CE QUI EST GARDÉ PAR MUTATION, ET CE QUI NE L'EST PAS.** Le placement du prédicat, l'absence de
-> numéro consommé et l'absence de verrou ont chacun un test qu'une mutation fait tomber. La
-> *forme* de la réponse — `404`, `Content-Length: 21`, texte MCP `not found` — n'en a **aucun** :
-> aucun test n'observe le statut ni le corps HTTP d'un `create_issue` refusé pour confiance. Le
-> refus emprunte le chemin d'erreur commun, donc il rend aujourd'hui exactement ce que rend une clé
-> inconnue ; mais c'est une propriété du câblage, pas une propriété gardée. Un `if` qui
-> distinguerait ce refus dans le handler d'issue passerait la suite au vert. Suivi en FLWL-45.
+> **CE QUI EST GARDÉ PAR MUTATION.** Le placement du prédicat, l'absence de numéro consommé et
+> l'absence de verrou ont chacun un test qu'une mutation fait tomber. La *forme* de la réponse —
+> `404`, `Content-Length: 21`, texte MCP `not found` — en a un depuis FLWL-45 :
+> `internal/feature/issue/module_integration_test.go` monte l'API réelle et compare les trois refus
+> octet pour octet, chacun contre la forme attendue écrite en dur **et** les trois entre eux. Trois
+> mutations ont été jouées : rendre `403` sur `ErrNotFound` dans le handler d'issue, retirer le bloc
+> `EXISTS` de `sql/queries/issues.sql`, et figer le message dans `errText` — les trois font virer au
+> rouge.
+>
+> **Ce qu'aucune mutation ne garde toujours pas** : l'écart de *timing* (voir plus bas), et
+> l'annuaire de projets, qui reste ouvert par arbitrage (FLWL-44). La forme de la réponse ne dit
+> rien de ces deux canaux.
+
+Côté MCP, `cmd/flowlio/mcp_refusal_test.go` garde le second volet : le texte rendu à l'agent est
+`not found` (9 octets), `isError: true`, aucun autre champ — et il est une fonction **fidèle** de
+ce que l'API a répondu. Cette fidélité est ce qui relie les deux tests : la couche MCP ne peut pas
+masquer un serveur qui distinguerait le refus, puisqu'elle recopie ce qu'il a dit.
 
 `scripts/check-trust-in-sql-only.sh`, appelé par `make lint`, échoue si la table est nommée dans
 un `.go` non généré hors test. C'est ce qui empêche la décision de quitter la query autrement que

@@ -543,6 +543,12 @@ raisonnement qu'aucune mutation ne surveille est un canal ouvert avec un délai.
 | 8 | **Timing** | **Résidu ouvert, assumé, non chiffré.** L'écart entre « clé inconnue » (sous-plan `never executed`, 1 buffer) et « clé connue non autorisée » (sous-plan exécuté, 5 buffers) est catégoriel, mais trois mesures indépendantes diffèrent d'un facteur 12 selon le plan | **Aucune, délibérément.** Un seuil sur quelques µs contre plus d'une milliseconde d'écart-type HTTP est un test rouge un jour sur trois, donc un test qu'on désactive, donc pire que rien |
 | 9 | **Annuaire** (`GET /api/workspace/projects`) | **Ouvert, préexistant, hors périmètre.** Voir ci-dessous | — |
 
+**Où vit `T1`, depuis FLWL-45.** Canal 1 dans `internal/feature/issue/module_integration_test.go`
+(API réelle sur la base de dev, trois refus comparés octet pour octet, avec un témoin qui échoue si
+le chemin nominal est cassé) ; canal 2 dans `cmd/flowlio/mcp_refusal_test.go`, qui garde le rendu
+et sa **fidélité** à la réponse de l'API — c'est cette fidélité qui étend la garantie du canal 1
+jusqu'à l'agent, sans que le paquet MCP ait besoin d'une base.
+
 ### L'annuaire : ce que FLWL-19 ne ferme pas, et pourquoi
 
 `sql/queries/projects.sql:14-15` scope par `team_id` **seul** ; `workspace/module.go:67` sert la
