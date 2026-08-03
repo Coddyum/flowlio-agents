@@ -4,17 +4,18 @@ package store
 //
 // | Élément              | Résumé                                                  | Ligne |
 // |----------------------|---------------------------------------------------------|-------|
-// | store.AllowTrust     | Ouvre une paire de confiance, idempotente                | 30    |
-// | store.RevokeTrust    | Ferme une paire de confiance, idempotente                | 47    |
-// | store.ListTrustEdges | Liste le graphe d'une team, en clés lisibles             | 61    |
+// | store.AllowTrust     | Ouvre une paire de confiance, idempotente                | 31    |
+// | store.RevokeTrust    | Ferme une paire de confiance, idempotente                | 48    |
+// | store.ListTrustEdges | Liste le graphe d'une team, en clés lisibles             | 62    |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Ce fichier ne NOMME jamais la table `project_trust` : il appelle les queries générées. La
-// décision de confiance vit dans le WHERE de CreateIssue, et l'administration dans
-// sql/queries/trust.sql. Un `.go` qui aurait besoin du nom de la table serait le signe que la
-// décision a quitté la query — c'est ce que garde scripts/check-trust-in-sql-only.sh.
+// Ce fichier ne NOMME jamais la table du graphe : il appelle les queries générées. La décision de
+// confiance vit dans le WHERE de CreateIssue, et l'administration dans sql/queries/trust.sql. Un
+// `.go` qui aurait besoin du nom de la table serait le signe que la décision a quitté la query —
+// c'est ce que garde scripts/check-trust-in-sql-only.sh, et c'est pourquoi ce commentaire-ci
+// n'écrit pas ce nom non plus : une règle absolue s'applique, une règle à exceptions se négocie.
 
 import (
 	"context"

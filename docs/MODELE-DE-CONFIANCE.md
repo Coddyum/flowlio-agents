@@ -32,7 +32,7 @@ la **surface**.
 | Volet | Ce qu'il fait | État |
 | --- | --- | --- |
 | 1 — Balisage à la restitution | Rend visible ce qu'un tiers a écrit | **Livré** (FLWL-17) |
-| 2 — Graphe de confiance | Restreint qui peut écrire à qui | En conception (FLWL-19) |
+| 2 — Graphe de confiance | Restreint qui peut écrire à qui | **Livré** (FLWL-19) |
 
 ---
 
@@ -125,6 +125,9 @@ chaque tour. C'est le même arbitrage que celui qui a supprimé l'outil `whoami`
   portée par des clés étrangères composites `(project_id, team_id)`.
 - Une issue hors de portée est **introuvable, pas interdite**. Il n'existe aucun `403` sur une
   clé d'issue, donc aucun oracle permettant d'énumérer le backlog d'un repo frère.
+- Une paire de projets **non déclarée au moment où sa transaction prend son snapshot** ne peut pas
+  ouvrir d'issue. Le refus emprunte le chemin d'erreur d'une clé inconnue, **à l'octet**, et ne
+  consomme ni numéro ni verrou chez le destinataire.
 
 ## Ce que le produit NE garantit PAS
 
@@ -138,9 +141,9 @@ chaque tour. C'est le même arbitrage que celui qui a supprimé l'outil `whoami`
   C'est délibéré (règle 1).
 - **Aucune protection à l'intérieur d'un projet.** Un agent compromis a plein pouvoir sur le
   backlog de son propre repo : c'est son rôle.
-- **Aucune restriction sur QUI peut écrire à qui**, tant que le volet 2 n'est pas livré. Tous les
-  repos d'une team peuvent s'adresser des issues. Un seul repo compromis en atteint donc tous les
-  autres — c'est précisément ce que FLWL-19 doit fermer.
+- **Aucune protection contre un repo de confiance qui abuse de la confiance déclarée.** Le volet 2
+  réduit la surface d'écriture directe de N−1 à d ; il ne dit rien de ce qu'un voisin autorisé
+  écrit. Le balisage reste la seule défense sur ce contenu-là.
 - **Aucune garantie sur la restitution hors MCP.** La CLI n'applique pas le balisage : elle
   s'adresse à un humain, qui n'exécute pas ce qu'il lit sans le décider.
 - **Rien contre le rendu terminal.** Un corps d'issue contenant des séquences d'échappement ANSI
@@ -151,13 +154,83 @@ chaque tour. C'est le même arbitrage que celui qui a supprimé l'outil `whoami`
 
 ## Volet 2 — Graphe de confiance entre repos
 
-**Non livré.** Conception en cours, tâche FLWL-19. Ce que le volet doit apporter : un humain
-déclare les paires de repos qui se font confiance, et un repo hors du graphe ne peut pas ouvrir
-d'issue vers un autre — principe du moindre privilège appliqué au canal, pas seulement à la
-lecture.
+**Livré (FLWL-19).** Un humain déclare les paires de repos qui se font confiance ; une paire non
+déclarée ne peut pas ouvrir d'issue. Principe du moindre privilège appliqué au canal, pas
+seulement à la lecture.
 
-> Contrainte non négociable de ce volet, posée d'avance : le refus doit être **indiscernable**
-> d'un projet inexistant. Un code d'erreur distinct transformerait le graphe de confiance en
-> oracle énumérant les repos de la team, c'est-à-dire en l'inverse de ce qu'il prétend être.
+### La forme de l'arête
 
-Cette section sera complétée à la livraison.
+Non orientée, stockée une seule fois, normalisée par l'ordre des UUID, `CHECK (low < high)`.
+
+Ce n'est pas une simplification : c'est la seule forme qui ne mente pas. Le canal est
+bidirectionnel par construction — répondre à une issue fait entrer le texte du pair dans le
+contexte de l'auteur (seau `answered` de `check_inbox`, `sql/queries/inbox.sql`). Une arête
+« FRNT → CORE » aurait décrit un flux à sens unique qui n'existe pas. La CHECK rend en outre
+l'auto-arête ET l'état « autorisé dans un seul sens » NON INSÉRABLES, et les clés étrangères
+composites `(project_id, team_id)` rendent une arête inter-team impossible à insérer — y compris
+si l'appelant ment sur le `team_id`.
+
+### Où le refus est appliqué
+
+Dans la clause `WHERE` de la CTE de `CreateIssue` (`sql/queries/issues.sql`), et nulle part
+ailleurs. Aucune autre query n'est modifiée. Conséquences, toutes couvertes par mutation :
+
+- le refus est **hérité**, pas conçu : zéro ligne → `ErrNotFound` → `404 {"error":"not found"}`,
+  strictement le même chemin qu'une clé inconnue ;
+- **aucun numéro n'est consommé et aucun verrou n'est posé** sur un refus, donc l'effet de bord
+  n'est pas un oracle et un émetteur refusé ne peut pas ralentir un tiers légitime.
+
+`scripts/check-trust-in-sql-only.sh`, appelé par `make lint`, échoue si la table est nommée dans
+un `.go` non généré hors test. C'est ce qui empêche la décision de quitter la query autrement que
+délibérément.
+
+### Ce que l'agent sait
+
+Rien de neuf. **Aucun outil MCP n'a été ajouté** : un agent SUBIT le graphe. Il ne le lit pas, il
+ne l'écrit pas, et la seule chose qui change pour lui est qu'un `create_issue` vers une paire non
+déclarée rend `not found`, comme une clé inconnue. L'édition passe par trois routes `admin` et par
+`flowlio trust`, côté humain.
+
+### Défaut
+
+**Fermé.** La migration `000007` ne backfille rien et `flowlio project create` ne crée aucune
+arête. Décidé sur un fait mesuré le 2026-08-03 : dépôt privé, 0 tag, 0 release, 0 clone unique —
+il n'existait aucun parc installé. Le backfill « tout ouvert » aurait écrit en base la politique
+que ce volet ferme ; le backfill « par le trafic observé » a été examiné et refusé, parce que dans
+le scénario de menace l'arête existante est *celle que l'attaquant a créée*.
+
+`flowlio trust list` dit quoi taper quand le graphe est vide, et `flowlio init` prévient à partir
+du second projet d'une team.
+
+### Ce que le volet 2 ne garantit PAS
+
+- **`flowlio trust deny` n'est pas un outil de confinement.** Il refuse les nouvelles issues ; les
+  fils déjà ouverts restent répondables jusqu'à leur clôture, sans borne de temps. Pour couper
+  immédiatement un repo compromis, l'outil est `flowlio token revoke`, vérifié à chaque requête.
+- **La garantie est prise au snapshot.** Un `create_issue` déjà bloqué sur le verrou du projet
+  destinataire au moment où la confiance est retirée aboutit quand même. Fenêtre de l'ordre de
+  quelques millisecondes, non bornée si une transaction stagne. Le correctif testé (`FOR KEY SHARE`
+  sur l'EXISTS) est documenté dans la query et gardé en réserve : il n'est pas appliqué parce que
+  retirer une confiance ne ferme de toute façon aucun fil, donc le résidu est du même ordre que ce
+  que la politique accepte déjà.
+- **Le graphe n'est pas une partition.** Si le graphe est connexe, tout repo atteint tout repo par
+  rebond, à condition qu'un agent intermédiaire obéisse à une instruction qui lui arrive balisée.
+  Ce qui est réduit, c'est la surface d'écriture **directe**, de N−1 à d. Seul un repo à degré 0
+  est réellement isolé.
+- **Le refus n'est indiscernable qu'au niveau de la RÉPONSE.** Il n'ajoute aucun canal de
+  distinction, mais il n'en retire pas non plus : `GET /api/workspace/projects` rend à tout token
+  de projet la liste complète des clés de sa team, et la couche MCP la recopie dans les
+  instructions de session. Un agent sait donc que ses frères existent, et peut déduire le graphe
+  par différence en n−1 tentatives. Ce que le graphe lui retire, c'est le droit de leur écrire,
+  pas la connaissance qu'ils existent. Arbitré le 2026-08-03 : on ne filtre pas l'annuaire en v1,
+  parce que le filtrer sans rafraîchir les frères résolus au démarrage du process MCP livrerait
+  une fonctionnalité qui ne marche pas (FLWL-44).
+- **Un écart de timing subsiste, non chiffré.** Le sous-plan de l'EXISTS n'est pas exécuté sur une
+  clé inconnue et l'est sur une clé connue non autorisée. L'écart est catégoriel mais trois mesures
+  indépendantes en diffèrent d'un facteur 12 : aucun seuil n'est testable sans produire un test
+  rouge un jour sur trois, donc aucun test ne le garde.
+- **La propriété repose sur le token admin**, qui peut restaurer le maillage complet de n'importe
+  quelle team en quelques commandes, et dont rien n'enregistre l'usage au-delà de `last_used_at`.
+- **La migration ne sécurise rien toute seule** au-delà du défaut fermé : elle rend la sécurité
+  configurable. Une team qui n'ouvre que ce dont elle a besoin est protégée ; une team qui ouvre
+  tout est dans l'état d'avant.

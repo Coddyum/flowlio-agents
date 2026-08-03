@@ -29,10 +29,10 @@ import (
 
 // errSelfPair est le message rendu à un humain qui autorise un projet avec lui-même.
 //
-// C'est de la validation d'entrée, pas de la tenancy : la base refuserait de toute façon
-// (project_trust_ordered exclut l'égalité), mais elle rendrait un 500 ou un `not found` là où un
-// 400 lisible dit ce qu'il faut faire. Un projet qui se pose une question à lui-même n'a pas
-// besoin du canal inter-projets : il a des tâches.
+// C'est de la validation d'entrée, pas de la tenancy : la base refuserait de toute façon (sa
+// CHECK d'ordre exclut l'égalité, voir la migration 000007), mais elle rendrait un 500 ou un
+// `not found` là où un 400 lisible dit ce qu'il faut faire. Un projet qui se pose une question à
+// lui-même n'a pas besoin du canal inter-projets : il a des tâches.
 var errSelfPair = errors.New(
 	"un projet ne peut pas s'autoriser lui-même — une question à son propre repo est une tâche")
 

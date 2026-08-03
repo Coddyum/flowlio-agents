@@ -54,6 +54,7 @@ lint: ## golangci-lint + garde-fous structurels
 	./scripts/check-cross-feature-imports.sh
 	./scripts/check-file-size.sh
 	./scripts/check-sommaire.sh
+	./scripts/check-trust-in-sql-only.sh
 
 sommaire: ## Resynchronise les numéros de ligne des blocs // SOMMAIRE
 	./scripts/sync-sommaire-lines.sh

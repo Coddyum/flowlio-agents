@@ -13,9 +13,21 @@ import (
 // L'issue, son premier message et son événement s'écrivent dans UNE transaction : un événement
 // perdu est une notification jamais reçue, et une issue sans message serait une question vide.
 //
-// Le destinataire est désigné par sa clé, résolue DANS la query d'insertion. Une clé inconnue —
-// ou appartenant à une autre team — ne réserve aucun numéro et remonte la même erreur : on ne
-// peut donc pas découvrir l'existence d'un projet d'une autre team en essayant des clés.
+// Le destinataire est désigné par sa clé, résolue DANS la query d'insertion. Une clé inconnue,
+// appartenant à une autre team, ou vers laquelle aucune confiance n'est déclarée, ne réserve aucun
+// numéro et remonte la MÊME erreur : on ne peut donc ni découvrir l'existence d'un projet d'une
+// autre team en essayant des clés, ni cartographier le graphe de confiance de la sienne.
+//
+// AUCUN CONTRÔLE D'AUTORISATION ICI, ET C'EST LA RÈGLE. Le destinataire, sa team et le droit de
+// lui écrire sont trois conditions du même WHERE, dans la même instruction. Un `if` ajouté ici
+// devrait re-résoudre la clé lisible en UUID, c'est-à-dire fabriquer à la main la query
+// d'énumération que le modèle refuse d'exposer.
+//
+// Un garde anti-auto-adressage a vécu ici jusqu'à FLWL-19. Il était MORT : la CHECK issues_not_self
+// levait à l'intérieur de tx.CreateIssue, donc le test qui suivait n'était jamais atteint et son
+// message n'a jamais été rendu à personne. Depuis le prédicat de confiance il est doublement
+// inatteignable — l'auto-adressage donne least = greatest, forme non insérable dans le graphe.
+// Le garde qui produit vraiment le message utile est côté client, cmd/flowlio/mcp_issue_tools.go.
 func (s *service) CreateIssue(ctx context.Context, in CreateIssueInput) (Issue, error) {
 	if err := validateScope(in.TeamID, in.AuthorProjectID); err != nil {
 		return Issue{}, err
@@ -47,14 +59,6 @@ func (s *service) CreateIssue(ctx context.Context, in CreateIssueInput) (Issue, 
 		})
 		if err != nil {
 			return translateStore(err, "projet "+toProject)
-		}
-
-		// Une issue vers soi-même est refusée par la base (issues_not_self), qui remonterait un
-		// conflit. Le message donné ici dit quoi faire à la place : le cas est une confusion
-		// d'usage courante, pas une tentative d'abus.
-		if created.ProjectID == in.AuthorProjectID {
-			return fmt.Errorf("%w: une question à son propre projet est une tâche — utiliser create_task",
-				ErrInvalidInput)
 		}
 
 		if err := tx.AddFirstMessage(ctx, created.ID, in.AuthorProjectID, body); err != nil {
