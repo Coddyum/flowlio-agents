@@ -49,6 +49,7 @@ Le middleware d'une feature (auth…) se lie une seule fois dans son `module.go`
 | `task`      | backlog d'un projet + notes       | `/api/task` : `POST/GET /`, `GET/PATCH /{number}` — **une seule route d'écriture** : note et archivage sont des champs du PATCH | aucune                    |
 | `issue`     | questions inter-projets + fil     | `/api/issue` : `POST/GET /`, `GET /{project}/{number}`, `POST /{project}/{number}/answer`                           | aucune                    |
 | `inbox`     | état actionnable du projet        | `/api/inbox` : `GET /`                                                                                              | aucune                    |
+| `overview`  | lecture team-scopée, supervision  | `/api/overview` : `GET /`, `GET /refs/{project}/{number}` — **lecture seule, aucune écriture**                       | aucune                    |
 
 Portées `workspace` : les routes d'administration exigent un token `admin` (`AdminOnly`) ;
 `GET /projects` et `GET /whoami` acceptent tout token valide et restent scopés à sa team. Un
@@ -64,6 +65,17 @@ pourrait être contourné. Un token admin, qui n'est lié à aucun projet, reço
 l'insertion d'une note, alimentée par un `SELECT` scopé sur la tâche. L'isolation entre projets
 d'une même team est couverte par `internal/feature/task/store/store_integration_test.go`.
 
+Portées `overview` : **les deux routes exigent un token `admin`** (`AdminOnly`, lié une fois dans
+`module.go`). Il n'y a pas de gate mixte, et il ne faut pas en introduire une : c'est la seule
+surface du produit qui lit une team ENTIÈRE, y compris le fil d'une conversation entre deux repos
+dont l'appelant n'est ni l'auteur ni le destinataire. Sous `auth.Middleware`, un agent lirait les
+questions de ses repos frères, et les tests d'isolation de `task` et `issue` resteraient verts.
+
+La team vient toujours de la résolution serveur de `?team=<slug>` : aucun UUID n'entre ni ne sort
+de cette surface. Un admin porteur d'une team y est enfermé — même garde que `workspace`, et il
+est écrit aux deux endroits parce qu'une défense qui vit dans un autre fichier n'est pas une
+défense.
+
 ## Services transverses (`internal/core`)
 
 | Paquet      | Rôle                                                                              |
@@ -77,15 +89,22 @@ d'une même team est couverte par `internal/feature/task/store/store_integration
 Aucune interface Go inter-module : aucune feature n'en importe une autre, aucune ne passe par
 `FeatureRegistry`.
 
-En revanche, **trois features partagent des tables** — ce n'est pas un import, donc
-`check-cross-feature-imports.sh` ne le voit pas, et c'est pour cette raison que c'est écrit ici :
+En revanche, **plusieurs features partagent des tables** — ce n'est pas un import, donc
+`check-cross-feature-imports.sh` ne le voit pas, et c'est pour cette raison que c'est écrit ici.
+`overview` est le cas extrême et le plus propre : il lit sept tables dont six ne lui appartiennent
+pas, et n'en écrit aucune (décision M3 #26 — lire la table d'un autre domaine par une query
+scopée dédiée est permis, y écrire ne l'est pas).
 
 | Table      | Propriétaire   | Autres écrivains / lecteurs                                              |
 | ---------- | -------------- | ------------------------------------------------------------------------ |
-| `projects` | `workspace`    | `task` et `issue` en **écriture** (`ClaimNextNumber`), `inbox` en lecture |
-| `tasks`    | `task`         | `inbox` en lecture (seau des tâches en cours)                             |
-| `issues`   | `issue`        | `inbox` en lecture (seaux entrants et sortants)                           |
+| `projects` | `workspace`    | `task` et `issue` en **écriture** (`ClaimNextNumber`), `inbox` et `overview` en lecture |
+| `tasks`    | `task`         | `inbox` et `overview` en lecture (seau des tâches en cours)               |
+| `issues`   | `issue`        | `inbox` et `overview` en lecture (seaux entrants et sortants)             |
 | `events`   | `issue`        | `inbox` en lecture                                                        |
+| `teams`    | `workspace`    | `overview` en lecture (résolution du slug en scope)                       |
+| `tokens`   | `workspace`    | `auth` en lecture/écriture (`last_used_at`), `overview` en lecture (le pouls d'un repo) |
+| `issue_messages` | `issue`  | `overview` en lecture — **la seule FK simple du lot**, donc la seule où la clause de team porte réellement |
+| `task_notes` | `task`       | `overview` en lecture (`last_move`, et le détail d'une tâche)             |
 
 La règle qui rend ce partage sûr : **toute query porte son scope de tenancy**, quelle que soit la
 feature qui l'écrit. Une query partagée qui prendrait un identifiant nu serait une faille pour

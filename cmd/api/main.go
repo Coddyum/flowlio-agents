@@ -4,9 +4,9 @@ package main
 //
 // | Élément      | Résumé                                                           | Ligne |
 // |--------------|------------------------------------------------------------------|-------|
-// | main         | Charge la config, câble l'infra, monte les modules, sert l'API     | 45    |
-// | buildModules   | Instancie les modules de feature — point d'ajout unique          | 97    |
-// | bootstrapLocal | Émet le token admin au tout premier démarrage local              | 111   |
+// | main         | Charge la config, câble l'infra, monte les modules, sert l'API     | 46    |
+// | buildModules   | Instancie les modules de feature — point d'ajout unique          | 98    |
+// | bootstrapLocal | Émet le token admin au tout premier démarrage local              | 113   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -28,6 +28,7 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/database"
 	"github.com/Coddyum/flowlio-agents/internal/feature/inbox"
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue"
+	"github.com/Coddyum/flowlio-agents/internal/feature/overview"
 	"github.com/Coddyum/flowlio-agents/internal/feature/task"
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace"
 	"github.com/Coddyum/flowlio-agents/internal/pkg/cache"
@@ -100,6 +101,7 @@ func buildModules(cfg module.ModuleConfig) []module.Module {
 		task.NewModule(cfg),
 		issue.NewModule(cfg),
 		inbox.NewModule(cfg),
+		overview.NewModule(cfg),
 	}
 }
 
