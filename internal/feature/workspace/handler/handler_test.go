@@ -101,10 +101,36 @@ func (f *fakeWorkspace) RevokeToken(context.Context, uuid.UUID, uuid.UUID) error
 	return nil
 }
 
+func (f *fakeWorkspace) AllowTrust(context.Context, service.TrustPairInput) (service.TrustDecision, error) {
+	f.note("AllowTrust")
+	return service.TrustDecision{}, nil
+}
+
+func (f *fakeWorkspace) RevokeTrust(context.Context, service.TrustPairInput) (service.TrustDecision, error) {
+	f.note("RevokeTrust")
+	return service.TrustDecision{}, nil
+}
+
+func (f *fakeWorkspace) ListTrust(context.Context, uuid.UUID) ([]service.TrustEdge, error) {
+	f.note("ListTrust")
+	return nil, nil
+}
+
 // adminServer monte les routes admin qui passent par teamFor, avec le vrai middleware d'auth,
 // et renvoie le token brut à présenter. teamID est la team que PORTE le token admin :
 // uuid.Nil pour l'admin global, celui qui existe réellement aujourd'hui.
 func adminServer(t *testing.T, teamID uuid.UUID, svc service.Service) (http.Handler, string) {
+	t.Helper()
+	return tokenServer(t, auth.TokenRecord{Scope: auth.ScopeAdmin, TeamID: teamID}, svc)
+}
+
+// tokenServer monte les mêmes routes derrière le VRAI AdminOnly, pour un token dont le test
+// choisit la portée. Le secret et le hash sont fabriqués ici : un test qui les fournirait
+// prouverait la cohérence de ses propres constantes, pas celle du middleware.
+//
+// C'est ce qui permet de présenter un token de PROJET aux routes admin et de vérifier qu'il est
+// refusé par le middleware, sans jamais atteindre le handler.
+func tokenServer(t *testing.T, rec auth.TokenRecord, svc service.Service) (http.Handler, string) {
 	t.Helper()
 
 	tok, err := crypto.NewToken()
@@ -112,16 +138,13 @@ func adminServer(t *testing.T, teamID uuid.UUID, svc service.Service) (http.Hand
 		t.Fatalf("NewToken: %v", err)
 	}
 
-	authSvc := auth.New(&fakeAuthStore{
-		prefix: tok.Prefix,
-		rec: auth.TokenRecord{
-			ID:         uuid.New(),
-			Scope:      auth.ScopeAdmin,
-			TeamID:     teamID,
-			SecretHash: tok.Hash,
-			LastUsedAt: time.Now(),
-		},
-	})
+	if rec.ID == uuid.Nil {
+		rec.ID = uuid.New()
+	}
+	rec.SecretHash = tok.Hash
+	rec.LastUsedAt = time.Now()
+
+	authSvc := auth.New(&fakeAuthStore{prefix: tok.Prefix, rec: rec})
 
 	h := New(authSvc, svc)
 	admin := authSvc.AdminOnly
@@ -132,6 +155,9 @@ func adminServer(t *testing.T, teamID uuid.UUID, svc service.Service) (http.Hand
 	mux.Handle("POST /tokens", admin(http.HandlerFunc(h.CreateToken)))
 	mux.Handle("GET /tokens", admin(http.HandlerFunc(h.ListTokens)))
 	mux.Handle("DELETE /tokens/{id}", admin(http.HandlerFunc(h.RevokeToken)))
+	mux.Handle("GET /trust", admin(http.HandlerFunc(h.ListTrust)))
+	mux.Handle("POST /trust", admin(http.HandlerFunc(h.AllowTrust)))
+	mux.Handle("DELETE /trust/{first}/{second}", admin(http.HandlerFunc(h.RevokeTrust)))
 
 	return mux, tok.Plain
 }
@@ -153,6 +179,13 @@ var teamForRoutes = []teamForRoute{
 	{"POST /tokens", http.MethodPost, "/tokens", `{"project":"FRNT","name":"agent"}`, "CreateToken"},
 	{"GET /tokens", http.MethodGet, "/tokens", "", "ListTokens"},
 	{"DELETE /tokens/{id}", http.MethodDelete, "/tokens/" + uuid.NewString(), "", "RevokeToken"},
+	// Le graphe de confiance édite QUI PEUT ÉCRIRE À QUI. Un admin épinglé à une team qui
+	// atteindrait `POST /trust?team=<voisin>` s'ouvrirait le canal chez le voisin — c'est-à-dire
+	// exactement la faille que le volet 2 ferme, rouverte par la porte de son administration.
+	// Les trois routes sont donc dans cette liste, et les quatre tests ci-dessous les couvrent.
+	{"GET /trust", http.MethodGet, "/trust", "", "ListTrust"},
+	{"POST /trust", http.MethodPost, "/trust", `{"first":"FRNT","second":"CORE"}`, "AllowTrust"},
+	{"DELETE /trust/{first}/{second}", http.MethodDelete, "/trust/FRNT/CORE", "", "RevokeTrust"},
 }
 
 // call joue une requête admin sur une route et rend le statut, le corps, et les appels que le

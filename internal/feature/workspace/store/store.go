@@ -4,12 +4,13 @@ package store
 //
 // | Élément  | Résumé                                                             | Ligne |
 // |----------|--------------------------------------------------------------------|-------|
-// | Team     | Une team, unité de tenancy                                           | 36    |
-// | Project  | Un projet, c'est-à-dire un repo, identifié par sa clé courte         | 44    |
-// | Token    | Un token de projet tel que persisté, sans jamais le secret en clair  | 54    |
-// | Store    | Contrat de persistance de la feature workspace                       | 67    |
-// | store    | Implémentation adossée aux queries générées par sqlc                 | 84    |
-// | New      | Crée le store workspace                                              | 89    |
+// | Team     | Une team, unité de tenancy                                           | 37    |
+// | Project  | Un projet, c'est-à-dire un repo, identifié par sa clé courte         | 45    |
+// | Token      | Un token de projet tel que persisté, sans jamais le secret en clair | 55    |
+// | TrustEdge  | Une arête du graphe de confiance, en clés lisibles                  | 71    |
+// | Store      | Contrat de persistance de la feature workspace                      | 79    |
+// | store      | Implémentation adossée aux queries générées par sqlc                | 104   |
+// | New        | Crée le store workspace                                             | 109   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -62,6 +63,17 @@ type Token struct {
 	Revoked    bool
 }
 
+// TrustEdge est une arête du graphe de confiance, rendue en CLÉS lisibles.
+//
+// Non orientée : FirstKey et SecondKey sont les deux extrémités d'une PAIRE, dans l'ordre des
+// UUID en base et donc sans signification de sens. Aucune méthode ne doit jamais interpréter
+// « first » comme un émetteur.
+type TrustEdge struct {
+	FirstKey  string
+	SecondKey string
+	CreatedAt time.Time
+}
+
 // Store est le contrat consommé par le service. Chaque lecture porte son scope de tenancy :
 // une query sans team_id serait une faille d'isolation, pas un oubli d'ergonomie.
 type Store interface {
@@ -78,6 +90,14 @@ type Store interface {
 	CreateToken(ctx context.Context, teamID, projectID uuid.UUID, name, prefix, hash string) (Token, error)
 	ListTokens(ctx context.Context, teamID, projectID uuid.UUID) ([]Token, error)
 	RevokeToken(ctx context.Context, teamID, tokenID uuid.UUID) (Token, error)
+
+	// Graphe de confiance. Ces trois méthodes ne DÉCIDENT de rien : la décision est le prédicat
+	// du WHERE de CreateIssue. Elles ne servent que l'administration humaine, sous token admin.
+	// Les deux projets sont désignés par leur CLÉ et résolus DANS la query, sous le team_id
+	// déjà prouvé — jamais par un UUID venu d'ailleurs.
+	AllowTrust(ctx context.Context, teamID uuid.UUID, firstKey, secondKey string) (created bool, err error)
+	RevokeTrust(ctx context.Context, teamID uuid.UUID, firstKey, secondKey string) (removed bool, err error)
+	ListTrustEdges(ctx context.Context, teamID uuid.UUID) ([]TrustEdge, error)
 }
 
 // store adosse le contrat aux queries générées.

@@ -4,21 +4,24 @@ package service
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | Service            | Contrat consommé par le handler workspace                    | 40    |
-// | service            | Implémentation, dépendante de l'interface store              | 59    |
-// | New                | Crée le service workspace                                    | 64    |
-// | CreateTeamInput    | Entrée de création d'une team                                | 70    |
-// | Team               | Une team telle qu'exposée par l'API                          | 76    |
-// | CreateProjectInput | Entrée de création d'un projet                               | 85    |
-// | Project            | Un projet tel qu'exposé par l'API                            | 92    |
-// | CreateTokenInput   | Entrée de création d'un token d'agent                        | 100   |
-// | CreatedToken       | Token fraîchement créé : seule occasion de voir le secret    | 108   |
-// | TokenInfo          | Token listé, sans secret ni hash                             | 117   |
+// | Service            | Contrat consommé par le handler workspace                    | 43    |
+// | service            | Implémentation, dépendante de l'interface store              | 71    |
+// | New                | Crée le service workspace                                    | 76    |
+// | CreateTeamInput    | Entrée de création d'une team                                | 82    |
+// | Team               | Une team telle qu'exposée par l'API                          | 88    |
+// | CreateProjectInput | Entrée de création d'un projet                               | 97    |
+// | Project            | Un projet tel qu'exposé par l'API                            | 104   |
+// | CreateTokenInput   | Entrée de création d'un token d'agent                        | 112   |
+// | CreatedToken       | Token fraîchement créé : seule occasion de voir le secret    | 120   |
+// | TokenInfo          | Token listé, sans secret ni hash                             | 129   |
+// | TrustPairInput     | Une paire de projets désignée par ses deux clés              | 145   |
+// | TrustDecision      | Ce qu'une écriture sur le graphe a réellement changé         | 156   |
+// | TrustEdge          | Une arête du graphe telle qu'exposée par l'API               | 163   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// CONTRAT UNIQUEMENT — les implémentations sont dans teams.go, projects.go et tokens.go.
+// CONTRAT UNIQUEMENT — les implémentations sont dans teams.go, projects.go, tokens.go et trust.go.
 
 import (
 	"context"
@@ -53,6 +56,15 @@ type Service interface {
 	CreateToken(ctx context.Context, in CreateTokenInput) (CreatedToken, error)
 	ListTokens(ctx context.Context, teamID uuid.UUID, projectKey string) ([]TokenInfo, error)
 	RevokeToken(ctx context.Context, teamID, tokenID uuid.UUID) error
+
+	// Graphe de confiance — administration humaine, sous token admin.
+	//
+	// Ces trois méthodes ne portent AUCUNE décision d'autorisation : elles éditent une
+	// déclaration, et c'est la query CreateIssue qui l'applique. Leur seule validation est
+	// celle de deux chaînes tapées par un humain — la tenancy, elle, vit dans la query.
+	AllowTrust(ctx context.Context, in TrustPairInput) (TrustDecision, error)
+	RevokeTrust(ctx context.Context, in TrustPairInput) (TrustDecision, error)
+	ListTrust(ctx context.Context, teamID uuid.UUID) ([]TrustEdge, error)
 }
 
 // service dépend de l'interface store, jamais de sqlc.
@@ -121,4 +133,35 @@ type TokenInfo struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	Revoked    bool       `json:"revoked"`
+}
+
+// TrustPairInput désigne une paire de projets par leurs CLÉS.
+//
+// Aucun UUID : les deux clés sont résolues DANS la query, sous le team_id déjà prouvé par
+// teamFor. Un handler qui résoudrait les clés lui-même recréerait à la main l'énumération que le
+// modèle refuse d'exposer.
+//
+// L'ordre des deux clés n'a AUCUNE signification : l'arête est une paire, pas une flèche.
+type TrustPairInput struct {
+	TeamID uuid.UUID `json:"-"`
+	First  string    `json:"first"`
+	Second string    `json:"second"`
+}
+
+// TrustDecision dit ce que l'écriture a effectivement changé, pour que la CLI distingue « fait »
+// de « c'était déjà le cas » sans second aller-retour.
+//
+// Changed est faux sur un rejeu : `trust allow` d'une paire déjà ouverte, `trust deny` d'une paire
+// déjà fermée. Les deux verbes sont idempotents, et c'est ce champ qui le rend visible.
+type TrustDecision struct {
+	First   string `json:"first"`
+	Second  string `json:"second"`
+	Changed bool   `json:"changed"`
+}
+
+// TrustEdge est une arête telle qu'exposée par l'API : deux clés et une date.
+type TrustEdge struct {
+	First     string    `json:"first"`
+	Second    string    `json:"second"`
+	CreatedAt time.Time `json:"created_at"`
 }

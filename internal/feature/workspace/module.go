@@ -70,6 +70,13 @@ func (m *mod) Routes() http.Handler {
 	r.Handle("GET /tokens", admin(http.HandlerFunc(m.h.ListTokens)))
 	r.Handle("DELETE /tokens/{id}", admin(http.HandlerFunc(m.h.RevokeToken)))
 
+	// Graphe de confiance : ADMIN sur les trois, sans exception. Un agent a plein pouvoir sur son
+	// propre repo, donc une confiance qu'il déclarerait serait auto-signée par la partie qu'elle
+	// contraint. `authed` ici rouvrirait le canal que le volet 2 referme.
+	r.Handle("GET /trust", admin(http.HandlerFunc(m.h.ListTrust)))
+	r.Handle("POST /trust", admin(http.HandlerFunc(m.h.AllowTrust)))
+	r.Handle("DELETE /trust/{first}/{second}", admin(http.HandlerFunc(m.h.RevokeTrust)))
+
 	r.Handle("GET /whoami", authed(http.HandlerFunc(m.h.Whoami)))
 
 	return r
