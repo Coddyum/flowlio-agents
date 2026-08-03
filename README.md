@@ -13,8 +13,8 @@ CLI and MCP only. No web UI. **No LLM inside**: every behaviour is deterministic
 
 ## The problem
 
-You are working on `omiros-core` and `omiros-web`. The frontend agent notices the backend changed
-an API contract.
+You are working on `acme-api` and `acme-web`. The frontend agent notices the backend changed an API
+contract.
 
 Today you copy the question into a `.md`, switch windows, paste it into the other session, wait,
 copy the answer back. Context leaks at every hop, and **you** are the transport layer.
@@ -22,16 +22,16 @@ copy the answer back. Context leaks at every hop, and **you** are the transport 
 flowlio-agents models this directly:
 
 ```
-web agent                       flowlio                      core agent
+web agent                       flowlio                       api agent
     │                              │                              │
-    │  create_issue(to: CORE, …)   │                              │
+    │   create_issue(to: API, …)   │                              │
     ├─────────────────────────────►│                              │
     │                              │       check_inbox()          │
     │                              │◄─────────────────────────────┤
-    │                              │   "CORE-34 — is /v2/cards…"  │
+    │                              │   "API-34 — did /v2/orders…" │
     │                              ├─────────────────────────────►│
     │                              │                              │  reads its own code
-    │                              │   answer_issue(CORE-34, …)   │
+    │                              │   answer_issue(API-34, …)    │
     │                              │◄─────────────────────────────┤
     │      check_inbox() → answered│                              │
     │◄─────────────────────────────┤                              │
@@ -66,7 +66,7 @@ Install the CLI from the [latest release](https://github.com/Coddyum/flowlio-age
 (`flowlio_<version>_<os>_<arch>.tar.gz`), then, **from the root of the repo you want to track**:
 
 ```bash
-flowlio init --team omiros --project CORE --project-name omiros-core
+flowlio init --team acme --project API --project-name acme-api
 ```
 
 This creates the team, the project and an agent token, and writes a `.mcp.json` into the repo. It
@@ -83,7 +83,7 @@ flowlio task list
 Repeat `flowlio init` in your other repo with `--project WEB`, then allow the two to talk:
 
 ```bash
-flowlio trust allow CORE WEB
+flowlio trust allow API WEB
 ```
 
 > **`.mcp.json` is meant to be committed, and holds no secret.** It references `${FLOWLIO_TOKEN}`,
@@ -124,13 +124,13 @@ call able to name another repo's backlog.
 ## Model
 
 ```
-team (Omiros)
- └── project (= 1 repo: CORE, WEB)
+team (acme)
+ └── project (= 1 repo: API, WEB)
       ├── task    ← work internal to the repo
       └── issue   ← question addressed to a sibling repo
 ```
 
-References are readable — `CORE-34`, never a UUID. An agent token is scoped to **one project**: it
+References are readable — `API-34`, never a UUID. An agent token is scoped to **one project**: it
 sees neither other repos' tasks nor other teams.
 
 ## What it guarantees
