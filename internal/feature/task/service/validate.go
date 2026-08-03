@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/task/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 	"github.com/google/uuid"
 )
 

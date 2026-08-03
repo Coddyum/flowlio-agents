@@ -1,4 +1,4 @@
-module github.com/Coddyum/flowlio-ia
+module github.com/Coddyum/flowlio-agents
 
 go 1.26.1
 

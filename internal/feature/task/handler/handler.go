@@ -24,8 +24,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/Coddyum/flowlio-ia/internal/core/auth"
-	"github.com/Coddyum/flowlio-ia/internal/feature/task/service"
+	"github.com/Coddyum/flowlio-agents/internal/core/auth"
+	"github.com/Coddyum/flowlio-agents/internal/feature/task/service"
 	"github.com/google/uuid"
 )
 

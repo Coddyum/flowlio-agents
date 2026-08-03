@@ -1,4 +1,4 @@
-# CLAUDE.md — flowlio-ia
+# CLAUDE.md — flowlio-agents
 
 > Architecture, flow, patterns et règles = doctrine figée : ne pas diluer.
 > Référence complète du squelette : `blueprint/ARCHITECTURE-BLUEPRINT.md`.
@@ -34,7 +34,7 @@ Charger ensuite, selon la zone touchée :
 
 ## Projet
 
-**flowlio-ia** est un gestionnaire de projets **pour agents IA** (Claude Code, Codex, OpenCode),
+**flowlio-agents** est un gestionnaire de projets **pour agents IA** (Claude Code, Codex, OpenCode),
 pas pour humains. Modèle : `team → project (= 1 repo) → tasks | issues`. Les tâches sont le
 travail interne d'un repo ; les issues sont les questions qu'un repo adresse à un repo frère de
 la même team. Aucune IA dans le produit : tout est déterministe.

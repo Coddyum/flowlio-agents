@@ -10,7 +10,7 @@ package service
 // Fin du sommaire.
 // =====================================================================
 
-import "github.com/Coddyum/flowlio-ia/internal/feature/task/store"
+import "github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 
 // toTask projette une tâche du store en vue API. Les identifiants internes (UUID de tâche, de
 // team et de projet) ne franchissent pas cette frontière : un agent travaille sur des numéros

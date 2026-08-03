@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	inboxservice "github.com/Coddyum/flowlio-ia/internal/feature/inbox/service"
-	issueservice "github.com/Coddyum/flowlio-ia/internal/feature/issue/service"
-	"github.com/Coddyum/flowlio-ia/internal/pkg/client"
+	inboxservice "github.com/Coddyum/flowlio-agents/internal/feature/inbox/service"
+	issueservice "github.com/Coddyum/flowlio-agents/internal/feature/issue/service"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
 // sealPattern retrouve le sceau réellement émis dans une réponse. Les tests ne le connaissent

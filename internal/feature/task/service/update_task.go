@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/task/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 )
 
 // UpdateTask applique un patch partiel : un champ absent laisse la valeur en place.

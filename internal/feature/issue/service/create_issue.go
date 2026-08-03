@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/issue/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 )
 
 // CreateIssue ouvre une question vers un projet frère de la même team.

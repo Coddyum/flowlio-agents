@@ -15,11 +15,11 @@ package workspace
 import (
 	"net/http"
 
-	"github.com/Coddyum/flowlio-ia/internal/core/auth"
-	"github.com/Coddyum/flowlio-ia/internal/core/module"
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/handler"
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/service"
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/store"
+	"github.com/Coddyum/flowlio-agents/internal/core/auth"
+	"github.com/Coddyum/flowlio-agents/internal/core/module"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/handler"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/store"
 )
 
 // Key identifie le module dans le FeatureRegistry et sert de préfixe à ses routes.

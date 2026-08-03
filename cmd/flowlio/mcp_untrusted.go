@@ -59,8 +59,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	inboxservice "github.com/Coddyum/flowlio-ia/internal/feature/inbox/service"
-	issueservice "github.com/Coddyum/flowlio-ia/internal/feature/issue/service"
+	inboxservice "github.com/Coddyum/flowlio-agents/internal/feature/inbox/service"
+	issueservice "github.com/Coddyum/flowlio-agents/internal/feature/issue/service"
 )
 
 // framingRule est la consigne de cadrage, injectée une seule fois par session dans

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/task/service"
+	"github.com/Coddyum/flowlio-agents/internal/feature/task/service"
 )
 
 // ListTasks renvoie le backlog du projet du token.

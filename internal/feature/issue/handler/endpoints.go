@@ -16,7 +16,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/issue/service"
+	"github.com/Coddyum/flowlio-agents/internal/feature/issue/service"
 )
 
 // CreateIssue ouvre une question vers un projet frère de la même team.

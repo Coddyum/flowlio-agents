@@ -26,7 +26,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/issue/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 	"github.com/google/uuid"
 )
 

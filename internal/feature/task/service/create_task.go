@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/task/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 )
 
 // CreateTask ouvre une tâche dans le backlog du projet du token.

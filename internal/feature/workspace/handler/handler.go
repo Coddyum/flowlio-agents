@@ -24,8 +24,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/Coddyum/flowlio-ia/internal/core/auth"
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/service"
+	"github.com/Coddyum/flowlio-agents/internal/core/auth"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
 	"github.com/google/uuid"
 )
 

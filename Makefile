@@ -1,4 +1,4 @@
-# Makefile — flowlio-ia
+# Makefile — flowlio-agents
 # Cibles dev (déléguées à Claude) vs cibles prod (humain exclusivement).
 
 MIGRATE       ?= migrate

@@ -5,14 +5,14 @@ package service
 // | Élément         | Résumé                                                        | Ligne |
 // |-----------------|---------------------------------------------------------------|-------|
 // | Service         | Contrat consommé par le handler task                            | 48    |
-// | service         | Implémentation, dépendante de l'interface store                 | 64    |
-// | New             | Crée le service task                                            | 69    |
-// | Task            | Une tâche telle qu'exposée par l'API                            | 75    |
-// | Note            | Une note de progression exposée par l'API                       | 88    |
-// | TaskDetail      | Une tâche et son fil de notes                                   | 99    |
-// | CreateTaskInput | Entrée de création d'une tâche                                  | 107   |
-// | ListTasksInput  | Critères de lecture du backlog                                  | 122   |
-// | UpdateTaskInput | Patch partiel d'une tâche, note de progression comprise         | 135   |
+// | service         | Implémentation, dépendante de l'interface store                 | 63    |
+// | New             | Crée le service task                                            | 68    |
+// | Task            | Une tâche telle qu'exposée par l'API                            | 74    |
+// | Note            | Une note de progression exposée par l'API                       | 87    |
+// | TaskDetail      | Une tâche et son fil de notes                                   | 98    |
+// | CreateTaskInput | Entrée de création d'une tâche                                  | 106   |
+// | ListTasksInput  | Critères de lecture du backlog                                  | 121   |
+// | UpdateTaskInput | Patch partiel d'une tâche, note de progression comprise         | 134   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -29,7 +29,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/task/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 	"github.com/google/uuid"
 )
 
@@ -57,7 +57,6 @@ type Service interface {
 	// MÊME transaction : « passer en done et dire pourquoi » est une seule intention, donc une
 	// seule écriture, qui réussit ou échoue d'un bloc.
 	UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, error)
-
 }
 
 // service dépend de l'interface store, jamais de sqlc.

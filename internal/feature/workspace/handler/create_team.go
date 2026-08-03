@@ -3,7 +3,7 @@ package handler
 import (
 	"net/http"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/service"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
 )
 
 // CreateTeam crée une team. Réservé aux tokens admin — la route est montée derrière AdminOnly.

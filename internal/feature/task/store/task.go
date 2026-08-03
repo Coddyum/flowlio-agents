@@ -4,18 +4,18 @@ package store
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | store.ClaimNumber  | Réserve le prochain numéro lisible du projet                 | 39    |
-// | store.CreateTask   | Insère une tâche dont le numéro est déjà réservé              | 51    |
-// | store.TaskByNumber | Lit une tâche par son numéro, scopée team + projet            | 70    |
-// | store.ListTasks    | Lit le backlog du projet selon un filtre                      | 83    |
-// | store.UpdateTask   | Applique un patch partiel à une tâche active                  | 104   |
-// | toTask             | Projette une ligne générée en type domaine                    | 136   |
-// | nullTime           | Convertit un pointeur de date en paramètre nullable           | 154   |
-// | fromNullTime       | Convertit une date nullable lue en base en pointeur            | 162   |
-// | nullString         | Convertit un pointeur de chaîne en paramètre nullable         | 171   |
-// | nullStatus         | Convertit un statut de filtre en paramètre nullable            | 180   |
-// | nullStatusPtr      | Convertit un statut de patch en paramètre nullable             | 188   |
-// | nullPriorityPtr    | Convertit une priorité de patch en paramètre nullable          | 196   |
+// | store.ClaimNumber  | Réserve le prochain numéro lisible du projet                 | 38    |
+// | store.CreateTask   | Insère une tâche dont le numéro est déjà réservé              | 50    |
+// | store.TaskByNumber | Lit une tâche par son numéro, scopée team + projet            | 69    |
+// | store.ListTasks    | Lit le backlog du projet selon un filtre                      | 82    |
+// | store.UpdateTask   | Applique un patch partiel à une tâche active                  | 103   |
+// | toTask             | Projette une ligne générée en type domaine                    | 123   |
+// | nullTime           | Convertit un pointeur de date en paramètre nullable           | 141   |
+// | fromNullTime       | Convertit une date nullable lue en base en pointeur            | 149   |
+// | nullString         | Convertit un pointeur de chaîne en paramètre nullable         | 158   |
+// | nullStatus         | Convertit un statut de filtre en paramètre nullable            | 167   |
+// | nullStatusPtr      | Convertit un statut de patch en paramètre nullable             | 175   |
+// | nullPriorityPtr    | Convertit une priorité de patch en paramètre nullable          | 183   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -25,7 +25,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/Coddyum/flowlio-ia/internal/database"
+	"github.com/Coddyum/flowlio-agents/internal/database"
 	"github.com/google/uuid"
 )
 

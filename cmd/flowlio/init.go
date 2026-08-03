@@ -21,8 +21,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/service"
-	"github.com/Coddyum/flowlio-ia/internal/pkg/client"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
 // runInit prépare tout ce qu'il faut à un repo pour être suivi : la team si elle manque, le

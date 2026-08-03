@@ -24,8 +24,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Coddyum/flowlio-ia/internal/database"
-	"github.com/Coddyum/flowlio-ia/internal/pkg/crypto"
+	"github.com/Coddyum/flowlio-agents/internal/database"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/crypto"
 )
 
 // adminTokenName identifie le token créé à l'amorçage.

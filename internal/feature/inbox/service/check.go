@@ -16,7 +16,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/inbox/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/inbox/store"
 	"github.com/google/uuid"
 )
 

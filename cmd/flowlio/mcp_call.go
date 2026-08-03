@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Coddyum/flowlio-ia/internal/pkg/client"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
 // callParams est le corps d'un appel tools/call.

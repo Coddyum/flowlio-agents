@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/Coddyum/flowlio-ia/internal/database"
+	"github.com/Coddyum/flowlio-agents/internal/database"
 )
 
 // AppendEvent écrit une entrée du journal.

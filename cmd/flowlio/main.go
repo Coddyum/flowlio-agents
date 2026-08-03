@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Coddyum/flowlio-ia/internal/pkg/client"
-	"github.com/Coddyum/flowlio-ia/internal/pkg/credentials"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/credentials"
 )
 
 // main délègue à run et traduit l'erreur en code de sortie : un seul endroit décide du statut.

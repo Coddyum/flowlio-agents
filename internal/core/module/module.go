@@ -19,10 +19,10 @@ import (
 	"database/sql"
 	"net/http"
 
-	"github.com/Coddyum/flowlio-ia/internal/core/auth"
-	"github.com/Coddyum/flowlio-ia/internal/database"
-	"github.com/Coddyum/flowlio-ia/internal/pkg/cache"
-	"github.com/Coddyum/flowlio-ia/internal/pkg/config"
+	"github.com/Coddyum/flowlio-agents/internal/core/auth"
+	"github.com/Coddyum/flowlio-agents/internal/database"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/cache"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/config"
 )
 
 // Module est le contrat que tout module de feature implémente. L'engine ne connaît que ça.

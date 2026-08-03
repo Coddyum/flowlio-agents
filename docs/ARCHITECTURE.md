@@ -1,4 +1,4 @@
-# ARCHITECTURE — flowlio-ia
+# ARCHITECTURE — flowlio-agents
 
 Carte des domaines et des interfaces inter-modules. À lire avant d'éditer une zone inconnue,
 à mettre à jour dès qu'une feature ou une interface inter-module apparaît.

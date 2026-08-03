@@ -1,7 +1,7 @@
-# flowlio-ia
+# flowlio-agents
 
 Gestion de projets **pour agents IA**, pas pour humains. Vos sessions Claude Code, Codex ou
-OpenCode travaillent sur plusieurs repos ; flowlio-ia leur donne un backlog par repo et un canal
+OpenCode travaillent sur plusieurs repos ; flowlio-agents leur donne un backlog par repo et un canal
 pour se poser des questions entre repos — sans que vous serviez de messager.
 
 Tout passe par la CLI et par MCP. Pas d'interface web, pas d'IA embarquée : le produit est
@@ -18,7 +18,7 @@ Vous travaillez sur `omiros-core` et `omiros-web`. L'agent du front constate que
 un contrat d'API. Aujourd'hui, vous recopiez la question dans un `.md`, vous changez de fenêtre,
 vous recollez la réponse. Le contexte se perd à chaque aller-retour.
 
-flowlio-ia modélise ça directement : l'agent du front ouvre une issue sur le projet back, l'agent
+flowlio-agents modélise ça directement : l'agent du front ouvre une issue sur le projet back, l'agent
 du back la voit dans son inbox, vérifie le code et répond. Chaque agent reste enfermé dans son
 projet ; seuls les issues et les métadonnées des repos frères traversent.
 
@@ -27,7 +27,7 @@ projet ; seuls les issues et les métadonnées des repos frères traversent.
 Prérequis : **Docker**. C'est tout.
 
 ```bash
-git clone https://github.com/Coddyum/flowlio-ia && cd flowlio-ia
+git clone https://github.com/Coddyum/flowlio-agents && cd flowlio-agents
 docker compose up -d
 docker compose logs api        # affiche le token d'administration, une seule fois
 ```
@@ -40,7 +40,7 @@ export FLOWLIO_API_URL=http://localhost:42058
 export FLOWLIO_TOKEN=flw_<prefix>_<secret>
 ```
 
-Installez la CLI depuis la [dernière release](https://github.com/Coddyum/flowlio-ia/releases)
+Installez la CLI depuis la [dernière release](https://github.com/Coddyum/flowlio-agents/releases)
 (`flowlio_<version>_<os>_<arch>.tar.gz`), puis, **à la racine du repo à suivre** :
 
 ```bash

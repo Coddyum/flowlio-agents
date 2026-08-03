@@ -55,7 +55,7 @@ package auth
 import (
 	"time"
 
-	"github.com/Coddyum/flowlio-ia/internal/pkg/crypto"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/crypto"
 )
 
 const (

@@ -74,7 +74,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Coddyum/flowlio-ia/internal/pkg/cache"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/cache"
 )
 
 const (

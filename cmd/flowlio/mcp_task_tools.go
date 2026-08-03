@@ -30,9 +30,9 @@ import (
 	"strconv"
 	"strings"
 
-	issueservice "github.com/Coddyum/flowlio-ia/internal/feature/issue/service"
-	taskservice "github.com/Coddyum/flowlio-ia/internal/feature/task/service"
-	"github.com/Coddyum/flowlio-ia/internal/pkg/client"
+	issueservice "github.com/Coddyum/flowlio-agents/internal/feature/issue/service"
+	taskservice "github.com/Coddyum/flowlio-agents/internal/feature/task/service"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
 const taskAPI = "/api/task"

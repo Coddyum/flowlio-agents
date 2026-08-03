@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Coddyum/flowlio-ia/internal/database"
-	"github.com/Coddyum/flowlio-ia/internal/feature/issue/store"
+	"github.com/Coddyum/flowlio-agents/internal/database"
+	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )

@@ -30,8 +30,8 @@ import (
 	"strconv"
 	"strings"
 
-	taskservice "github.com/Coddyum/flowlio-ia/internal/feature/task/service"
-	"github.com/Coddyum/flowlio-ia/internal/pkg/client"
+	taskservice "github.com/Coddyum/flowlio-agents/internal/feature/task/service"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
 // runTask gère le backlog du projet du token. Aucune de ces commandes ne prend de projet en

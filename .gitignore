@@ -21,3 +21,7 @@ coverage.*
 
 # Worktrees temporaires créés par les agents
 .claude/worktrees/
+
+
+# Next prompt
+next.md

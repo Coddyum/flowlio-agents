@@ -10,8 +10,8 @@ package store
 // | TaskFilter | Critères de lecture du backlog d'un projet                           | 80    |
 // | TaskPatch  | Patch partiel d'une tâche : un champ nil laisse la valeur en place   | 92    |
 // | Store      | Contrat de persistance de la feature task                            | 115   |
-// | store      | Implémentation adossée aux queries générées par sqlc                 | 139   |
-// | New        | Crée le store task                                                   | 148   |
+// | store      | Implémentation adossée aux queries générées par sqlc                 | 138   |
+// | New        | Crée le store task                                                   | 147   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -24,7 +24,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Coddyum/flowlio-ia/internal/database"
+	"github.com/Coddyum/flowlio-agents/internal/database"
 	"github.com/google/uuid"
 )
 

@@ -13,7 +13,7 @@ package store
 import (
 	"context"
 
-	"github.com/Coddyum/flowlio-ia/internal/database"
+	"github.com/Coddyum/flowlio-agents/internal/database"
 	"github.com/google/uuid"
 )
 

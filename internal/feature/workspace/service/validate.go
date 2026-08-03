@@ -21,7 +21,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/store"
 )
 
 const maxNameLen = 200

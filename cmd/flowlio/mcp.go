@@ -38,8 +38,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/service"
-	"github.com/Coddyum/flowlio-ia/internal/pkg/client"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
 const (

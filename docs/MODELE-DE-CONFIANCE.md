@@ -1,6 +1,6 @@
 # Modèle de confiance
 
-> Ce que flowlio-ia garantit, et ce qu'il ne garantit pas. À lire avant de toucher au canal
+> Ce que flowlio-agents garantit, et ce qu'il ne garantit pas. À lire avant de toucher au canal
 > inter-projets ou à ce que la couche MCP restitue à un agent.
 
 Le produit a une classe de risque que les gestionnaires de tâches pour humains n'ont pas.

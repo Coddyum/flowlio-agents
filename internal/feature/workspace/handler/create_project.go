@@ -3,7 +3,7 @@ package handler
 import (
 	"net/http"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/service"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
 )
 
 // CreateProject crée un projet dans la team désignée par ?team=<slug>. Réservé aux tokens admin.

@@ -16,7 +16,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/store"
 )
 
 // CreateTeam valide le slug et le nom, puis crée la team. Un slug déjà pris remonte ErrConflict.

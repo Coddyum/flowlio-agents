@@ -21,7 +21,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Coddyum/flowlio-ia/internal/pkg/client"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
 // recordedRequest est ce qu'un appelant a réellement mis sur le fil.

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Coddyum/flowlio-ia/internal/database"
-	"github.com/Coddyum/flowlio-ia/internal/feature/task/store"
+	"github.com/Coddyum/flowlio-agents/internal/database"
+	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )

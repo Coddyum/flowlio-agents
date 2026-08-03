@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/issue/service"
+	"github.com/Coddyum/flowlio-agents/internal/feature/issue/service"
 )
 
 // Le plus grand corps que le service accepte doit franchir le transport, échappement JSON compris.

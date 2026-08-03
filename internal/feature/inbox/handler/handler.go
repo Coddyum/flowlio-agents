@@ -19,8 +19,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/Coddyum/flowlio-ia/internal/core/auth"
-	"github.com/Coddyum/flowlio-ia/internal/feature/inbox/service"
+	"github.com/Coddyum/flowlio-agents/internal/core/auth"
+	"github.com/Coddyum/flowlio-agents/internal/feature/inbox/service"
 	"github.com/google/uuid"
 )
 

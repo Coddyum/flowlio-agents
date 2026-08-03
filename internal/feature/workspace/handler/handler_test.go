@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Coddyum/flowlio-ia/internal/core/auth"
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/service"
-	"github.com/Coddyum/flowlio-ia/internal/pkg/crypto"
+	"github.com/Coddyum/flowlio-agents/internal/core/auth"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/crypto"
 	"github.com/google/uuid"
 )
 

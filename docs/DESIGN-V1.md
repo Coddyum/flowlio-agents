@@ -1,4 +1,4 @@
-# DESIGN v1 — flowlio-ia
+# DESIGN v1 — flowlio-agents
 
 Décisions arrêtées à partir de `docs/concept.md`. Ce document est le contrat de ce qu'on
 construit en v1 ; `docs/ARCHITECTURE.md` reste la carte technique du repo.

@@ -14,7 +14,7 @@ package service
 import (
 	"fmt"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/issue/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 )
 
 // toIssue projette une issue en vue API, du point de vue du projet appelant.

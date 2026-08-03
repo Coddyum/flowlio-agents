@@ -15,7 +15,7 @@ package core
 import (
 	"sync"
 
-	"github.com/Coddyum/flowlio-ia/internal/core/module"
+	"github.com/Coddyum/flowlio-agents/internal/core/module"
 )
 
 // registry est le point de rendez-vous inter-features : chaque module s'y enregistre au

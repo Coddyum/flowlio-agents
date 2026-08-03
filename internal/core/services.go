@@ -12,9 +12,9 @@ package core
 // =====================================================================
 
 import (
-	"github.com/Coddyum/flowlio-ia/internal/core/auth"
-	"github.com/Coddyum/flowlio-ia/internal/core/module"
-	"github.com/Coddyum/flowlio-ia/internal/database"
+	"github.com/Coddyum/flowlio-agents/internal/core/auth"
+	"github.com/Coddyum/flowlio-agents/internal/core/module"
+	"github.com/Coddyum/flowlio-agents/internal/database"
 )
 
 // services implémente module.CoreServices. Il ne porte que du transverse, jamais le service

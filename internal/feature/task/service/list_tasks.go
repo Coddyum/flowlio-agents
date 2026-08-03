@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/task/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 )
 
 // ListTasks renvoie le backlog du projet du token, du numéro le plus récent au plus ancien.

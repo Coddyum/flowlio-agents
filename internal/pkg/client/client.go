@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Coddyum/flowlio-ia/internal/pkg/credentials"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/credentials"
 )
 
 const requestTimeout = 15 * time.Second

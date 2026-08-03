@@ -3,7 +3,7 @@ package handler
 import (
 	"net/http"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/task/service"
+	"github.com/Coddyum/flowlio-agents/internal/feature/task/service"
 )
 
 // UpdateTask applique un patch partiel à une tâche du projet du token.

@@ -16,11 +16,11 @@ package issue
 import (
 	"net/http"
 
-	"github.com/Coddyum/flowlio-ia/internal/core/auth"
-	"github.com/Coddyum/flowlio-ia/internal/core/module"
-	"github.com/Coddyum/flowlio-ia/internal/feature/issue/handler"
-	"github.com/Coddyum/flowlio-ia/internal/feature/issue/service"
-	"github.com/Coddyum/flowlio-ia/internal/feature/issue/store"
+	"github.com/Coddyum/flowlio-agents/internal/core/auth"
+	"github.com/Coddyum/flowlio-agents/internal/core/module"
+	"github.com/Coddyum/flowlio-agents/internal/feature/issue/handler"
+	"github.com/Coddyum/flowlio-agents/internal/feature/issue/service"
+	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 )
 
 // Key identifie le module dans le FeatureRegistry et sert de préfixe à ses routes.

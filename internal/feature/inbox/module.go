@@ -16,11 +16,11 @@ package inbox
 import (
 	"net/http"
 
-	"github.com/Coddyum/flowlio-ia/internal/core/auth"
-	"github.com/Coddyum/flowlio-ia/internal/core/module"
-	"github.com/Coddyum/flowlio-ia/internal/feature/inbox/handler"
-	"github.com/Coddyum/flowlio-ia/internal/feature/inbox/service"
-	"github.com/Coddyum/flowlio-ia/internal/feature/inbox/store"
+	"github.com/Coddyum/flowlio-agents/internal/core/auth"
+	"github.com/Coddyum/flowlio-agents/internal/core/module"
+	"github.com/Coddyum/flowlio-agents/internal/feature/inbox/handler"
+	"github.com/Coddyum/flowlio-agents/internal/feature/inbox/service"
+	"github.com/Coddyum/flowlio-agents/internal/feature/inbox/store"
 )
 
 // Key identifie le module dans le FeatureRegistry et sert de préfixe à ses routes.

@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/issue/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 )
 
 // ListIssues renvoie les issues visibles par le projet appelant : celles qu'il a ouvertes et

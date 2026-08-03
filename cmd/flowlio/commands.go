@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/service"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
 )
 
 const workspaceAPI = "/api/workspace"

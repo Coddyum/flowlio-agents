@@ -16,8 +16,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/workspace/store"
-	"github.com/Coddyum/flowlio-ia/internal/pkg/crypto"
+	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/store"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/crypto"
 	"github.com/google/uuid"
 )
 

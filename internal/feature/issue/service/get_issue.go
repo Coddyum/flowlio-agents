@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/issue/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 )
 
 // maxThreadMessages borne le fil renvoyé. Un échange long ne doit pas entrer d'un bloc dans le

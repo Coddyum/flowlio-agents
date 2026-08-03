@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Coddyum/flowlio-ia/internal/feature/task/service"
+	"github.com/Coddyum/flowlio-agents/internal/feature/task/service"
 )
 
 // Les deux plus grands champs qu'une mise à jour peut porter doivent tenir dans UNE requête.
