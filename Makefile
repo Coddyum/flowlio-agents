@@ -65,8 +65,12 @@ sommaire: ## Resynchronise les numéros de ligne des blocs // SOMMAIRE
 sqlc: ## Génère internal/database/ depuis sql/migrations + sql/queries
 	$(SQLC) generate
 
+## Les lignes \restrict / \unrestrict portent un jeton ALÉATOIRE, régénéré par pg_dump 18 à chaque
+## exécution : sans ce filtre, `make schema` produit un diff même quand le schéma n'a pas bougé, et
+## un diff systématique sur l'instantané de schéma entraîne à ignorer les diffs de schéma.
 schema: ## Regénère l'instantané lisible du schéma depuis la base de dev
-	docker exec $(PG_CONTAINER) pg_dump -U flowlio -d flowlio --schema-only --no-owner --no-privileges > $(SCHEMA_DUMP)
+	docker exec $(PG_CONTAINER) pg_dump -U flowlio -d flowlio --schema-only --no-owner --no-privileges \
+		| grep -vE '^\\(un)?restrict ' > $(SCHEMA_DUMP)
 
 up-dev: ## Applique les migrations en dev
 	$(MIGRATE) -path $(MIGRATIONS) -database "$(DB_URL_DEV)" up

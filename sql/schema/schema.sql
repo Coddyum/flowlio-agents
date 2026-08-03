@@ -2,7 +2,6 @@
 -- PostgreSQL database dump
 --
 
-\restrict agZ9N4BpK0AXWd5PfmUtGZS3T18uDISoc0ppWV1Ic6NdHi3TkTpefEMZuDjHnN9
 
 -- Dumped from database version 18.4
 -- Dumped by pg_dump version 18.4
@@ -564,5 +563,4 @@ ALTER TABLE ONLY public.token_cursors
 -- PostgreSQL database dump complete
 --
 
-\unrestrict agZ9N4BpK0AXWd5PfmUtGZS3T18uDISoc0ppWV1Ic6NdHi3TkTpefEMZuDjHnN9
 
