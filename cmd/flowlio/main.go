@@ -6,8 +6,8 @@ package main
 // |-----------|---------------------------------------------------------------------|-------|
 // | main      | Point d'entrée de la CLI : dispatch et code de sortie                 | 29    |
 // | run       | Route la commande demandée vers son implémentation                    | 37    |
-// | usage     | Affiche l'aide                                                        | 70    |
-// | newClient | Construit le client API à partir des identifiants locaux ou de l'env  | 105   |
+// | usage     | Affiche l'aide                                                        | 72    |
+// | newClient | Construit le client API à partir des identifiants locaux ou de l'env  | 111   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -53,6 +53,8 @@ func run(args []string) error {
 		return runProject(ctx, args[1:])
 	case "token":
 		return runToken(ctx, args[1:])
+	case "trust":
+		return runTrust(ctx, args[1:])
 	case "task":
 		return runTask(ctx, args[1:])
 	case "mcp":
@@ -82,6 +84,10 @@ Usage :
   flowlio token create <KEY> <nom>     Émet un token d'agent pour un projet
   flowlio token list <KEY>             Liste les tokens d'un projet
   flowlio token revoke <id>            Révoque un token
+
+  flowlio trust list                   Quelles paires de projets peuvent s'écrire
+  flowlio trust allow <A> <B>          Ouvre le canal d'issues entre deux projets
+  flowlio trust deny <A> <B>           Le referme (n'affecte pas les fils ouverts)
 
   flowlio task list [--status s]       Backlog du projet du token
   flowlio task show <CLÉ>              Une tâche et son fil de notes
