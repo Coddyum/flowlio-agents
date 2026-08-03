@@ -65,11 +65,22 @@ changelog:
   sort: asc
   filters:
     # Le journal de release s'adresse aux utilisateurs : la plomberie interne n'y a pas sa place.
+    #
+    # Le groupe `(\(...\))?` n'est pas décoratif. Les motifs ancrés sans lui — `^docs:` — ne
+    # filtraient QUE la forme sans scope, et ce dépôt écrit presque tout avec un scope. Mesuré sur
+    # le journal de v0.1.0 : les 7 commits `docs:`/`test:`/`chore:`/`ci:` nus étaient bien absents,
+    # et les 6 commits `docs(m3):`, `test(trust):`… étaient TOUS présents. C'est ce contraste qui
+    # désigne la cause — les filtres marchaient, c'est la forme qui leur échappait.
+    #
+    # Guillemets SIMPLES : en YAML ils laissent les antislashs tels quels, donc le motif écrit est
+    # celui que Go compile. En guillemets doubles il faudrait les doubler, et un `\(` devenu `(`
+    # transformerait la parenthèse littérale en groupe — le filtre repasserait silencieusement à
+    # côté, exactement le défaut qu'on corrige.
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
-      - "^ci:"
+      - '^docs(\(.+\))?:'
+      - '^test(\(.+\))?:'
+      - '^chore(\(.+\))?:'
+      - '^ci(\(.+\))?:'
 
 release:
   # Une release reste un brouillon jusqu'à relecture humaine : un tag poussé par erreur ne doit
