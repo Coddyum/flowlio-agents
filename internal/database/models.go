@@ -270,6 +270,13 @@ type Project struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+type ProjectTrust struct {
+	TeamID        uuid.UUID `json:"team_id"`
+	LowProjectID  uuid.UUID `json:"low_project_id"`
+	HighProjectID uuid.UUID `json:"high_project_id"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type Task struct {
 	ID         uuid.UUID    `json:"id"`
 	TeamID     uuid.UUID    `json:"team_id"`

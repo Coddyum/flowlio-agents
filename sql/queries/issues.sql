@@ -17,11 +17,50 @@
 --
 -- Cette instruction doit être la PREMIÈRE de sa transaction : c'est la seule prise de verrou de
 -- ligne longue durée du chemin d'écriture, et il ne doit y en avoir qu'une (cf. ClaimNextNumber).
+--
+-- Le graphe de confiance est un PRÉDICAT, dans le WHERE de l'UPDATE, et NULLE PART AILLEURS —
+-- ni dans le SELECT de l'INSERT, ni dans une query séparée, ni dans un `if` de service. Trois
+-- propriétés en découlent, dont aucune n'est reproductible par du code :
+--
+--   1. Une paire non autorisée ne matche pas la CTE, exactement comme une clé inconnue ou une
+--      clé d'une autre team : zéro ligne, sql.ErrNoRows, ErrNotFound, 404. Le refus n'a AUCUN
+--      chemin de code à lui, donc il n'existe aucun code d'erreur à faire fuir.
+--   2. Aucun numéro n'est consommé et aucun verrou de ligne n'est posé, parce que l'UPDATE ne
+--      s'exécute pas. Mesuré : avec le prédicat déplacé sur l'INSERT, un créateur LÉGITIME tiers
+--      passe de 73 ms à 1933 ms, parce que la session refusée détient le verrou de la ligne
+--      projet pendant toute sa transaction. Le refus deviendrait un déni de service ciblé.
+--   3. L'EXISTS est une LECTURE : l'UPDATE continue de ne toucher que next_number, colonne
+--      non-clé, donc FOR NO KEY UPDATE est préservé et la contrainte de verrouillage de
+--      sql/queries/projects.sql:21-25 tient telle quelle. Ne jamais transformer cet EXISTS en
+--      jointure ni en écriture sur project_trust.
+--
+-- least/greatest : l'arête est symétrique et stockée une seule fois (000007). L'auto-adressage
+-- donne least = greatest, forme que project_trust_ordered rend non insérable, donc jamais
+-- présente : il produit le même 404 que tout le reste, sans branche dédiée. La CHECK
+-- issues_not_self (000004:47) devient de ce fait inatteignable par ce chemin, et le reste comme
+-- second tour de clé si le prédicat disparaissait un jour.
+--
+-- FENÊTRE CONNUE, non fermée en v1 (arbitrage Maxence du 2026-08-03) : sous READ COMMITTED, un
+-- create_issue qui BLOQUE sur le verrou de la ligne projet re-vérifie la ligne cible
+-- (EvalPlanQual) mais évalue cet EXISTS avec son snapshot d'origine. Une révocation qui commite
+-- pendant ce blocage laisse donc passer cette issue-là. Reproduit à trois sessions. Le correctif
+-- testé est `FOR KEY SHARE` à la fin de l'EXISTS : il sérialise la révocation derrière les
+-- créations en vol, au prix d'un nouvel ordre de verrous. Non appliqué parce que Q4 (retirer une
+-- confiance ne ferme aucun fil) accepte déjà exactement ce résidu : une issue de plus dans un fil
+-- ouvert. La garantie s'énonce donc « une paire non autorisée AU MOMENT OÙ SA TRANSACTION PREND
+-- SON SNAPSHOT ne peut pas ouvrir d'issue ».
 -- name: CreateIssue :one
 WITH claimed AS (
     UPDATE projects p
     SET next_number = p.next_number + 1
-    WHERE p.team_id = @team_id AND p.key = @to_project_key
+    WHERE p.team_id = @team_id
+      AND p.key     = @to_project_key
+      AND EXISTS (
+          SELECT 1 FROM project_trust tr
+          WHERE tr.team_id         = @team_id
+            AND tr.low_project_id  = least(@author_project_id::uuid, p.id)
+            AND tr.high_project_id = greatest(@author_project_id::uuid, p.id)
+      )
     RETURNING p.id AS project_id, (p.next_number - 1)::bigint AS number
 )
 INSERT INTO issues (team_id, project_id, author_project_id, number, title, state)
