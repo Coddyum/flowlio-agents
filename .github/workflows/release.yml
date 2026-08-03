@@ -55,7 +55,11 @@ jobs:
 
       - name: Le tag doit pointer sur un commit de main
         run: |
-          git fetch origin main --depth=0
+          # Pas de --depth ici : checkout@v4 ci-dessus fixe fetch-depth: 0, donc l'historique est
+          # déjà complet. `--depth=0` n'est pas « profondeur illimitée » mais une valeur refusée
+          # par git (`fatal: depth 0 is not a positive number`), et elle a fait échouer le tout
+          # premier passage réel de ce workflow, sur v0.1.0.
+          git fetch origin main
           if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
             echo "Le tag ne descend pas de main : release refusée." >&2
             exit 1
