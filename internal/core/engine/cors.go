@@ -5,7 +5,7 @@ package engine
 // | Élément  | Résumé                                                             | Ligne |
 // |----------|--------------------------------------------------------------------|-------|
 // | CORS     | Middleware qui autorise une liste FERMÉE d'origines de navigateur    | 74    |
-// | allows   | Dit si une origine est dans la liste, par égalité stricte            | 117   |
+// | allows   | Dit si une origine est dans la liste, par égalité stricte            | 134   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -103,6 +103,23 @@ func CORS(allowed []string) Middleware {
 			w.Header().Set("Access-Control-Allow-Methods", allowedMethods)
 			w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
 			w.Header().Set("Access-Control-Max-Age", strconv.Itoa(int(preflightMaxAge.Seconds())))
+
+			// PRIVATE NETWORK ACCESS — sans ça, Chrome bloque le pont, et lui seul.
+			//
+			// Une page servie par flowlio.me qui appelle `http://localhost` sort du réseau
+			// public vers le réseau privé de la machine. Chrome traite ce saut à part : son
+			// preflight porte `Access-Control-Request-Private-Network: true` et il exige la
+			// permission SYMÉTRIQUE en réponse. Les en-têtes CORS ordinaires ne suffisent pas —
+			// l'appel échoue alors qu'ils sont tous corrects, ce qui est indébogable de
+			// l'extérieur.
+			//
+			// La permission n'est accordée QUE si l'origine est déjà autorisée : on est après le
+			// refus des origines inconnues. C'est ce qui la rend sûre — elle n'élargit rien,
+			// elle nomme explicitement un saut que le navigateur refusait de faire en silence.
+			if r.Header.Get("Access-Control-Request-Private-Network") == "true" {
+				w.Header().Set("Access-Control-Allow-Private-Network", "true")
+			}
+
 			w.WriteHeader(http.StatusNoContent)
 		})
 	}

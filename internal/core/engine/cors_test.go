@@ -165,6 +165,51 @@ func TestCORSPreflightIsAnsweredWithoutAuth(t *testing.T) {
 	}
 }
 
+// PRIVATE NETWORK ACCESS — la permission qui décide si Chrome laisse passer le pont.
+//
+// Une page servie par flowlio.me qui appelle `http://localhost` sort du réseau public vers le
+// réseau privé de la machine. Chrome traite ce saut à part : il demande la permission dans le
+// preflight, et l'exige en réponse. Sans elle, l'appel échoue alors que tous les en-têtes CORS
+// ordinaires sont corrects — un mode d'échec indébogable depuis l'extérieur, et qui ne touche
+// qu'un navigateur sur trois.
+//
+// MUTATION : retirer l'en-tête de réponse → ce test rouge, et le pont ne marche plus sous Chrome.
+func TestCORSGrantsPrivateNetworkAccessToAllowedOrigin(t *testing.T) {
+	req := preflight("https://flowlio.me")
+	req.Header.Set("Access-Control-Request-Private-Network", "true")
+
+	rec, _ := serveCORS(t, req, origines)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusNoContent)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Private-Network"); got != "true" {
+		t.Errorf("Access-Control-Allow-Private-Network = %q, attendu \"true\" — Chrome refusera "+
+			"l'appel vers localhost alors que tous les autres en-têtes sont bons", got)
+	}
+}
+
+// La permission de réseau privé n'est JAMAIS accordée à une origine inconnue, ni offerte à un
+// preflight qui ne l'a pas demandée.
+//
+// Le premier cas est le seul qui compte pour la sécurité : accorder ce saut à n'importe qui
+// reviendrait à laisser un site tiers atteindre les services locaux de la machine.
+func TestCORSNeverGrantsPrivateNetworkAccessUnasked(t *testing.T) {
+	inconnue := preflight("https://exemple.test")
+	inconnue.Header.Set("Access-Control-Request-Private-Network", "true")
+
+	rec, _ := serveCORS(t, inconnue, origines)
+	if got := rec.Header().Get("Access-Control-Allow-Private-Network"); got != "" {
+		t.Errorf("origine inconnue : permission de réseau privé accordée (%q)", got)
+	}
+
+	rec, _ = serveCORS(t, preflight("https://flowlio.me"), origines)
+	if got := rec.Header().Get("Access-Control-Allow-Private-Network"); got != "" {
+		t.Errorf("permission accordée sans être demandée (%q) — un en-tête qu'on ne comprend "+
+			"pas est un en-tête qu'on n'émet pas", got)
+	}
+}
+
 // Un preflight d'une origine inconnue est refusé côté SERVEUR, en 403.
 //
 // C'est la seule asymétrie du fichier, et elle est voulue : un preflight ne sert qu'au
