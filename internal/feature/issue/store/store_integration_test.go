@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -184,12 +185,15 @@ func TestIssueConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueByRef: %v", err)
 	}
-	messages, err := st.ListMessages(ctx, ref, found.ID)
+	messages, total, err := st.ListMessages(ctx, ref, found.ID, 50)
 	if err != nil {
 		t.Fatalf("ListMessages: %v", err)
 	}
 	if len(messages) != 3 {
 		t.Fatalf("%d messages, attendu 3", len(messages))
+	}
+	if total != 3 {
+		t.Errorf("total = %d, attendu 3", total)
 	}
 	if messages[0].AuthorKey != "WEB" || messages[1].AuthorKey != "CORE" {
 		t.Errorf("auteurs du fil = %s puis %s, attendu WEB puis CORE",
@@ -250,9 +254,12 @@ func TestIssuesAreInvisibleToThirdProjects(t *testing.T) {
 	})
 
 	t.Run("fil de messages", func(t *testing.T) {
-		messages, err := st.ListMessages(ctx, spyRef, issue.ID)
+		messages, total, err := st.ListMessages(ctx, spyRef, issue.ID, 50)
 		if err != nil {
 			t.Fatalf("ListMessages: %v", err)
+		}
+		if total != 0 {
+			t.Errorf("SPY lit un total de %d, attendu 0 : le compteur ne doit pas fuir hors du scope", total)
 		}
 		if len(messages) != 0 {
 			t.Errorf("SPY lit %d messages, attendu 0 (même en connaissant l'identifiant)", len(messages))
@@ -836,4 +843,94 @@ func TestRefusedIssueLocksNothing(t *testing.T) {
 		t.Errorf("la ligne d'OPS était verrouillée pendant le refus (%v) : un émetteur non autorisé "+
 			"peut bloquer un créateur légitime en traînant dans sa transaction", probe)
 	}
+}
+
+// LA BORNE DU FIL EST DANS LA QUERY, PAS EN MÉMOIRE.
+//
+// Le service tranchait le résultat après coup : la base sérialisait le fil ENTIER, le réseau le
+// transportait, et Go en jetait tout sauf les derniers messages. Le contexte de l'agent était
+// protégé ; ni la base, ni le réseau, ni le tas du process ne l'étaient. Sur une issue les corps
+// sont COMPLETS — c'est la restitution la plus lourde du produit.
+//
+// Ce test appelle le STORE directement, donc il ne peut pas être satisfait par un découpage en
+// aval : si la query rend tout, il vire au rouge.
+//
+// MUTATION : retirer `LIMIT @lim` de ListIssueMessages fait tomber le sous-test « la query borne ».
+func TestIssueThreadIsBoundedByTheQuery(t *testing.T) {
+	st, db := newStore(t)
+	ctx := context.Background()
+	teamID := newTeam(t, db)
+
+	frnt := newProject(t, db, teamID, "FRNT")
+	core := newProject(t, db, teamID, "CORE")
+	trust(t, db, frnt, core)
+
+	issue := open(t, st, frnt, core, "fil long")
+	ref := refFor(core, core, issue.Number)
+
+	// Le premier message vient de open() ; on en ajoute 24, soit 25 au total.
+	const ecrits = 25
+	for i := 1; i < ecrits; i++ {
+		caller, target := core, core
+		if i%2 == 0 {
+			caller = frnt
+		}
+		if _, err := st.Answer(ctx, store.Answer{
+			Ref:  refFor(caller, target, issue.Number),
+			Body: fmt.Sprintf("message %d", i),
+		}); err != nil {
+			t.Fatalf("Answer %d: %v", i, err)
+		}
+	}
+
+	t.Run("la query borne", func(t *testing.T) {
+		messages, total, err := st.ListMessages(ctx, ref, issue.ID, 10)
+		if err != nil {
+			t.Fatalf("ListMessages: %v", err)
+		}
+		if len(messages) != 10 {
+			t.Errorf("%d messages rendus pour une limite de 10 : la borne n'est pas dans la query",
+				len(messages))
+		}
+		// Le total est celui du fil ENTIER, pas de la fenêtre : sans lui, un agent croirait avoir
+		// lu toute la conversation.
+		if total != ecrits {
+			t.Errorf("total = %d, attendu %d : le compteur doit porter sur le fil entier", total, ecrits)
+		}
+	})
+
+	t.Run("la fenêtre est la FIN du fil, dans l'ordre d'écriture", func(t *testing.T) {
+		messages, _, err := st.ListMessages(ctx, ref, issue.ID, 10)
+		if err != nil {
+			t.Fatalf("ListMessages: %v", err)
+		}
+		if len(messages) != 10 {
+			t.Fatalf("%d messages, attendu 10", len(messages))
+		}
+		// Les derniers écrits sont les messages 15 à 24.
+		if messages[0].Body != "message 15" {
+			t.Errorf("premier message de la fenêtre = %q, attendu \"message 15\" : ce sont les "+
+				"DERNIERS messages qui portent l'état", messages[0].Body)
+		}
+		if messages[9].Body != "message 24" {
+			t.Errorf("dernier message = %q, attendu \"message 24\" : le fil doit ressortir dans "+
+				"l'ordre d'écriture", messages[9].Body)
+		}
+		for i := 1; i < len(messages); i++ {
+			if messages[i].CreatedAt.Before(messages[i-1].CreatedAt) {
+				t.Fatalf("le fil n'est pas dans l'ordre chronologique à l'indice %d", i)
+			}
+		}
+	})
+
+	t.Run("une limite plus large que le fil rend tout", func(t *testing.T) {
+		messages, total, err := st.ListMessages(ctx, ref, issue.ID, 1000)
+		if err != nil {
+			t.Fatalf("ListMessages: %v", err)
+		}
+		if len(messages) != ecrits || total != ecrits {
+			t.Errorf("%d messages / total %d, attendu %d : une borne large ne doit rien retirer",
+				len(messages), total, ecrits)
+		}
+	})
 }

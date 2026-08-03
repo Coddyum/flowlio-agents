@@ -31,14 +31,12 @@ func (s *service) GetIssue(ctx context.Context, ref Ref) (IssueDetail, error) {
 		return IssueDetail{}, translateStore(err, "issue by ref")
 	}
 
-	rows, err := s.store.ListMessages(ctx, storeRef, found.ID)
+	// La borne part DANS la query : le store rend au plus maxThreadMessages lignes et le total
+	// réel. Trancher ici, comme avant, laissait la base sérialiser et transporter un fil entier
+	// dont le service jetait tout sauf la fin.
+	rows, total, err := s.store.ListMessages(ctx, storeRef, found.ID, maxThreadMessages)
 	if err != nil {
 		return IssueDetail{}, translateStore(err, "list messages")
-	}
-
-	total := len(rows)
-	if total > maxThreadMessages {
-		rows = rows[total-maxThreadMessages:]
 	}
 
 	messages := make([]Message, 0, len(rows))

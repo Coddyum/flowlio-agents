@@ -31,27 +31,40 @@ func (s *store) AddFirstMessage(ctx context.Context, issueID, authorProjectID uu
 	return translate(err, "append first message")
 }
 
-// ListMessages lit le fil d'une issue, du plus ancien au plus récent.
+// ListMessages rend la fin du fil d'une issue — au plus limit messages — et le nombre total écrit.
 //
 // La query joint l'issue et y applique la clause de visibilité : impossible de lire les messages
 // d'une issue qu'on ne voit pas, même en connaissant son identifiant interne.
-func (s *store) ListMessages(ctx context.Context, ref Ref, issueID uuid.UUID) ([]Message, error) {
+//
+// La query rend les messages du plus RÉCENT au plus ancien, parce que c'est la fin du fil qui
+// porte l'état ; ils sont remis ici dans l'ordre d'écriture, qui est celui dans lequel une
+// conversation se lit. Inverser au retour plutôt que dans le SQL garde la borne et le tri au même
+// endroit, où ils se lisent ensemble.
+//
+// Un fil vide rend un total de zéro : la ligne de comptage n'existe pas quand aucune ligne ne
+// sort, et il n'y a rien à en déduire d'autre.
+func (s *store) ListMessages(ctx context.Context, ref Ref, issueID uuid.UUID, limit int32) ([]Message, int, error) {
 	rows, err := s.q.ListIssueMessages(ctx, database.ListIssueMessagesParams{
 		TeamID:          ref.TeamID,
 		IssueID:         issueID,
 		CallerProjectID: ref.CallerProjectID,
+		Lim:             limit,
 	})
 	if err != nil {
-		return nil, translate(err, "list messages")
+		return nil, 0, translate(err, "list messages")
+	}
+	if len(rows) == 0 {
+		return []Message{}, 0, nil
 	}
 
-	messages := make([]Message, 0, len(rows))
-	for _, row := range rows {
-		messages = append(messages, Message{
+	total := int(rows[0].Total)
+	messages := make([]Message, len(rows))
+	for i, row := range rows {
+		messages[len(rows)-1-i] = Message{
 			AuthorKey: row.AuthorKey,
 			Body:      row.BodyMd,
 			CreatedAt: row.CreatedAt,
-		})
+		}
 	}
-	return messages, nil
+	return messages, total, nil
 }

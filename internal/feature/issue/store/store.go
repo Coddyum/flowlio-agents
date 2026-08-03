@@ -151,7 +151,12 @@ type Store interface {
 	Answer(ctx context.Context, in Answer) (Issue, error)
 
 	AddFirstMessage(ctx context.Context, issueID, authorProjectID uuid.UUID, body string) error
-	ListMessages(ctx context.Context, ref Ref, issueID uuid.UUID) ([]Message, error)
+
+	// ListMessages rend la FIN du fil — au plus limit messages, dans l'ordre d'écriture — et le
+	// nombre total écrit. La borne est appliquée par la QUERY : un fil d'issue porte des corps
+	// complets, donc le trancher en mémoire aurait laissé la base, le réseau et le tas payer
+	// l'intégralité de ce que l'appelant ne lit pas.
+	ListMessages(ctx context.Context, ref Ref, issueID uuid.UUID, limit int32) ([]Message, int, error)
 
 	AppendEvent(ctx context.Context, event Event) error
 }

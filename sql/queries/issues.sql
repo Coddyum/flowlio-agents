@@ -85,17 +85,35 @@ WHERE i.team_id = @team_id
   AND i.number  = @number
   AND (i.project_id = @caller_project_id OR i.author_project_id = @caller_project_id);
 
+-- ListIssueMessages rend la FIN du fil, bornée, et son total.
+--
 -- Le fil est scopé par jointure sur son issue : impossible de lire les messages d'une issue
 -- qu'on ne voit pas, même en connaissant son identifiant.
+--
+-- LA BORNE EST ICI, PAS EN MÉMOIRE. Le service tranchait le résultat après coup : la base
+-- sérialisait donc le fil ENTIER, le transportait, et Go en jetait tout sauf les dix derniers
+-- messages. Le contexte de l'agent était protégé ; ni la base, ni le réseau, ni le tas du process
+-- ne l'étaient. Sur un fil d'issue les corps sont COMPLETS — c'est la restitution la plus lourde
+-- du produit, et le seul chemin où du texte écrit par un tiers arrive sans troncature.
+--
+-- Même patron que ListTaskNotes (tasks.sql), pour la même raison et au même endroit.
+--
+-- `count(*) OVER ()` est évalué APRÈS le WHERE et AVANT le LIMIT : le total est exact et coûte le
+-- même aller-retour. Une seconde query de comptage en aurait ajouté un sur un chemin de lecture
+-- que get(ref) emprunte à chaque reprise de conversation.
+--
+-- ORDER BY DESC parce que ce sont les DERNIERS messages qui portent l'état de la discussion ;
+-- le store remet le fil dans l'ordre d'écriture, qui est celui dans lequel une conversation se lit.
 -- name: ListIssueMessages :many
-SELECT m.body_md, m.created_at, ap.key AS author_key
+SELECT m.body_md, m.created_at, ap.key AS author_key, count(*) OVER () AS total
 FROM issue_messages m
 JOIN issues i    ON i.id  = m.issue_id
 JOIN projects ap ON ap.id = m.author_project_id
 WHERE i.team_id = @team_id
   AND i.id      = @issue_id
   AND (i.project_id = @caller_project_id OR i.author_project_id = @caller_project_id)
-ORDER BY m.created_at, m.id;
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT @lim;
 
 -- Une seule query pour les trois cas de rôle : trois queries seraient trois occasions de
 -- re-sécuriser. `role` n'est JAMAIS une autorisation — c'est une restriction posée par-dessus la

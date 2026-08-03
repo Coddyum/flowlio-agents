@@ -298,32 +298,57 @@ func (q *Queries) GetIssueByRef(ctx context.Context, arg GetIssueByRefParams) (G
 }
 
 const listIssueMessages = `-- name: ListIssueMessages :many
-SELECT m.body_md, m.created_at, ap.key AS author_key
+SELECT m.body_md, m.created_at, ap.key AS author_key, count(*) OVER () AS total
 FROM issue_messages m
 JOIN issues i    ON i.id  = m.issue_id
 JOIN projects ap ON ap.id = m.author_project_id
 WHERE i.team_id = $1
   AND i.id      = $2
   AND (i.project_id = $3 OR i.author_project_id = $3)
-ORDER BY m.created_at, m.id
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT $4
 `
 
 type ListIssueMessagesParams struct {
 	TeamID          uuid.UUID `json:"team_id"`
 	IssueID         uuid.UUID `json:"issue_id"`
 	CallerProjectID uuid.UUID `json:"caller_project_id"`
+	Lim             int32     `json:"lim"`
 }
 
 type ListIssueMessagesRow struct {
 	BodyMd    string    `json:"body_md"`
 	CreatedAt time.Time `json:"created_at"`
 	AuthorKey string    `json:"author_key"`
+	Total     int64     `json:"total"`
 }
 
+// ListIssueMessages rend la FIN du fil, bornée, et son total.
+//
 // Le fil est scopé par jointure sur son issue : impossible de lire les messages d'une issue
 // qu'on ne voit pas, même en connaissant son identifiant.
+//
+// LA BORNE EST ICI, PAS EN MÉMOIRE. Le service tranchait le résultat après coup : la base
+// sérialisait donc le fil ENTIER, le transportait, et Go en jetait tout sauf les dix derniers
+// messages. Le contexte de l'agent était protégé ; ni la base, ni le réseau, ni le tas du process
+// ne l'étaient. Sur un fil d'issue les corps sont COMPLETS — c'est la restitution la plus lourde
+// du produit, et le seul chemin où du texte écrit par un tiers arrive sans troncature.
+//
+// Même patron que ListTaskNotes (tasks.sql), pour la même raison et au même endroit.
+//
+// `count(*) OVER ()` est évalué APRÈS le WHERE et AVANT le LIMIT : le total est exact et coûte le
+// même aller-retour. Une seconde query de comptage en aurait ajouté un sur un chemin de lecture
+// que get(ref) emprunte à chaque reprise de conversation.
+//
+// ORDER BY DESC parce que ce sont les DERNIERS messages qui portent l'état de la discussion ;
+// le store remet le fil dans l'ordre d'écriture, qui est celui dans lequel une conversation se lit.
 func (q *Queries) ListIssueMessages(ctx context.Context, arg ListIssueMessagesParams) ([]ListIssueMessagesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listIssueMessages, arg.TeamID, arg.IssueID, arg.CallerProjectID)
+	rows, err := q.db.QueryContext(ctx, listIssueMessages,
+		arg.TeamID,
+		arg.IssueID,
+		arg.CallerProjectID,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +356,12 @@ func (q *Queries) ListIssueMessages(ctx context.Context, arg ListIssueMessagesPa
 	items := []ListIssueMessagesRow{}
 	for rows.Next() {
 		var i ListIssueMessagesRow
-		if err := rows.Scan(&i.BodyMd, &i.CreatedAt, &i.AuthorKey); err != nil {
+		if err := rows.Scan(
+			&i.BodyMd,
+			&i.CreatedAt,
+			&i.AuthorKey,
+			&i.Total,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
