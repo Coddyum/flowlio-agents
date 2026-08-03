@@ -8,9 +8,9 @@ package handler
 // | New                | Crée le handler overview                                     | 42    |
 // | Handler.principal  | Récupère le Principal déposé par le middleware               | 49    |
 // | Handler.teamFor    | Résout la team visée par un admin, et l'y enferme s'il en porte une | 78 |
-// | Handler.writeJSON  | Sérialise la réponse avant d'engager le statut                | 91    |
-// | Handler.writeError | Mappe une erreur domaine en code HTTP, sans fuite d'interne   | 117   |
-// | errorBody          | Forme unique des réponses d'erreur                           | 130   |
+// | Handler.writeJSON  | Sérialise la réponse avant d'engager le statut                | 95    |
+// | Handler.writeError | Mappe une erreur domaine en code HTTP, sans fuite d'interne   | 121   |
+// | errorBody          | Forme unique des réponses d'erreur                           | 134   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -76,6 +76,10 @@ func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (auth.Princi
 // Le refus est un ErrNotFound, jamais un 403 : « cette team existe mais pas pour toi » est un
 // oracle qui laisse énumérer les teams de l'installation par balayage de slugs.
 func (h *Handler) teamFor(ctx context.Context, p auth.Principal, slug string) (uuid.UUID, error) {
+	if slug == "" {
+		return uuid.Nil, errors.Join(service.ErrInvalidInput, errors.New("team manquante"))
+	}
+
 	team, err := h.svc.TeamBySlug(ctx, slug)
 	if err != nil {
 		return uuid.Nil, err
