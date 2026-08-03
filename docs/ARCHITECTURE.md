@@ -41,6 +41,19 @@ un module déclare ses routes relativement à lui-même (`POST /x`, `DELETE /x/{
 Middleware global (engine, appliqué à toutes les routes, dans l'ordre) : `Recover`, `Logger`.
 Le middleware d'une feature (auth…) se lie une seule fois dans son `module.go`.
 
+**CORS** (`engine.CORS`) enveloppe le routeur, appliqué dans `main.go` et non dans la chaîne par
+défaut de l'engine : la liste d'origines est de la configuration (`ALLOWED_ORIGINS`), et l'engine
+n'en prend pas. Il est le plus externe, ce qui est nécessaire — un preflight de navigateur ne
+porte aucun token, donc il doit être tranché avant le middleware d'auth.
+
+| Règle | Pourquoi |
+| ----- | -------- |
+| Jamais `*` | cette API répond à un token d'administration qui vit sur la machine de l'utilisateur |
+| Égalité stricte sur l'origine | `https://flowlio.me.evil.test` passe n'importe quel test de sous-chaîne |
+| Aucun `Allow-Credentials` | il n'y a pas de cookie dans ce produit ; le token part en `Authorization` |
+| `Vary: Origin` toujours posé | sinon un cache sert à une origine les en-têtes calculés pour une autre |
+| Requête sans `Origin` intacte | la CLI et le serveur MCP ne sont pas des navigateurs |
+
 ## Domaines (features)
 
 | Clé module  | Domaine                          | Routes                                                                                                            | Dépendances inter-modules |

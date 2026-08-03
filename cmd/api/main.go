@@ -5,8 +5,8 @@ package main
 // | Élément      | Résumé                                                           | Ligne |
 // |--------------|------------------------------------------------------------------|-------|
 // | main         | Charge la config, câble l'infra, monte les modules, sert l'API     | 46    |
-// | buildModules   | Instancie les modules de feature — point d'ajout unique          | 98    |
-// | bootstrapLocal | Émet le token admin au tout premier démarrage local              | 113   |
+// | buildModules   | Instancie les modules de feature — point d'ajout unique          | 105   |
+// | bootstrapLocal | Émet le token admin au tout premier démarrage local              | 120   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -83,9 +83,16 @@ func main() {
 		eng.Mount(m.Key(), m.Routes())
 	}
 
+	// CORS est appliqué ICI, au-dessus du routeur, et non dans la chaîne de l'engine : la liste
+	// d'origines est de la configuration, et l'engine n'en prend pas. Le câblage appartient à
+	// main.go, comme tout le reste.
+	//
+	// En premier de la chaîne, donc : un preflight de navigateur est tranché avant d'atteindre
+	// quoi que ce soit d'autre, ce qui est nécessaire — il ne porte aucun token, et le middleware
+	// d'auth le refuserait.
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           eng.Router(),
+		Handler:           engine.CORS(cfg.AllowedOrigins)(eng.Router()),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
