@@ -252,6 +252,24 @@ superviseur. `closed_at` coupé (`state` + `updated_at` le disent). `messages_to
 
 ## `sql/queries/overview.sql` — littéral
 
+> **LIVRÉ (FLWL-29), ET CE LITTÉRAL NE COMPILE PAS TEL QUEL.** La source de vérité est désormais
+> `sql/queries/overview.sql`. Trois écarts, imposés par **sqlc 1.30** et isolés par bisection :
+>
+> 1. `OverviewTaskDebts` utilise une **table dérivée**, pas la CTE `WITH candidate AS (…)` — sqlc
+>    n'enregistre pas l'alias de CTE ;
+> 2. `@stale_before::timestamptz`, pas le paramètre nu — sans le cast, sqlc n'infère pas son type à
+>    travers la table dérivée. C'est la cause réelle : `greatest()`, `EXISTS()`, le cast de sortie
+>    et `count(*) OVER ()` passent tous isolément ;
+> 3. `@team_id::uuid` dans `OverviewLastSeen` — `tokens.team_id` est nullable depuis `000006`, donc
+>    sqlc typait le **paramètre** en `uuid.NullUUID`.
+>
+> Postgres accepte les trois formes d'origine : ce sont des limites de l'outil, pas du SQL, et la
+> sémantique est inchangée. Piège de diagnostic à connaître : **sqlc rapporte l'erreur à la
+> position de la statement SUIVANTE**.
+>
+> La migration porte le numéro **`000008`**, pas `000006` : ce dernier est pris par
+> `admin_token_has_no_team`, et `000007` par `project_trust`.
+
 ```sql
 -- overview — SEUL fichier du dépôt dont les queries lisent des lignes métier SANS prédicat de
 -- projet. RÈGLE INVERSE de tasks.sql et issues.sql, et c'est exactement pourquoi elles vivent
