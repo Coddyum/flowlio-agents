@@ -55,6 +55,7 @@ lint: ## golangci-lint + garde-fous structurels
 	./scripts/check-file-size.sh
 	./scripts/check-sommaire.sh
 	./scripts/check-trust-in-sql-only.sh
+	./scripts/check-overview-scope.sh
 	./scripts/check-seal-source.sh
 	./scripts/check-authtest-not-in-production.sh
 

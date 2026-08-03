@@ -457,6 +457,13 @@ CREATE INDEX issues_outgoing_idx ON public.issues USING btree (author_project_id
 
 
 --
+-- Name: issues_team_state_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issues_team_state_idx ON public.issues USING btree (team_id, state, updated_at);
+
+
+--
 -- Name: project_trust_high_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -482,6 +489,13 @@ CREATE INDEX task_notes_task_id_idx ON public.task_notes USING btree (task_id, c
 --
 
 CREATE INDEX tasks_project_active_idx ON public.tasks USING btree (project_id, status, number DESC) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: tasks_team_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tasks_team_status_idx ON public.tasks USING btree (team_id, status) WHERE (archived_at IS NULL);
 
 
 --
