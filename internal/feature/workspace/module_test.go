@@ -21,29 +21,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/Coddyum/flowlio-agents/internal/core/auth"
+	"github.com/Coddyum/flowlio-agents/internal/core/auth/authtest"
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/handler"
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
-	"github.com/Coddyum/flowlio-agents/internal/pkg/crypto"
 	"github.com/google/uuid"
 )
-
-// stubAuthStore rend un unique token dont le test choisit la portée.
-type stubAuthStore struct {
-	prefix string
-	rec    auth.TokenRecord
-}
-
-func (s *stubAuthStore) TokenByPrefix(_ context.Context, prefix string) (auth.TokenRecord, error) {
-	if prefix != s.prefix {
-		return auth.TokenRecord{}, auth.ErrTokenNotFound
-	}
-	return s.rec, nil
-}
-
-func (s *stubAuthStore) TouchToken(_ context.Context, _ uuid.UUID) error { return nil }
 
 // stubService n'implémente QUE ce que les routes `authed` appellent.
 //
@@ -96,27 +79,10 @@ var routes = []route{
 func serveWithProjectToken(t *testing.T, r route) *httptest.ResponseRecorder {
 	t.Helper()
 
-	tok, err := crypto.NewToken()
-	if err != nil {
-		t.Fatalf("NewToken: %v", err)
-	}
+	tok := authtest.Project(t, uuid.New(), uuid.New())
+	m := &mod{h: handler.New(tok.Auth, stubService{}), auth: tok.Auth}
 
-	authSvc := auth.New(&stubAuthStore{
-		prefix: tok.Prefix,
-		rec: auth.TokenRecord{
-			ID:         uuid.New(),
-			Scope:      auth.ScopeProject,
-			TeamID:     uuid.New(),
-			ProjectID:  uuid.New(),
-			SecretHash: tok.Hash,
-			LastUsedAt: time.Now(),
-		},
-	})
-
-	m := &mod{h: handler.New(authSvc, stubService{}), auth: authSvc}
-
-	req := httptest.NewRequest(r.method, r.path, strings.NewReader(r.body))
-	req.Header.Set("Authorization", "Bearer "+tok.Plain)
+	req := tok.Authorize(httptest.NewRequest(r.method, r.path, strings.NewReader(r.body)))
 	rec := httptest.NewRecorder()
 	m.Routes().ServeHTTP(rec, req)
 	return rec

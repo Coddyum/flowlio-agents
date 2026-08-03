@@ -18,29 +18,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Coddyum/flowlio-agents/internal/core/auth"
+	"github.com/Coddyum/flowlio-agents/internal/core/auth/authtest"
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
-	"github.com/Coddyum/flowlio-agents/internal/pkg/crypto"
 	"github.com/google/uuid"
 )
-
-// fakeAuthStore rend un token unique dont le test choisit la portée — c'est tout son intérêt.
-// Le préfixe présenté est vérifié : un double qui ignore ce qu'on lui demande ne prouve rien.
-type fakeAuthStore struct {
-	prefix string
-	rec    auth.TokenRecord
-}
-
-func (f *fakeAuthStore) TokenByPrefix(_ context.Context, prefix string) (auth.TokenRecord, error) {
-	if prefix != f.prefix {
-		return auth.TokenRecord{}, auth.ErrTokenNotFound
-	}
-	return f.rec, nil
-}
-
-func (f *fakeAuthStore) TouchToken(_ context.Context, _ uuid.UUID) error { return nil }
 
 // fakeWorkspace enregistre ce que le handler lui demande. C'est là que se joue l'assertion qui
 // compte : un refus de teamFor doit couper AVANT que le service ne travaille, sinon le refus
@@ -125,26 +108,17 @@ func adminServer(t *testing.T, teamID uuid.UUID, svc service.Service) (http.Hand
 }
 
 // tokenServer monte les mêmes routes derrière le VRAI AdminOnly, pour un token dont le test
-// choisit la portée. Le secret et le hash sont fabriqués ici : un test qui les fournirait
-// prouverait la cohérence de ses propres constantes, pas celle du middleware.
+// choisit la portée.
 //
-// C'est ce qui permet de présenter un token de PROJET aux routes admin et de vérifier qu'il est
-// refusé par le middleware, sans jamais atteindre le handler.
+// Le harnais vient d'authtest : `auth.contextKey` est privé, donc aucun test ne peut déposer un
+// Principal à la main — il doit passer par le vrai middleware, sur un vrai token frappé. C'est ce
+// qui permet de présenter un token de PROJET aux routes admin et de vérifier qu'il est refusé
+// AVANT le handler.
 func tokenServer(t *testing.T, rec auth.TokenRecord, svc service.Service) (http.Handler, string) {
 	t.Helper()
 
-	tok, err := crypto.NewToken()
-	if err != nil {
-		t.Fatalf("NewToken: %v", err)
-	}
-
-	if rec.ID == uuid.Nil {
-		rec.ID = uuid.New()
-	}
-	rec.SecretHash = tok.Hash
-	rec.LastUsedAt = time.Now()
-
-	authSvc := auth.New(&fakeAuthStore{prefix: tok.Prefix, rec: rec})
+	tok := authtest.New(t, rec)
+	authSvc := tok.Auth
 
 	h := New(authSvc, svc)
 	admin := authSvc.AdminOnly
