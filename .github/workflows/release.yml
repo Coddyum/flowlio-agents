@@ -73,7 +73,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # GitHub REFUSE de persister une attestation pour un dépôt privé appartenant à un compte
+      # personnel (« Feature not available for user-owned private repositories »). Ce n'est pas une
+      # erreur de configuration : c'est une limite de la plateforme, constatée sur le premier
+      # passage réel de ce workflow.
+      #
+      # La condition porte sur la VISIBILITÉ, pas sur `continue-on-error`. Une étape tolérante aux
+      # erreurs produirait des releases sans attestation sans que rien ne le dise — et une garantie
+      # de provenance silencieusement absente est plus dangereuse qu'une garantie absente. Ici,
+      # l'étape apparaît explicitement « ignorée » tant que le dépôt est privé, et se rallume
+      # d'elle-même le jour du passage en public, sans qu'on ait à s'en souvenir.
       - name: Attestation de provenance
+        if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/*.tar.gz
