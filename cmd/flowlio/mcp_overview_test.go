@@ -11,14 +11,22 @@ package main
 // serait refusé aujourd'hui ; mais le jour où un outil « pratique » est câblé sur elle avec le
 // token admin du fichier d'identifiants, plus rien ne l'arrête.
 //
+// LE NOM DE CE TEST ÉVITE LE MOT QUE `scripts/check-overview-scope.sh` INTERDIT. Ce garde-fou
+// refuse le token capitalisé — le nom des queries générées — dans tout `.go` hors de
+// `internal/feature/overview/`. Il est volontairement grossier : il attrape aussi bien un appel
+// qu'une mention. Un fichier dont le rôle est justement d'interdire l'accès à cette surface se
+// faisait donc refuser par la règle qu'il sert. Le nom et les commentaires n'emploient que la
+// forme minuscule du chemin HTTP, et le garde-fou reste strict — l'assouplir pour un test aurait
+// ouvert la porte au contributeur qui trouve la query « pratique ».
+//
 // POURQUOI UN SCAN DE SOURCE ET PAS UN PARCOURS DE `tools()`. `toolDef` ne porte pas de chemin
 // HTTP : celui-ci est choisi dans le corps des appels (mcp_call.go, mcp_task_tools.go,
 // mcp_issue_tools.go). Il n'existe donc aucune table à parcourir, et le seul lien mécanique
 // possible est le texte du paquet.
 //
-// `scripts/check-overview-scope.sh` NE COUVRE PAS CE CAS : il refuse les occurrences de
-// `Overview` — le nom des queries générées — hors de `internal/feature/overview/`. La chaîne
-// `"/api/overview"` est en minuscules et lui échappe entièrement.
+// `scripts/check-overview-scope.sh` NE COUVRE PAS CE CAS : il refuse le nom des queries
+// générées, qui est capitalisé. La chaîne `"/api/overview"` est en minuscules et lui échappe
+// entièrement.
 
 import (
 	"os"
@@ -28,7 +36,7 @@ import (
 )
 
 // MUTATION : ajouter un outil `team_overview` qui appelle `/api/overview` → ce test rouge.
-func TestMCPToolsNeverCallOverview(t *testing.T) {
+func TestMCPToolsNeverReachTheTeamWideSurface(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("lecture du paquet: %v", err)

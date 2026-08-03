@@ -792,7 +792,7 @@ mutation 17.
 | 6 | Contrôle positif de 5 | `I` `TestOverviewSeesEveryDebtOfItsTeam` | remplacer `@team_id` par `uuid.Nil` dans le service — sans ce test, une query qui ne renvoie jamais rien passe le test d'isolation |
 | 7 | Pas de fuite par la jointure projet | `I` `TestOverviewJoinIsTeamScoped` — deux teams avec la MÊME clé `CORE` | retirer `AND p.team_id = i.team_id` d'un des deux joins. *Faible* : la FK composite la rend presque inobservable — le vrai contrôle est la FK, testée par 8 |
 | 8 | La FK composite est le contrôle réel sur `issues` | `I` `TestIssueCannotReferenceForeignProject` — insertion directe → violation | supprimer `issues_project_fk` de la migration |
-| 9 | Les compteurs ignorent les autres teams | `I` `TestOverviewCountersAreTeamScoped` — 10 issues créées dans B, compteurs de A inchangés | retirer `i.team_id = p.team_id` d'une sous-requête scalaire |
+| 9 | Les compteurs ignorent les autres teams | `I` `TestOverviewCountersAreTeamScoped` — 10 issues créées dans B, compteurs de A inchangés | ~~retirer `i.team_id = p.team_id` d'une sous-requête scalaire~~ — **corrigé après avoir joué la mutation : elle laisse le test VERT.** La sous-requête est corrélée sur `p.id`, un UUID unique, et la FK composite interdit qu'une issue de B porte le `project_id` d'un projet de A : le prédicat y est redondant, même classe que la 7. La mutation qui tue : retirer `p.team_id = @team_id` du `WHERE` d'`OverviewProjects` |
 | 10 | Un repo sans rien en vol reste affiché | `I` `TestOverviewKeepsIdleProjects` — `DOCS`, zéro issue zéro tâche, compteurs à 0 | remplacer une sous-requête scalaire par `JOIN issues i ON i.project_id = p.id` |
 | 11 | La liste des projets n'est jamais tronquée | `I` `TestOverviewNeverTruncatesProjects` — 40 projets, 100 dettes → 40 lignes `projects[]` | appliquer la borne à `OverviewProjects` |
 | 12 | Le fil d'une autre team est introuvable | `I` `TestOverviewThreadCannotCrossTeams` | retirer `i.team_id = @team_id` d'`OverviewIssueByRef` |
@@ -804,8 +804,22 @@ mutation 17.
 | 18 | Le filtre neutralise chaque famille | `U` `TestLineNeutralisesHostileText`, une ligne par famille du tableau `termtext` | ne filtrer que `0x1b` → ligne `\r` rouge · ignorer C1 → ligne C1 rouge · garder les bidi → ligne RLO rouge · mesurer en runes → lignes CJK/emoji rouges · **tronquer AVANT de filtrer** → ligne « CSI coupée » rouge |
 | 19 | La commande de supervision ne retombe pas sur le mauvais token | `U` `TestWatchRefusesNonAdminToken` — `/whoami` renvoie `scope: project` → sortie en erreur, code 2 | supprimer la vérification de scope. Ferme le piège `FromCredentials`, qui exige `FLOWLIO_API_URL` **et** `FLOWLIO_TOKEN` ensemble et retombe sinon **silencieusement** sur le token admin du fichier |
 | 20 | Aucune écriture par cette surface | `U` `TestOverviewExposesOnlyGET` — POST/PATCH/PUT/DELETE sur chaque route → 405 · `make lint` refuse tout `INSERT`/`UPDATE`/`DELETE` dans `overview.sql` | monter une route d'écriture |
-| 21 | Aucun outil MCP ne touche `/api/overview` | `U` `TestMCPToolsNeverCallOverview` — parcours de la table d'outils, aucun chemin ne commence par `/api/overview` | ajouter un outil `team_overview` |
+| 21 | Aucun outil MCP ne touche `/api/overview` | `U` `TestMCPToolsNeverReachTheTeamWideSurface` — **scan de source** : `toolDef` ne porte pas de chemin HTTP, il n'y a donc aucune table à parcourir. Le nom du test évite le token capitalisé, que `check-overview-scope.sh` interdit hors du module — le fichier se faisait refuser par la règle qu'il sert | ajouter un outil `team_overview` |
 
+> **Mutations JOUÉES le 2026-08-03**, à la livraison de FLWL-30/31 : 1, 3, 4, 5, 6, 7, 9, 10, 11,
+> 12, 14, 15, 16, 20, 21. Toutes tuent leur test **sauf deux**, et les deux pour la même raison :
+> la 7, déjà annoncée non tuable ci-dessous, et la **9**, qui ne l'était pas — sa ligne du tableau
+> est corrigée. Dès que le prédicat porte sur un `project_id` déjà résolu, la FK composite le rend
+> redondant ; une clause de team n'est observable que là où la FK est SIMPLE, c'est-à-dire sur
+> `issue_messages`, et nulle part ailleurs.
+>
+> La 1 a survécu au premier essai : `handler.principal` refuse aussi un principal non admin, donc
+> la route rendait encore 403 sous `Middleware`. Le test observe désormais le corps exact, ce qui
+> distingue le refus du middleware de celui du handler.
+>
+> Non jouées : la 8 (il faudrait supprimer une FK de la base de dev), la 13, et les 17/18/19 qui
+> portent sur le renderer et la CLI — FLWL-32, pas encore écrits.
+>
 > **Mutation déclarée non tuable, et il faut le dire plutôt qu'écrire un test qui ment.** Retirer
 > `AND p.team_id = i.team_id` d'un join vers `projects` sur `issues` ou `tasks` : la FK composite
 > `(project_id, team_id) → projects(id, team_id)` rend la clause mathématiquement redondante, aucun
