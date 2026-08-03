@@ -4,14 +4,13 @@ package main
 //
 // | Élément                 | Résumé                                                | Ligne |
 // |-------------------------|-------------------------------------------------------|-------|
-// | mcpServer.listTasks     | Backlog du projet courant                               | 41    |
-// | mcpServer.get           | Résout une référence, qu'elle soit tâche ou issue       | 82    |
-// | mcpServer.createTask    | Ouvre une tâche et renvoie sa clé                       | 134   |
-// | mcpServer.updateTask    | Modifie une tâche, la note, ou l'archive                | 173   |
-// | mcpServer.numberFromKey | Résout une clé lisible dans le projet du token          | 240   |
-// | mcpServer.taskPath      | Compose le chemin d'API d'une tâche                     | 263   |
-// | mcpServer.taskRef       | Compose la référence lisible d'un numéro                | 268   |
-// | mcpServer.withRefs      | Ajoute sa référence à chaque tâche d'un listing         | 276   |
+// | mcpServer.listTasks     | Backlog du projet courant                               | 38    |
+// | mcpServer.createTask    | Ouvre une tâche et renvoie sa clé                       | 72    |
+// | mcpServer.updateTask    | Modifie une tâche, la note, ou l'archive                | 111   |
+// | mcpServer.numberFromKey | Résout une clé lisible dans le projet du token          | 178   |
+// | mcpServer.taskPath      | Compose le chemin d'API d'une tâche                     | 201   |
+// | mcpServer.taskRef       | Compose la référence lisible d'un numéro                | 206   |
+// | mcpServer.withRefs      | Ajoute sa référence à chaque tâche d'un listing         | 214   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -30,9 +29,7 @@ import (
 	"strconv"
 	"strings"
 
-	issueservice "github.com/Coddyum/flowlio-agents/internal/feature/issue/service"
 	taskservice "github.com/Coddyum/flowlio-agents/internal/feature/task/service"
-	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
 const taskAPI = "/api/task"
@@ -69,65 +66,6 @@ func (s *mcpServer) listTasks(ctx context.Context, args json.RawMessage) (any, e
 		return nil, err
 	}
 	return s.withRefs(tasks), nil
-}
-
-// get résout une référence, qu'elle désigne une tâche ou une issue.
-//
-// Le compteur du projet est partagé entre les deux : un agent qui lit CORE-34 dans un commit,
-// une inbox ou un message d'issue ne SAIT PAS laquelle des deux c'est. Deux outils typés
-// échoueraient donc une fois sur deux — cet outil essaie les deux et dit ce qu'il a trouvé.
-//
-// Une référence portant la clé d'un projet frère ne peut désigner qu'une issue : les tâches d'un
-// autre repo ne sont accessibles à personne.
-func (s *mcpServer) get(ctx context.Context, args json.RawMessage) (any, error) {
-	var in struct {
-		Ref string `json:"ref"`
-	}
-	if err := json.Unmarshal(args, &in); err != nil {
-		return nil, errors.New("arguments illisibles")
-	}
-
-	projectKey, number, err := splitRef(in.Ref, s.projectKey)
-	if err != nil {
-		return nil, err
-	}
-
-	if projectKey == s.projectKey {
-		var detail taskservice.TaskDetail
-		err := s.api.Do(ctx, http.MethodGet, s.taskPath(number), nil, &detail)
-		if err == nil {
-			return map[string]any{
-				"kind": "task",
-				"ref":  s.taskRef(detail.Number),
-				"task": detail,
-			}, nil
-		}
-		// Toute erreur autre qu'une absence est définitive : réessayer en issue masquerait une
-		// panne derrière un « introuvable ».
-		var apiErr *client.APIError
-		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
-			return nil, err
-		}
-	}
-
-	var issue issueservice.IssueDetail
-	if err := s.api.Do(ctx, http.MethodGet, s.issuePath(projectKey, number), nil, &issue); err != nil {
-		return nil, err
-	}
-
-	// C'est le seul outil qui rend des corps de message COMPLETS, écrits par un autre dépôt et
-	// versés dans un contexte qui a un shell. Chaque prise de parole du pair est encadrée, la
-	// mienne ne l'est pas — voir mcp_untrusted.go.
-	f, err := newFraming(s.projectKey)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"kind":    "issue",
-		"ref":     issue.Ref,
-		"lecture": f.notice(),
-		"issue":   f.markIssueDetail(issue),
-	}, nil
 }
 
 // createTask ouvre une tâche et renvoie sa clé, qui est ce dont l'agent a besoin ensuite.

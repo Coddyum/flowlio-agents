@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -482,4 +485,89 @@ func TestUnknownToolIsAToolErrorNotAProtocolError(t *testing.T) {
 	if isError, _ := result["isError"].(bool); !isError {
 		t.Errorf("résultat = %+v, attendu isError", result)
 	}
+}
+
+// UN PANIC N'EST PAS UNE FIN DE SESSION.
+//
+// Sans le recover de dispatch, un déréférencement nul dans n'importe quel outil remonte jusqu'à
+// la goroutine principale : le process meurt, stdout se ferme, et l'agent voit sa session
+// disparaître SANS RÉPONSE JSON-RPC à la requête en cours. Il attend sur un tube fermé un message
+// qui n'arrivera jamais — il ne peut ni le lire, ni s'en corriger, ni savoir ce qu'il a perdu.
+//
+// Le panic est RÉEL, pas simulé : newTestServer laisse `api` nul, donc tout outil qui appelle
+// l'API déréférence nil. C'est exactement le mode de défaillance de production.
+//
+// MUTATION : retirer le defer/recover de dispatch fait tomber ce test — le paquet entier part en
+// panique au lieu de rendre une réponse.
+func TestPanicDansUnOutilNeTuePasLaSession(t *testing.T) {
+	stderr, restore := captureStderr(t)
+	defer restore()
+
+	responses := exchange(t,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_inbox","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"ping"}`,
+	)
+
+	if len(responses) != 2 {
+		t.Fatalf("%d réponses, attendu 2 : la session s'est arrêtée au panic", len(responses))
+	}
+
+	if responses[0].Error == nil {
+		t.Fatalf("l'appel qui panique a rendu un résultat: %+v", responses[0])
+	}
+	if responses[0].Error.Code != codeInternalError {
+		t.Errorf("code = %d, attendu %d (erreur interne)", responses[0].Error.Code, codeInternalError)
+	}
+	// L'agent reçoit un message court et actionnable, pas une trace Go.
+	if strings.Contains(responses[0].Error.Message, "goroutine") {
+		t.Errorf("la trace Go part vers l'agent et pollue son contexte: %q", responses[0].Error.Message)
+	}
+	if !strings.Contains(responses[0].Error.Message, "la session continue") {
+		t.Errorf("le message ne dit pas à l'agent que la session tient: %q", responses[0].Error.Message)
+	}
+
+	// La requête SUIVANTE est servie : c'est ça, « la session continue ».
+	if responses[1].Error != nil {
+		t.Errorf("le ping après le panic a échoué: %+v", responses[1].Error)
+	}
+
+	// STDOUT APPARTIENT AU PROTOCOLE. La trace doit partir sur stderr, et seulement là — une
+	// seule ligne parasite sur stdout casse le décodage JSON-RPC du client.
+	trace := stderr()
+	if !strings.Contains(trace, "PANIC") || !strings.Contains(trace, "goroutine") {
+		t.Errorf("la trace n'a pas été journalisée sur stderr:\n%s", trace)
+	}
+}
+
+// captureStderr détourne os.Stderr et rend une fonction qui en lit le contenu.
+//
+// Le tube est vidé par une goroutine : sans elle, une trace plus longue que le tampon du tube
+// bloquerait l'écriture, donc le test lui-même.
+func captureStderr(t *testing.T) (read func() string, restore func()) {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	saved := os.Stderr
+	os.Stderr = w
+
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	var content string
+	var once sync.Once
+	collect := func() {
+		once.Do(func() {
+			os.Stderr = saved
+			_ = w.Close()
+			content = <-done
+		})
+	}
+	return func() string { collect(); return content }, collect
 }

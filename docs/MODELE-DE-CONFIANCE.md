@@ -95,21 +95,58 @@ Avec l'échappement, le balisage arrivait à l'agent sous la forme `<externe:…
 
 ### Coût en contexte
 
-Mesuré par `TestMarkingCostStaysProportionate`, sur le pire cas nominal — une inbox pleine de dix
-issues entrantes, extraits à la borne de 500 caractères :
+**Le chiffre historique de « 20,3 % » était un plancher, et il était compté dans la mauvaise
+unité.** Il reste exact sur sa fixture — inbox de dix issues, extraits à la borne SQL de 500
+caractères — mais deux choses le rendaient trompeur :
 
-| | Octets |
-| --- | --- |
-| Inbox nue | 6 751 |
-| Inbox balisée | 8 119 |
-| **Surcoût** | **20,3 %** |
+| | Ce qui était annoncé | Ce que l'agent paie |
+| --- | --- | --- |
+| Unité | octets | **tokens** |
+| Même fixture | 20,3 % | **~35 %** (médiane 37,8 % sur 200 tirages de sceau) |
 
-Le critère posé par la tâche était « ne doit pas doubler ». Le test garde un seuil à 35 %, plus
-serré que ce critère, pour servir de garde-fou de régression : allonger la balise ou le rappel de
-lecture doit faire discuter.
+Le sceau hexadécimal est environ **2,4 fois plus dense en tokens** que du français courant : un
+garde-fou libellé en octets règle sa limite dans une unité qui n'est pas celle qu'il protège. Et
+un ratio s'améliore quand le contenu s'allonge, donc il laisse passer une balise qui grossit tant
+qu'on allonge l'extrait à côté — mesuré, une balise à deux attributs de plus (+63 % par bloc)
+atterrissait **0,2 point sous** l'ancien seuil.
+
+Compter des tokens n'est pas une option : la doctrine du dépôt interdit d'ajouter un tokeniseur en
+dépendance, et il n'en existe pas deux qui comptent pareil. `TestMarkingCostStaysProportionate`
+borne donc désormais la **grandeur invariante**, qui ne dépend ni de la fixture ni de la
+tokenisation :
+
+| Grandeur | Mesure | Borne |
+| --- | --- | --- |
+| Surcoût fixe d'un encadrement | 60 octets | 62 |
+| Rappel de lecture, une fois par réponse | 122 octets | 160 |
+
+Le ratio reste en second filet, sur un extrait réaliste de 200 caractères et au seuil du critère
+réel de la tâche — « ne doit pas doubler », donc 100 %.
+
+> **Règle de lecture de ce document : tout coût annoncé en octets est un plancher.** Multiplier
+> par environ 1,7 pour l'ordre de grandeur en tokens.
 
 La consigne complète, elle, est payée **une fois par session** dans les instructions, jamais à
 chaque tour. C'est le même arbitrage que celui qui a supprimé l'outil `whoami`.
+
+### Ce que la consigne de session promet, et ce qu'elle ne promet plus
+
+`framingRule` affirmait que le sceau « t'est rappelé par le champ `lecture` ». C'était faux pour
+**deux outils sur quatre** : `check_inbox` et `get` émettent ce champ, `list_issues` et
+`answer_issue` émettent des blocs scellés sans lui. Un agent qui a appris à chercher `lecture` et
+ne le trouve pas conclut, au mieux, qu'il n'y a rien de tiers dans la réponse — alors qu'il en
+tient un bloc sous les yeux.
+
+**Arbitré le 2026-08-03 : on corrige la CONSIGNE, pas le code.** Émettre `lecture` partout aurait
+coûté des octets à chaque écriture et cassé l'enveloppe d'écriture à deux clés que le contrat des
+outils d'écriture fige. Le sceau est de toute façon lisible dans la balise ouvrante elle-même : le
+rappel est un confort, pas le mécanisme. La consigne le dit maintenant.
+
+Sur `get(ref)` — le seul outil qui rend des corps de message **complets** — le rappel sort
+désormais **avant** le contenu qu'il cadre. Il sortait après, parce qu'une `map` est sérialisée
+par ordre alphabétique de clé (`issue` avant `lecture`) : l'agent lisait jusqu'à plusieurs
+centaines de kilo-octets de texte tiers avant d'apprendre quel sceau fait foi. Correction à coût
+de zéro octet.
 
 ---
 

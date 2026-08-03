@@ -2,20 +2,15 @@ package main
 
 // SOMMAIRE (lire en premier, sauter directement au bon passage)
 //
-// | Élément            | Résumé                                                    | Ligne |
-// |--------------------|-----------------------------------------------------------|-------|
-// | rpcRequest         | Message entrant JSON-RPC 2.0                                | 66    |
-// | rpcResponse        | Message sortant JSON-RPC 2.0                                | 74    |
-// | rpcError           | Erreur JSON-RPC 2.0                                         | 82    |
-// | mcpServer          | État du serveur MCP : client API et projet du token          | 88    |
-// | runMCP             | Lance le serveur MCP sur stdio                               | 104   |
-// | mcpServer.serve    | Boucle de lecture des messages, une ligne JSON par message    | 138   |
-// | mcpServer.dispatch | Route une méthode MCP vers son implémentation                | 178   |
-// | mcpServer.initialize | Répond à la poignée de main MCP                            | 203   |
-// | mcpServer.instructions | Dit à l'agent où il travaille, avant son premier message | 222   |
-// | mcpServer.siblingKeys | Résout les autres projets de la team                      | 249   |
-// | writeResponse      | Écrit une réponse sur stdout, une ligne par message           | 271   |
-// | errorResponse      | Construit une réponse d'erreur JSON-RPC                       | 283   |
+// | Élément                | Résumé                                                    | Ligne |
+// |------------------------|-----------------------------------------------------------|-------|
+// | mcpServer              | État du serveur MCP : client API et projet du token        | 53    |
+// | runMCP                 | Lance le serveur MCP sur stdio                             | 69    |
+// | mcpServer.serve        | Boucle de lecture des messages, une ligne JSON par message | 103   |
+// | mcpServer.dispatch     | Route une méthode MCP, et survit à un panic d'outil        | 158   |
+// | mcpServer.initialize   | Répond à la poignée de main MCP                            | 194   |
+// | mcpServer.instructions | Dit à l'agent où il travaille, avant son premier message   | 213   |
+// | mcpServer.siblingKeys  | Résout les autres projets de la team                       | 240   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -36,6 +31,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
@@ -52,37 +48,6 @@ const (
 	// cette taille ; la borne évite qu'un flux malformé fasse grossir le tampon sans limite.
 	maxMessageBytes = 1 << 20
 )
-
-// Codes d'erreur JSON-RPC 2.0.
-const (
-	codeParseError     = -32700
-	codeInvalidRequest = -32600
-	codeMethodNotFound = -32601
-	codeInvalidParams  = -32602
-)
-
-// rpcRequest est un message entrant. ID est absent pour une notification, à laquelle on ne
-// répond jamais.
-type rpcRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
-
-// rpcResponse est un message sortant. Result et Error s'excluent mutuellement.
-type rpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Result  any             `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
-}
-
-// rpcError porte le code et le message d'une erreur de protocole.
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
 
 // mcpServer porte le client API et l'identité du token, résolue une seule fois au démarrage.
 type mcpServer struct {
@@ -175,7 +140,33 @@ func (s *mcpServer) serve(ctx context.Context, in io.Reader) error {
 // Une erreur d'outil n'est PAS une erreur de protocole : elle revient dans le résultat avec
 // isError, pour que l'agent la lise et se corrige. Les codes JSON-RPC restent réservés aux
 // défauts de protocole, que l'agent ne peut pas corriger.
-func (s *mcpServer) dispatch(ctx context.Context, req rpcRequest) rpcResponse {
+//
+// UN PANIC NE DOIT PAS TUER LA SESSION. Sans le recover ci-dessous, un déréférencement nul dans
+// n'importe quel outil fait remonter la panique jusqu'à la goroutine principale : le process
+// meurt, stdout se ferme, et l'agent voit sa session MCP disparaître SANS RÉPONSE JSON-RPC à la
+// requête en cours. Il attend un message qui n'arrivera jamais, sur un tube fermé — c'est le pire
+// mode de défaillance de tout le produit, parce que l'agent ne peut ni le lire, ni s'en corriger,
+// ni même savoir ce qu'il a perdu.
+//
+// Le recover est ici et pas dans callTool : il couvre AUSSI initialize, tools/list et le routage
+// lui-même. Un panic dans instructions() est aussi fatal qu'un panic dans un outil.
+//
+// La trace part sur STDERR, jamais sur stdout : stdout appartient au protocole. Elle y va en
+// entier — c'est un bug du produit, pas une donnée sensible, et sans elle le défaut est
+// irreproductible. Ce que l'agent reçoit, lui, est un message court : il n'a rien à faire d'une
+// trace Go, et la lui verser polluerait son contexte pour rien.
+func (s *mcpServer) dispatch(ctx context.Context, req rpcRequest) (resp rpcResponse) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "flowlio mcp: PANIC sur %s: %v\n%s\n", req.Method, r, debug.Stack())
+		resp = errorResponse(req.ID, codeInternalError,
+			"erreur interne du serveur flowlio sur "+req.Method+
+				" — la session continue, l'appel a échoué")
+	}()
+
 	switch req.Method {
 	case "initialize":
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: s.initialize()}
@@ -262,31 +253,4 @@ func (s *mcpServer) siblingKeys(ctx context.Context) []string {
 		}
 	}
 	return keys
-}
-
-// writeResponse écrit une réponse sur stdout, une ligne par message.
-//
-// Un échec d'écriture part sur stderr : l'agent ne lira de toute façon plus rien, et écrire
-// l'erreur sur stdout corromprait le flux du protocole.
-func (s *mcpServer) writeResponse(resp rpcResponse) {
-	raw, err := json.Marshal(resp)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "flowlio mcp: encodage de la réponse: %v\n", err)
-		return
-	}
-	if _, err := fmt.Fprintf(s.out, "%s\n", raw); err != nil {
-		fmt.Fprintf(os.Stderr, "flowlio mcp: écriture de la réponse: %v\n", err)
-	}
-}
-
-// errorResponse construit une réponse d'erreur JSON-RPC.
-func errorResponse(id json.RawMessage, code int, message string) rpcResponse {
-	if len(id) == 0 {
-		id = json.RawMessage("null")
-	}
-	return rpcResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Error:   &rpcError{Code: code, Message: message},
-	}
 }
