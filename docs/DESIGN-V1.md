@@ -78,13 +78,21 @@ accepterait un scope projet, fait tomber une case.
 
 ## Modes de déploiement
 
-| Mode     | Auth                                                    | Billing |
-| -------- | ------------------------------------------------------- | ------- |
-| `local`  | Pas de compte. `flowlio init` crée team + projet + token | —       |
-| `hosted` | Comptes + JWT (v2)                                       | Stripe (v2) |
+> **Révisé le 2026-08-05 — voir `docs/DECISION-hosted.md`.** Ce tableau annonçait des comptes, du
+> JWT et un module `billing` **dans ce dépôt**. Ce n'est plus le plan.
 
-Un seul port `Auth()` dans `CoreServices`, deux adaptateurs. `buildModules()` ne monte le module
-`billing` que si `MODE=hosted`.
+| Mode     | Auth                                                     | Billing |
+| -------- | -------------------------------------------------------- | ------- |
+| `local`  | Pas de compte. `flowlio init` crée team + projet + token  | —       |
+| `hosted` | **Identique.** Un token admin, celui de l'opérateur       | **Ailleurs** |
+
+Ce dépôt ne porte **jamais** de comptes ni de facturation. L'offre hébergée est ce même binaire,
+exploité par flowlio-core : il appelle l'API d'administration pour créer la team, le projet et le
+token du client, exactement comme le ferait `flowlio init` depuis un terminal. Le seul port `Auth()`
+de `CoreServices` reste celui qui existe, avec un seul adaptateur.
+
+`MODE=hosted` ne sert donc plus à monter un module de facturation. Il ne décide que d'une chose :
+**où va le secret d'amorçage** — un magasin de secrets, jamais la sortie standard.
 
 ## Sécurité (repo open source — non négociable)
 
