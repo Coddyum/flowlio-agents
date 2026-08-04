@@ -1,32 +1,30 @@
 package main
 
-// GARANTIE 21 DU TABLEAU DE docs/DESIGN-TUI.md § « Garanties de sécurité ».
+// GUARANTEE 21 OF THE TABLE IN docs/DESIGN-TUI.md § "Garanties de sécurité".
 //
-// Ce que ce fichier verrouille : AUCUN OUTIL MCP NE TOUCHE `/api/overview`.
+// What this file locks down: NO MCP TOOL TOUCHES `/api/overview`.
 //
-// POURQUOI C'EST LA GARANTIE LA PLUS FACILE À PERDRE. `/api/overview` rend l'état d'une team
-// ENTIÈRE, fil des conversations compris. Un agent qui l'atteindrait lirait les questions que ses
-// repos frères se posent entre eux — et la promesse d'isolation du produit tomberait EN LECTURE,
-// sans qu'un seul test de tenancy ne devienne rouge. La route est admin, donc un token d'agent
-// serait refusé aujourd'hui ; mais le jour où un outil « pratique » est câblé sur elle avec le
-// token admin du fichier d'identifiants, plus rien ne l'arrête.
+// WHY THIS IS THE EASIEST GUARANTEE TO LOSE. `/api/overview` renders the state of a WHOLE team,
+// conversation threads included. An agent reaching it would read the questions its sibling repos
+// ask each other — and the product's isolation promise would fall ON READS, without a single
+// tenancy test turning red. The route is admin-only, so an agent token would be refused today; but
+// the day a "handy" tool is wired onto it with the admin token from the credentials file, nothing
+// stops it any more.
 //
-// LE NOM DE CE TEST ÉVITE LE MOT QUE `scripts/check-overview-scope.sh` INTERDIT. Ce garde-fou
-// refuse le token capitalisé — le nom des queries générées — dans tout `.go` hors de
-// `internal/feature/overview/`. Il est volontairement grossier : il attrape aussi bien un appel
-// qu'une mention. Un fichier dont le rôle est justement d'interdire l'accès à cette surface se
-// faisait donc refuser par la règle qu'il sert. Le nom et les commentaires n'emploient que la
-// forme minuscule du chemin HTTP, et le garde-fou reste strict — l'assouplir pour un test aurait
-// ouvert la porte au contributeur qui trouve la query « pratique ».
+// THE NAME OF THIS TEST AVOIDS THE WORD `scripts/check-overview-scope.sh` FORBIDS. That guard
+// rejects the capitalised token — the name of the generated queries — in any `.go` outside
+// `internal/feature/overview/`. It is deliberately coarse: it catches a mention as readily as a
+// call. A file whose whole purpose is to forbid access to that surface was therefore rejected by
+// the rule it serves. The name and the comments only use the lowercase form of the HTTP path, and
+// the guard stays strict — relaxing it for a test would have opened the door to the contributor
+// who finds the query "handy".
 //
-// POURQUOI UN SCAN DE SOURCE ET PAS UN PARCOURS DE `tools()`. `toolDef` ne porte pas de chemin
-// HTTP : celui-ci est choisi dans le corps des appels (mcp_call.go, mcp_task_tools.go,
-// mcp_issue_tools.go). Il n'existe donc aucune table à parcourir, et le seul lien mécanique
-// possible est le texte du paquet.
+// WHY A SOURCE SCAN AND NOT A WALK OVER `tools()`. `toolDef` carries no HTTP path: the path is
+// chosen inside the call bodies (mcp_call.go, mcp_task_tools.go, mcp_issue_tools.go). There is
+// therefore no table to walk, and the only mechanical link available is the package's own text.
 //
-// `scripts/check-overview-scope.sh` NE COUVRE PAS CE CAS : il refuse le nom des queries
-// générées, qui est capitalisé. La chaîne `"/api/overview"` est en minuscules et lui échappe
-// entièrement.
+// `scripts/check-overview-scope.sh` DOES NOT COVER THIS CASE: it rejects the name of the generated
+// queries, which is capitalised. The string `"/api/overview"` is lowercase and escapes it entirely.
 
 import (
 	"os"
@@ -35,14 +33,31 @@ import (
 	"testing"
 )
 
-// MUTATION : ajouter un outil `team_overview` qui appelle `/api/overview` → ce test rouge.
+// supervisionDoor is the ONLY file allowed to write the path of the team-wide surface.
+//
+// WHY AN EXCEPTION, AND WHY IT PIERCES NOTHING. The `flowlio watch` and `flowlio show` screens are
+// built for the HUMAN supervising their team, with their admin token, in their terminal. They live
+// in the same binary as the MCP server, but not on the same surface: the agent only ever sees
+// `tools()`, locked to eight entries by the next test.
+//
+// What the exception does NOT excuse: an MCP file calling those screens sideways. That is what the
+// second scan below is for — without it, the exception would be worked around in one line,
+// `runWatch` called from some "handy" tool.
+const supervisionDoor = "watch.go"
+
+// MUTATION: add a `team_overview` tool calling `/api/overview` → this test goes red.
+// MUTATION: call `runWatch` from any `mcp_*.go` → this test goes red.
 func TestMCPToolsNeverReachTheTeamWideSurface(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("lecture du paquet: %v", err)
+		t.Fatalf("reading the package: %v", err)
 	}
 
-	scannés := 0
+	// The ways into the team-wide surface, as an MCP file would write them if it wanted to hook
+	// itself on: the path itself, the constant carrying it, and both commands.
+	forbiddenToMCP := []string{"/api/overview", "overviewAPI", "runWatch", "runShow"}
+
+	scanned, doorSeen := 0, false
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -51,31 +66,52 @@ func TestMCPToolsNeverReachTheTeamWideSurface(t *testing.T) {
 
 		source, err := os.ReadFile(filepath.Clean(name))
 		if err != nil {
-			t.Fatalf("lecture de %s: %v", name, err)
+			t.Fatalf("reading %s: %v", name, err)
 		}
-		scannés++
+		scanned++
+
+		if name == supervisionDoor {
+			doorSeen = true
+			continue
+		}
+
+		if strings.HasPrefix(name, "mcp") {
+			for _, forbidden := range forbiddenToMCP {
+				if strings.Contains(string(source), forbidden) {
+					t.Errorf("%s mentions %q — the MCP server does not hook itself onto the "+
+						"supervision surface, not even through the CLI", name, forbidden)
+				}
+			}
+			continue
+		}
 
 		if strings.Contains(string(source), "/api/overview") {
-			t.Errorf("%s atteint /api/overview — la surface de supervision est team-scopée, "+
-				"aucun binaire d'agent ne doit pouvoir la lire", name)
+			t.Errorf("%s reaches /api/overview — the supervision surface is team-scoped, and it "+
+				"enters this package through %s only", name, supervisionDoor)
 		}
 	}
 
-	// Sans ce garde, un test qui ne scannerait plus aucun fichier — répertoire déplacé, suffixe
-	// changé — passerait pour vert en ne vérifiant rien.
-	if scannés == 0 {
-		t.Fatal("aucun fichier source scanné : ce test ne mesure plus rien")
+	// Without this guard, a test that no longer scanned any file — directory moved, suffix changed
+	// — would pass for green while checking nothing.
+	if scanned == 0 {
+		t.Fatal("no source file scanned: this test no longer measures anything")
+	}
+
+	// An exception matching no file is an exception that outlived what it protected: it would then
+	// allow a future `watch.go` without anyone having decided so.
+	if !doorSeen {
+		t.Fatalf("%s is gone: drop the exception instead of leaving it open", supervisionDoor)
 	}
 }
 
-// La liste des outils est écrite ICI, à la main. Un outil ajouté sans être ajouté à cette liste
-// rend ce test rouge — y compris un outil qui n'appellerait pas `/api/overview` mais élargirait
-// la surface MCP, qui se paie dans le contexte de l'agent à CHAQUE tour.
+// The tool list is written HERE, by hand. A tool added without being added to this list turns this
+// test red — including a tool that would not call `/api/overview` but would widen the MCP surface,
+// which is paid for in the agent's context on EVERY turn.
 //
-// C'est le second bout de la garantie : le scan ci-dessus attrape le chemin, celui-ci attrape
-// l'outil.
+// This is the second half of the guarantee: the scan above catches the path, this one catches the
+// tool.
 func TestMCPToolSurfaceIsClosed(t *testing.T) {
-	attendus := map[string]bool{
+	expected := map[string]bool{
 		"list_tasks":   true,
 		"get":          true,
 		"create_task":  true,
@@ -86,16 +122,16 @@ func TestMCPToolSurfaceIsClosed(t *testing.T) {
 		"check_inbox":  true,
 	}
 
-	déclarés := tools()
-	if len(déclarés) != len(attendus) {
-		t.Errorf("tools() expose %d outils, %d attendus — la surface MCP a changé sans que ce "+
-			"fichier suive", len(déclarés), len(attendus))
+	declared := tools()
+	if len(declared) != len(expected) {
+		t.Errorf("tools() exposes %d tools, %d expected — the MCP surface changed without this "+
+			"file following", len(declared), len(expected))
 	}
 
-	for _, tool := range déclarés {
-		if !attendus[tool.Name] {
-			t.Errorf("outil inattendu: %q — tout ajout à la surface MCP se paie à chaque tour "+
-				"de chaque session", tool.Name)
+	for _, tool := range declared {
+		if !expected[tool.Name] {
+			t.Errorf("unexpected tool: %q — every addition to the MCP surface is paid for on "+
+				"every turn of every session", tool.Name)
 		}
 	}
 }

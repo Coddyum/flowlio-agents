@@ -4,10 +4,10 @@ package main
 //
 // | Élément   | Résumé                                                              | Ligne |
 // |-----------|---------------------------------------------------------------------|-------|
-// | main      | Point d'entrée de la CLI : dispatch et code de sortie                 | 29    |
-// | run       | Route la commande demandée vers son implémentation                    | 37    |
-// | usage     | Affiche l'aide                                                        | 72    |
-// | newClient | Construit le client API à partir des identifiants locaux ou de l'env  | 111   |
+// | main      | Point d'entrée de la CLI : dispatch et code de sortie                 | 33    |
+// | run       | Route la commande demandée vers son implémentation                    | 46    |
+// | usage     | Affiche l'aide                                                        | 85    |
+// | newClient | Construit le client API à partir des identifiants locaux ou de l'env  | 130   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -26,9 +26,18 @@ import (
 )
 
 // main délègue à run et traduit l'erreur en code de sortie : un seul endroit décide du statut.
+//
+// The general case is 1. A command needing another status carries it in an `exitError`
+// (`watch.go`) instead of calling os.Exit itself: os.Exit unwinds no defer, and the day a command
+// registers one, a call buried in a sub-function would be impossible to find.
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "flowlio: %v\n", err)
+
+		var exit *exitError
+		if errors.As(err, &exit) {
+			os.Exit(exit.code)
+		}
 		os.Exit(1)
 	}
 }
@@ -57,6 +66,10 @@ func run(args []string) error {
 		return runTrust(ctx, args[1:])
 	case "task":
 		return runTask(ctx, args[1:])
+	case "watch":
+		return runWatch(ctx, args[1:])
+	case "show":
+		return runShow(ctx, args[1:])
 	case "mcp":
 		return runMCP(ctx, args[1:])
 	case "help", "-h", "--help":
@@ -70,39 +83,45 @@ func run(args []string) error {
 
 // usage affiche l'aide de la CLI.
 func usage() {
-	fmt.Print(`flowlio — gestion de projets pour agents IA
+	fmt.Print(`flowlio — project management for AI agents
 
-Usage :
-  flowlio init --team <slug> --project <KEY> [--team-name <nom>] [--project-name <nom>]
-      Prépare une team, un projet et un token d'agent en une commande.
+Usage:
+  flowlio init --team <slug> --project <KEY> [--team-name <name>] [--project-name <name>]
+      Sets up a team, a project and an agent token in one command.
 
-  flowlio whoami                       Identité du token courant
-  flowlio team create <slug> <nom>     Crée une team
-  flowlio team list                    Liste les teams
-  flowlio project create <KEY> <nom>   Crée un projet dans la team
-  flowlio project list                 Liste les projets de la team
-  flowlio token create <KEY> <nom>     Émet un token d'agent pour un projet
-  flowlio token list <KEY>             Liste les tokens d'un projet
-  flowlio token revoke <id>            Révoque un token
+  flowlio whoami                       Identity of the current token
+  flowlio team create <slug> <name>    Creates a team
+  flowlio team list                    Lists the teams
+  flowlio project create <KEY> <name>  Creates a project inside the team
+  flowlio project list                 Lists the team's projects
+  flowlio token create <KEY> <name>    Issues an agent token for a project
+  flowlio token list <KEY>             Lists a project's tokens
+  flowlio token revoke <id>            Revokes a token
 
-  flowlio trust list                   Quelles paires de projets peuvent s'écrire
-  flowlio trust allow <A> <B>          Ouvre le canal d'issues entre deux projets
-  flowlio trust deny <A> <B>           Le referme (n'affecte pas les fils ouverts)
+  flowlio trust list                   Which project pairs may write to each other
+  flowlio trust allow <A> <B>          Opens the issue channel between two projects
+  flowlio trust deny <A> <B>           Closes it again (open threads are untouched)
 
-  flowlio task list [--status s]       Backlog du projet du token
-  flowlio task show <CLÉ>              Une tâche et son fil de notes
-  flowlio task create <titre>          Ouvre une tâche
-  flowlio task status <CLÉ> <statut>   todo | in_progress | blocked | done
-  flowlio task note <CLÉ> <texte>      Ajoute une note de progression
-  flowlio task archive <CLÉ>           Sort la tâche du backlog actif
+  flowlio task list [--status s]       Backlog of the token's own project
+  flowlio task show <KEY>              One task and its note thread
+  flowlio task create <title>          Opens a task
+  flowlio task status <KEY> <status>   todo | in_progress | blocked | done
+  flowlio task note <KEY> <text>       Appends a progress note
+  flowlio task archive <KEY>           Drops the task out of the active backlog
 
-  flowlio mcp                          Serveur MCP sur stdio, pour un agent
+  flowlio watch [--follow]             The team's debt queue — empty means all is well
+  flowlio show <REF>                   Detail of one row of the queue (e.g. CORE-41)
 
-Options communes :
-  --team <slug>   Team visée (obligatoire avec un token admin)
+  flowlio mcp                          MCP server over stdio, for an agent
 
-Environnement :
-  FLOWLIO_API_URL, FLOWLIO_TOKEN  Priment sur le fichier d'identifiants local
+Common options:
+  --team <slug>   Target team (required with an admin token)
+
+Exit status:
+  0  the command succeeded    1  error    2  non-admin token on watch/show
+
+Environment:
+  FLOWLIO_API_URL, FLOWLIO_TOKEN  Take precedence over the local credentials file
 `)
 }
 
