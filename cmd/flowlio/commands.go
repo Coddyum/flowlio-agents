@@ -30,7 +30,7 @@ const workspaceAPI = "/api/workspace"
 // teamFlag déclare l'option --team, obligatoire avec un token admin, ignorée avec un token de
 // projet qui est de toute façon enfermé dans sa team.
 func teamFlag(fs *flag.FlagSet) *string {
-	return fs.String("team", "", "slug de la team (obligatoire avec un token admin)")
+	return fs.String("team", "", "target team slug (required with an admin token)")
 }
 
 // teamQuery construit le paramètre de requête correspondant.
@@ -57,12 +57,12 @@ func runWhoami(ctx context.Context, _ []string) error {
 	}
 
 	if out.TeamSlug == "" {
-		fmt.Printf("portée : %s (aucune team)\n", out.Scope)
+		fmt.Printf("scope:   %s (no team)\n", out.Scope)
 		return nil
 	}
-	fmt.Printf("portée : %s\nteam   : %s (%s)\n", out.Scope, out.TeamSlug, out.TeamName)
+	fmt.Printf("scope:   %s\nteam:    %s (%s)\n", out.Scope, out.TeamSlug, out.TeamName)
 	if out.ProjectKey != "" {
-		fmt.Printf("projet : %s (%s)\n", out.ProjectKey, out.ProjectName)
+		fmt.Printf("project: %s (%s)\n", out.ProjectKey, out.ProjectName)
 	}
 	return nil
 }
@@ -70,7 +70,7 @@ func runWhoami(ctx context.Context, _ []string) error {
 // runTeam gère la création et le listing des teams.
 func runTeam(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: flowlio team create <slug> <nom> | flowlio team list")
+		return errors.New("usage: flowlio team create <slug> <name> | flowlio team list")
 	}
 
 	c, err := newClient()
@@ -81,14 +81,14 @@ func runTeam(ctx context.Context, args []string) error {
 	switch args[0] {
 	case "create":
 		if len(args) < 3 {
-			return errors.New("usage: flowlio team create <slug> <nom>")
+			return errors.New("usage: flowlio team create <slug> <name>")
 		}
 		var team service.Team
 		in := service.CreateTeamInput{Slug: args[1], Name: args[2]}
 		if err := c.Do(ctx, http.MethodPost, workspaceAPI+"/teams", in, &team); err != nil {
 			return err
 		}
-		fmt.Printf("team créée : %s (%s)\n", team.Slug, team.Name)
+		fmt.Printf("team created: %s (%s)\n", team.Slug, team.Name)
 		return nil
 
 	case "list":
@@ -102,14 +102,14 @@ func runTeam(ctx context.Context, args []string) error {
 		return nil
 
 	default:
-		return fmt.Errorf("sous-commande team inconnue: %s", args[0])
+		return fmt.Errorf("unknown team subcommand: %s", args[0])
 	}
 }
 
 // runProject gère la création et le listing des projets d'une team.
 func runProject(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: flowlio project create <KEY> <nom> | flowlio project list")
+		return errors.New("usage: flowlio project create <KEY> <name> | flowlio project list")
 	}
 
 	fs := flag.NewFlagSet("project", flag.ContinueOnError)
@@ -130,14 +130,14 @@ func runProject(ctx context.Context, args []string) error {
 	switch sub {
 	case "create":
 		if len(positional) < 2 {
-			return errors.New("usage: flowlio project create <KEY> <nom> [--team slug]")
+			return errors.New("usage: flowlio project create <KEY> <name> [--team slug]")
 		}
 		var project service.Project
 		in := service.CreateProjectInput{Key: positional[0], Name: positional[1]}
 		if err := c.Do(ctx, http.MethodPost, workspaceAPI+"/projects"+teamQuery(*team), in, &project); err != nil {
 			return err
 		}
-		fmt.Printf("projet créé : %s (%s)\n", project.Key, project.Name)
+		fmt.Printf("project created: %s (%s)\n", project.Key, project.Name)
 		return nil
 
 	case "list":
@@ -151,14 +151,14 @@ func runProject(ctx context.Context, args []string) error {
 		return nil
 
 	default:
-		return fmt.Errorf("sous-commande project inconnue: %s", sub)
+		return fmt.Errorf("unknown project subcommand: %s", sub)
 	}
 }
 
 // runToken gère l'émission, le listing et la révocation des tokens d'agent.
 func runToken(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: flowlio token create <KEY> <nom> | list <KEY> | revoke <id>")
+		return errors.New("usage: flowlio token create <KEY> <name> | list <KEY> | revoke <id>")
 	}
 
 	fs := flag.NewFlagSet("token", flag.ContinueOnError)
@@ -178,7 +178,7 @@ func runToken(ctx context.Context, args []string) error {
 	switch sub {
 	case "create":
 		if len(positional) < 2 {
-			return errors.New("usage: flowlio token create <KEY> <nom> [--team slug]")
+			return errors.New("usage: flowlio token create <KEY> <name> [--team slug]")
 		}
 		in := service.CreateTokenInput{ProjectKey: positional[0], Name: positional[1]}
 		var created service.CreatedToken
@@ -203,9 +203,9 @@ func runToken(ctx context.Context, args []string) error {
 			return err
 		}
 		for _, t := range tokens {
-			state := "actif"
+			state := "active"
 			if t.Revoked {
-				state = "révoqué"
+				state = "revoked"
 			}
 			fmt.Printf("%s  %-20s %-8s %s\n", t.ID, t.Name, state, t.Prefix)
 		}
@@ -219,10 +219,10 @@ func runToken(ctx context.Context, args []string) error {
 		if err := c.Do(ctx, http.MethodDelete, path, nil, nil); err != nil {
 			return err
 		}
-		fmt.Println("token révoqué")
+		fmt.Println("token revoked")
 		return nil
 
 	default:
-		return fmt.Errorf("sous-commande token inconnue: %s", sub)
+		return fmt.Errorf("unknown token subcommand: %s", sub)
 	}
 }
