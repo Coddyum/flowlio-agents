@@ -1,3 +1,9 @@
+-- RÈGLE DE SCOPE DE CE FICHIER : team_id ET project_id, comme dans `tasks.sql`. C'est la première
+-- des deux règles du dépôt ; la seconde — team_id SEUL, en lecture, derrière AdminOnly — vit
+-- exclusivement dans `overview.sql`. Aucune query team-seule n'entre ici. Tableau complet des
+-- quatre situations (dont `projects.sql` et `teams.sql`, hors des deux règles) :
+-- docs/ARCHITECTURE.md § Les deux règles de scope.
+--
 -- Le scope est DANS la query, sans exception. La clause de visibilité canonique est
 --   team_id = @team_id AND (project_id = @project_id OR author_project_id = @project_id)
 -- où @project_id vient EXCLUSIVEMENT de Principal.ProjectID. `team_id` y figure toujours, même

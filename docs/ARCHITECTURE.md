@@ -123,6 +123,41 @@ La règle qui rend ce partage sûr : **toute query porte son scope de tenancy**,
 feature qui l'écrit. Une query partagée qui prendrait un identifiant nu serait une faille pour
 toutes les features à la fois, pas seulement pour la sienne.
 
+### Les deux règles de scope du dépôt
+
+Depuis `overview`, « porter son scope » ne veut plus dire une seule chose. Le dépôt en compte
+**deux**, et une relecture qui les confond laisse passer exactement la faille qu'elle cherchait.
+
+| | Règle A — projet | Règle B — team |
+| --- | --- | --- |
+| Prédicat | `team_id = @team_id AND project_id = @project_id` | `team_id = @team_id` **seul** |
+| Où | `tasks.sql`, `issues.sql`, `inbox.sql`, `trust.sql`, et les queries de token projet de `tokens.sql` | `overview.sql` |
+| Sens du `team_id` | vient du principal (`Principal.TeamID`) | vient d'une **résolution serveur** du slug `?team=` (`OverviewTeamBySlug`), jamais d'un UUID client |
+| Écriture | autorisée | **interdite** — lecture seule, vérifié par `scripts/check-overview-scope.sh` dans `make lint` |
+| Gate | `requireProjectScope` | `AdminOnly` |
+| Exposée en MCP | oui | **non** — un agent qui lit l'état de sa team détruit la promesse d'isolation |
+
+Les deux règles ne se voisinent pas dans un même fichier de queries : une query team-seule et une
+query projet-scopée sur les mêmes tables est la configuration où le copier-coller fuit (décision
+M3 #24). Chaque fichier porte sa règle en tête, donc un lecteur qui ouvre `overview.sql` sans
+contexte comprend l'absence de `project_id` sans ouvrir un autre fichier.
+
+**Deux fichiers ne relèvent d'aucune des deux règles, et c'est délibéré :**
+
+| Fichier | Ce qu'il porte | Pourquoi ce n'est pas la règle B |
+| --- | --- | --- |
+| `projects.sql` | `team_id` seul, **sans `AdminOnly`** | C'est l'annuaire de la team, lisible par un token de projet : métadonnées uniquement (clé, nom), acté dans [DESIGN-V1](DESIGN-V1.md) § Isolation. Faut-il le filtrer davantage ? Question ouverte, carte FLWL-44. |
+| `teams.sql` | **aucun prédicat de tenancy** | `GET /teams` énumère toutes les teams de l'installation. Sans conséquence en mode `local` — un humain, un token admin — et **bloquant de M7** (n° 2 de la carte FLWL-9) le jour où l'installation est partagée. |
+
+Écrire une query dans l'un de ces deux fichiers demande donc de savoir laquelle des quatre
+situations on est en train de reproduire. C'est précisément la raison de ce tableau.
+
+Ce que ça vaut, mesuré et non affirmé : `internal/feature/matrix_integration_test.go`
+(`TestScopeRouteMatrix`) monte les cinq modules sur leurs vrais stores et couvre trois principaux
+— projet, admin, aucun — contre les cinq préfixes de routes. Un `requireProjectScope` qui
+accepterait `|| p.IsAdmin()`, ou un `AdminOnly` qui accepterait un scope projet, fait tomber une
+case.
+
 Contrainte de verrouillage à ne pas casser : `ClaimNextNumber` ne doit jamais écrire une colonne
 de clé. Tant que c'est vrai, Postgres prend un `FOR NO KEY UPDATE`, compatible avec le
 `FOR KEY SHARE` que l'insertion d'une issue pose sur ses deux projets parents — sinon deux agents

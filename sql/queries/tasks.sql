@@ -1,6 +1,16 @@
--- Toute lecture et toute écriture porte team_id ET project_id : le scope est DANS la query.
--- Une tâche d'un autre projet est introuvable, pas seulement interdite — et il n'existe aucune
--- query de tâche sans scope, donc aucun appelant ne peut en oublier un.
+-- RÈGLE DE SCOPE DE CE FICHIER : team_id ET project_id, sur toute lecture comme sur toute
+-- écriture. Le scope est DANS la query. Une tâche d'un autre projet est introuvable, pas
+-- seulement interdite, et aucune query de CE fichier ne s'en dispense — donc aucun appelant ne
+-- peut en oublier un.
+--
+-- Le dépôt porte DEUX règles de scope, et c'est ici la première. La seconde — team_id SEUL, en
+-- lecture, derrière AdminOnly — vit exclusivement dans `overview.sql`, qui porte sa règle inverse
+-- en tête. Une query team-seule n'a rien à faire dans ce fichier : voisiner les deux formes sur
+-- les mêmes tables est la configuration exacte où un copier-coller fuit.
+--
+-- (Deux fichiers ne relèvent d'aucune des deux règles : `projects.sql`, team-seul mais SANS
+-- AdminOnly parce que c'est l'annuaire de la team, et `teams.sql`, sans aucun prédicat de
+-- tenancy. Le tableau complet est dans docs/ARCHITECTURE.md § Les deux règles de scope.)
 
 -- name: CreateTask :one
 INSERT INTO tasks (team_id, project_id, number, title, body_md, status, priority, deadline)

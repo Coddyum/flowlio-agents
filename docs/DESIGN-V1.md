@@ -52,6 +52,30 @@ Un token d'agent est scopé à **un projet**, dans une team.
 Le filtrage `team_id` + `project_id` est appliqué **dans le store**, jamais seulement dans le
 handler : une query sans scope est un bug de sécurité, pas un oubli d'UI.
 
+### La seconde règle de scope, depuis `overview`
+
+Le module `overview` a introduit une **deuxième** forme de portée : `team_id` **seul**, en lecture,
+derrière `AdminOnly`. Elle ne remplace pas la première, elle coexiste avec — c'est la configuration
+où une relecture se trompe, donc les deux règles sont nommées et opposées dans
+[ARCHITECTURE.md](ARCHITECTURE.md) § Les deux règles de scope.
+
+Ce qui la rend tenable :
+
+- **Un seul fichier de queries la porte** (`sql/queries/overview.sql`), qui déclare sa règle
+  inverse en tête. L'ensemble des requêtes capables de traverser les projets est énumérable en un
+  `cat`.
+- **Lecture seule, vérifié mécaniquement** — `scripts/check-overview-scope.sh`, dans `make lint`.
+- **Le `team_id` ne vient jamais du client** : il est résolu côté serveur depuis le slug `?team=`
+  (`OverviewTeamBySlug`), jamais accepté en UUID.
+- **Rien de tout ça n'est exposé en MCP.** Un agent qui lirait l'état de sa team détruirait la
+  promesse d'isolation du produit, en lecture, sans qu'aucun test de tenancy ne tombe.
+
+La séparation des deux règles est tenue par un test, pas par une intention :
+`internal/feature/matrix_integration_test.go` (`TestScopeRouteMatrix`) monte les cinq modules sur
+leurs vrais stores et croise trois principaux — projet, admin, aucun — avec les cinq préfixes de
+routes. Un `requireProjectScope` qui accepterait `|| p.IsAdmin()`, ou un `AdminOnly` qui
+accepterait un scope projet, fait tomber une case.
+
 ## Modes de déploiement
 
 | Mode     | Auth                                                    | Billing |
