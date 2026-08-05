@@ -4,10 +4,10 @@ package handler
 //
 // | Élément             | Résumé                                                   | Ligne |
 // |---------------------|----------------------------------------------------------|-------|
-// | Handler.CreateIssue | Ouvre une question vers un projet frère                    | 23    |
-// | Handler.ListIssues  | Liste les issues visibles par le projet du token           | 47    |
-// | Handler.GetIssue    | Une issue et la fin de son fil                             | 75    |
-// | Handler.Answer      | Ajoute un message au fil, et clôt si demandé               | 94    |
+// | Handler.CreateIssue | Opens a question towards a sibling project                 | 23    |
+// | Handler.ListIssues  | Lists the issues visible to the token's project            | 47    |
+// | Handler.GetIssue    | An issue and the tail of its thread                        | 75    |
+// | Handler.Answer      | Appends a message to the thread, closing it if asked       | 94    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -19,7 +19,7 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue/service"
 )
 
-// CreateIssue ouvre une question vers un projet frère de la même team.
+// CreateIssue opens a question towards a sibling project of the same team.
 func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	teamID, projectID, ok := h.scope(w, r)
 	if !ok {
@@ -42,8 +42,8 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusCreated, issue)
 }
 
-// ListIssues liste les issues visibles par le projet du token : celles qu'il a ouvertes et
-// celles qui lui sont adressées.
+// ListIssues lists the issues visible to the token's project: the ones it opened and the ones
+// addressed to it.
 func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	teamID, projectID, ok := h.scope(w, r)
 	if !ok {
@@ -58,7 +58,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		State:         query.Get("state"),
 		IncludeClosed: query.Get("closed") == "true",
 	}
-	// Une limite illisible est ignorée plutôt que refusée : le service borne ensuite la valeur.
+	// An unreadable limit is ignored rather than rejected: the service bounds the value afterwards.
 	if limit, err := strconv.Atoi(query.Get("limit")); err == nil {
 		in.Limit = limit
 	}
@@ -71,7 +71,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, issues)
 }
 
-// GetIssue renvoie une issue et la fin de son fil.
+// GetIssue returns an issue and the tail of its thread.
 func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	teamID, projectID, ok := h.scope(w, r)
 	if !ok {
@@ -90,7 +90,7 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, detail)
 }
 
-// Answer ajoute un message au fil d'une issue, et la clôt si demandé.
+// Answer appends a message to an issue's thread, and closes it if asked.
 func (h *Handler) Answer(w http.ResponseWriter, r *http.Request) {
 	teamID, projectID, ok := h.scope(w, r)
 	if !ok {

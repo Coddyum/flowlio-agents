@@ -4,8 +4,8 @@ package store
 //
 // | Élément               | Résumé                                                  | Ligne |
 // |-----------------------|---------------------------------------------------------|-------|
-// | store.AddFirstMessage | Écrit le message qui ouvre le fil d'une issue             | 25    |
-// | store.ListMessages    | Lit le fil, scopé par jointure sur son issue              | 38    |
+// | store.AddFirstMessage | Writes the message that opens an issue's thread           | 25    |
+// | store.ListMessages    | Reads the thread, scoped by the join on its issue         | 38    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -17,11 +17,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// AddFirstMessage écrit le message qui ouvre le fil.
+// AddFirstMessage writes the message that opens the thread.
 //
-// Il n'est pas scopé par une clause de visibilité, contrairement à tous les autres accès : il
-// n'est appelé qu'immédiatement après CreateIssue, dans la même transaction, sur l'identifiant
-// que celle-ci vient de produire. Le scope a déjà été appliqué à l'insertion de l'issue.
+// It is not scoped by a visibility clause, unlike every other access: it is only ever called
+// immediately after CreateIssue, in the same transaction, on the identifier that call just
+// produced. The scope was already applied when the issue was inserted.
 func (s *store) AddFirstMessage(ctx context.Context, issueID, authorProjectID uuid.UUID, body string) error {
 	_, err := s.q.AppendFirstMessage(ctx, database.AppendFirstMessageParams{
 		IssueID:         issueID,
@@ -31,18 +31,19 @@ func (s *store) AddFirstMessage(ctx context.Context, issueID, authorProjectID uu
 	return translate(err, "append first message")
 }
 
-// ListMessages rend la fin du fil d'une issue — au plus limit messages — et le nombre total écrit.
+// ListMessages returns the tail of an issue's thread — at most limit messages — and the total
+// number written.
 //
-// La query joint l'issue et y applique la clause de visibilité : impossible de lire les messages
-// d'une issue qu'on ne voit pas, même en connaissant son identifiant interne.
+// The query joins the issue and applies the visibility clause to it: reading the messages of an
+// issue one cannot see is impossible, even knowing its internal identifier.
 //
-// La query rend les messages du plus RÉCENT au plus ancien, parce que c'est la fin du fil qui
-// porte l'état ; ils sont remis ici dans l'ordre d'écriture, qui est celui dans lequel une
-// conversation se lit. Inverser au retour plutôt que dans le SQL garde la borne et le tri au même
-// endroit, où ils se lisent ensemble.
+// The query returns the messages from the MOST RECENT to the oldest, because it is the tail of the
+// thread that carries the state; they are put back here in write order, which is how a conversation
+// is read. Reversing on the way out rather than in the SQL keeps the bound and the sort in the same
+// place, where they are read together.
 //
-// Un fil vide rend un total de zéro : la ligne de comptage n'existe pas quand aucune ligne ne
-// sort, et il n'y a rien à en déduire d'autre.
+// An empty thread returns a total of zero: the counting row does not exist when no row comes out,
+// and there is nothing else to deduce from it.
 func (s *store) ListMessages(ctx context.Context, ref Ref, issueID uuid.UUID, limit int32) ([]Message, int, error) {
 	rows, err := s.q.ListIssueMessages(ctx, database.ListIssueMessagesParams{
 		TeamID:          ref.TeamID,

@@ -1,11 +1,11 @@
 package handler
 
-// Ce que ce fichier verrouille : la borne de TRANSPORT reste au-dessus de la borne de CHAMP.
+// What this file locks down: the TRANSPORT bound stays above the FIELD bound.
 //
-// Ce sont deux garde-fous différents — `maxBodyBytes` protège le serveur, `service.MaxBodyLen`
-// protège le domaine — et le second n'a de sens que si le premier le laisse s'exprimer. Quand ils
-// ont divergé, un corps DANS sa borne était refusé au transport, avec `http: request body too
-// large` pour seule explication : ni le champ en cause, ni la borne dépassée.
+// These are two different guardrails — `maxBodyBytes` protects the server, `service.MaxBodyLen`
+// protects the domain — and the second only means something if the first lets it speak. When they
+// drifted apart, a body WITHIN its bound was rejected at transport, with `http: request body too
+// large` as its only explanation: neither the field at fault, nor the bound crossed.
 
 import (
 	"bytes"
@@ -18,21 +18,21 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue/service"
 )
 
-// Le plus grand corps que le service accepte doit franchir le transport, échappement JSON compris.
+// The largest body the service accepts must make it through transport, JSON escaping included.
 //
-// Le cas qui casse n'est pas le texte long, c'est le texte ÉCHAPPÉ : 64 KiB de guillemets pèsent
-// 131 294 octets une fois encodés (chaque `"` devient `\"`), contre 131 072 autorisés avant ce
-// correctif. Mesuré, pas supposé.
+// The case that breaks is not the long text, it is the ESCAPED text: 64 KiB of quotes weigh 131,294
+// bytes once encoded (every `"` becomes `\"`), against 131,072 allowed before this fix. Measured,
+// not assumed.
 //
-// MUTATION : ramener maxBodyBytes à `128 << 10` fait tomber ce test.
+// MUTATION: bringing maxBodyBytes back to `128 << 10` makes this test fail.
 func TestLargestAcceptedBodyFitsInOneRequest(t *testing.T) {
-	cas := map[string]string{
-		"texte nu":             strings.Repeat("a", service.MaxBodyLen),
-		"texte tout échappé":   strings.Repeat(`"`, service.MaxBodyLen),
-		"caractères de retour": strings.Repeat("\n", service.MaxBodyLen),
+	cases := map[string]string{
+		"bare text":          strings.Repeat("a", service.MaxBodyLen),
+		"fully escaped text": strings.Repeat(`"`, service.MaxBodyLen),
+		"newline characters": strings.Repeat("\n", service.MaxBodyLen),
 	}
 
-	for name, body := range cas {
+	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			payload, err := json.Marshal(map[string]any{
 				"to_project": "CORE",
@@ -40,38 +40,39 @@ func TestLargestAcceptedBodyFitsInOneRequest(t *testing.T) {
 				"body":       body,
 			})
 			if err != nil {
-				t.Fatalf("encodage de la charge: %v", err)
+				t.Fatalf("encoding the payload: %v", err)
 			}
 
 			req := httptest.NewRequest(http.MethodPost, "/api/issue/", bytes.NewReader(payload))
 			var in service.CreateIssueInput
 			if err := New(nil).decodeBody(httptest.NewRecorder(), req, &in); err != nil {
-				t.Fatalf("charge de %d octets refusée alors que le corps est dans sa borne (%d): %v",
+				t.Fatalf("a %d-byte payload was rejected although the body is within its bound (%d): %v",
 					len(payload), service.MaxBodyLen, err)
 			}
 			if len(in.Body) != service.MaxBodyLen {
-				t.Errorf("corps reçu de %d octets, attendu %d", len(in.Body), service.MaxBodyLen)
+				t.Errorf("body received of %d bytes, want %d", len(in.Body), service.MaxBodyLen)
 			}
 		})
 	}
 }
 
-// Au-delà du garde-fou, le message doit nommer la borne — sinon l'appelant réessaie à l'identique.
+// Past the guardrail, the message must name the bound — otherwise the caller retries the very same
+// call.
 //
-// MUTATION : rendre `errors.Join(service.ErrInvalidInput, err)` sur ce chemin fait tomber ce test.
+// MUTATION: returning `errors.Join(service.ErrInvalidInput, err)` on that path makes this test fail.
 func TestOversizedBodySaysWhichLimitWasHit(t *testing.T) {
 	payload, err := json.Marshal(map[string]any{"body": strings.Repeat("a", 16*service.MaxBodyLen)})
 	if err != nil {
-		t.Fatalf("encodage de la charge: %v", err)
+		t.Fatalf("encoding the payload: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/issue/", bytes.NewReader(payload))
 	var in service.CreateIssueInput
 	err = New(nil).decodeBody(httptest.NewRecorder(), req, &in)
 	if err == nil {
-		t.Fatalf("une charge de %d octets doit être refusée", len(payload))
+		t.Fatalf("a %d-byte payload must be rejected", len(payload))
 	}
 	if !strings.Contains(err.Error(), "65536") {
-		t.Errorf("le message ne nomme pas la borne du corps: %v", err)
+		t.Errorf("the message does not name the body bound: %v", err)
 	}
 }

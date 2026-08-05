@@ -4,8 +4,8 @@ package service
 //
 // | Élément         | Résumé                                                       | Ligne |
 // |-----------------|--------------------------------------------------------------|-------|
-// | service.Answer  | Ajoute un message au fil et applique la transition d'état      | 29    |
-// | kindFor         | Nomme l'événement d'après l'état atteint                       | 73    |
+// | service.Answer  | Appends a message to the thread and applies the transition     | 29    |
+// | kindFor         | Names the event after the state reached                        | 73    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -17,15 +17,15 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 )
 
-// Answer ajoute un message au fil et, si demandé, clôt l'issue.
+// Answer appends a message to the thread and, when asked, closes the issue.
 //
-// L'état résultant n'est PAS choisi par l'appelant : il est déduit en base de son rôle dans la
-// conversation — le destinataire qui parle passe l'issue en `answered`, l'auteur qui relance la
-// remet en `open`. Un agent ne peut donc pas prétendre avoir répondu à sa propre question.
+// The resulting state is NOT chosen by the caller: it is deduced in the database from its role in
+// the conversation — the recipient speaking moves the issue to `answered`, the author following up
+// puts it back to `open`. An agent therefore cannot claim to have answered its own question.
 //
-// Répondre à une issue close est refusé : sans ce garde, une réponse tardive ressusciterait une
-// discussion terminée dans l'inbox du correspondant. Le refus remonte ErrNotFound, comme une
-// issue hors de portée — les deux cas restent indiscernables.
+// Answering a closed issue is refused: without that guard, a late reply would resurrect a finished
+// discussion in the correspondent's inbox. The refusal yields ErrNotFound, like an issue out of
+// reach — the two cases stay indistinguishable.
 func (s *service) Answer(ctx context.Context, in AnswerInput) (Issue, error) {
 	if err := validateScope(in.Ref.TeamID, in.Ref.CallerProjectID); err != nil {
 		return Issue{}, err
@@ -59,7 +59,7 @@ func (s *service) Answer(ctx context.Context, in AnswerInput) (Issue, error) {
 			ActorProjectID: in.Ref.CallerProjectID,
 			Kind:           kindFor(answered.State),
 			SubjectID:      answered.ID,
-		}), "événement de réponse")
+		}), "answer event")
 	})
 	if err != nil {
 		return Issue{}, err
@@ -68,8 +68,8 @@ func (s *service) Answer(ctx context.Context, in AnswerInput) (Issue, error) {
 	return toIssue(answered), nil
 }
 
-// kindFor nomme l'événement d'après l'état atteint. Le genre décrit ce qui s'est passé du point
-// de vue de celui qui sera prévenu, pas du point de vue de celui qui a écrit.
+// kindFor names the event after the state reached. The kind describes what happened from the point
+// of view of whoever will be told, not from that of whoever wrote.
 func kindFor(state string) string {
 	switch state {
 	case "closed":

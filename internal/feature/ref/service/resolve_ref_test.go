@@ -113,27 +113,26 @@ func TestOwnKeyAsksTheTaskModuleFirst(t *testing.T) {
 	}
 
 	if got.Kind != service.KindTask {
-		t.Errorf("kind = %q, attendu %q", got.Kind, service.KindTask)
+		t.Errorf("kind = %q, want %q", got.Kind, service.KindTask)
 	}
 	if got.Ref != "CORE-34" {
-		t.Errorf("ref = %q, attendu CORE-34", got.Ref)
+		t.Errorf("ref = %q, want CORE-34", got.Ref)
 	}
 	if string(got.Task) != `{"number":34}` {
-		t.Errorf("charge = %s, attendu celle du module task", got.Task)
+		t.Errorf("payload = %s, want the task module's", got.Task)
 	}
 	if issues.asked != 0 {
-		t.Errorf("le module issue a été interrogé %d fois alors que la tâche a répondu — "+
-			"c'est le second aller-retour que FLWL-16 supprime, redescendu d'un étage", issues.asked)
+		t.Errorf("the issue module was asked %d times although the task answered — "+
+			"this is the second round trip FLWL-16 removes, one floor down", issues.asked)
 	}
 }
 
-// LA GARDE QUI JUSTIFIE À ELLE SEULE QUE CETTE FEATURE AIT UN STORE.
+// THE GUARD THAT ON ITS OWN JUSTIFIES THIS FEATURE HAVING A STORE.
 //
-// MUTATION : retirer `if in.ProjectKey == ownKey` dans resolve_ref.go. Le module task serait
-// interrogé pour FRNT-34 et répondrait la tâche 34 de CORE — la requête est scopée sur le projet
-// du token, donc elle TROUVE quelque chose, et l'agent reçoit une tâche à lui sous une référence
-// qui nomme un frère. Rouge ici, et vert partout ailleurs : aucune autre assertion du dépôt
-// n'observe qui a été interrogé.
+// MUTATION: remove `if in.ProjectKey == ownKey` in resolve_ref.go. The task module would be asked
+// for FRNT-34 and would answer CORE's task 34 — the query is scoped to the token's project, so it
+// FINDS something, and the agent receives a task of its own under a reference naming a sibling. Red
+// here, and green everywhere else: no other assertion in the repo observes who was asked.
 func TestSiblingKeyNeverReachesTheTaskModule(t *testing.T) {
 	tasks := &peerDouble{body: json.RawMessage(`{"number":34}`)}
 	issues := &peerDouble{body: json.RawMessage(`{"ref":"FRNT-34"}`)}
@@ -144,21 +143,21 @@ func TestSiblingKeyNeverReachesTheTaskModule(t *testing.T) {
 	}
 
 	if tasks.asked != 0 {
-		t.Fatalf("le module task a été interrogé %d fois pour FRNT-34 — une tâche d'un projet "+
-			"frère n'est lisible par personne, et la query scopée sur MON projet aurait rendu MA "+
-			"tâche 34 sous la référence d'un autre", tasks.asked)
+		t.Fatalf("the task module was asked %d times for FRNT-34 — a sibling project's task is "+
+			"readable by nobody, and the query scoped to MY project would have returned MY task 34 "+
+			"under somebody else's reference", tasks.asked)
 	}
 	if got.Kind != service.KindIssue {
-		t.Errorf("kind = %q, attendu %q", got.Kind, service.KindIssue)
+		t.Errorf("kind = %q, want %q", got.Kind, service.KindIssue)
 	}
 	if issues.keySaw != "FRNT" {
-		t.Errorf("le module issue a reçu la clé %q, attendu FRNT — la clé de la référence doit "+
-			"voyager telle quelle, c'est le destinataire qui possède l'issue", issues.keySaw)
+		t.Errorf("the issue module received key %q, want FRNT — the reference's key must travel "+
+			"unchanged, it is the recipient that owns the issue", issues.keySaw)
 	}
 }
 
-// Le compteur est partagé : une référence de ma propre clé qui n'est pas une tâche est une issue
-// entrante. C'est le chemin que check_inbox alimente, donc le plus appelé du produit.
+// The counter is shared: a reference on my own key that is not a task is an incoming issue. This
+// is the path check_inbox feeds, hence the most-called one in the product.
 func TestOwnKeyFallsThroughToIssueWhenNoTask(t *testing.T) {
 	tasks := &peerDouble{err: module.ErrRefNotFound}
 	issues := &peerDouble{body: json.RawMessage(`{"ref":"CORE-12"}`)}
@@ -169,40 +168,40 @@ func TestOwnKeyFallsThroughToIssueWhenNoTask(t *testing.T) {
 	}
 
 	if tasks.asked != 1 || issues.asked != 1 {
-		t.Fatalf("task interrogé %d fois, issue %d fois — attendu une fois chacun", tasks.asked, issues.asked)
+		t.Fatalf("task asked %d times, issue %d times — want once each", tasks.asked, issues.asked)
 	}
 	if got.Kind != service.KindIssue {
-		t.Errorf("kind = %q, attendu %q", got.Kind, service.KindIssue)
+		t.Errorf("kind = %q, want %q", got.Kind, service.KindIssue)
 	}
 }
 
-// LE PIÈGE À NE PAS RÉINTRODUIRE, ÉNONCÉ PAR FLWL-16.
+// THE TRAP NOT TO REINTRODUCE, STATED BY FLWL-16.
 //
-// MUTATION : dans resolve_ref.go, remplacer la bascule conditionnelle par une bascule
-// inconditionnelle (`case err != nil: // essayer l'issue`). Une panne de base côté task
-// deviendrait alors un « introuvable » si l'issue ne répond rien non plus, et l'agent conclurait
-// que sa référence n'existe pas — sur une instance simplement en panne. Rouge ici.
+// MUTATION: in resolve_ref.go, replace the conditional fall-through with an unconditional one
+// (`case err != nil: // try the issue`). A database outage on the task side would then become a
+// "not found" if the issue answers nothing either, and the agent would conclude its reference does
+// not exist — on an instance that is simply down. Red here.
 func TestADefinitiveTaskErrorIsNotRetriedAsAnIssue(t *testing.T) {
-	panne := errors.New("connexion à la base perdue")
-	tasks := &peerDouble{err: panne}
+	outage := errors.New("database connection lost")
+	tasks := &peerDouble{err: outage}
 	issues := &peerDouble{body: json.RawMessage(`{"ref":"CORE-12"}`)}
 
 	_, err := resolve(t, storeDouble{key: ownKey}, registryDouble{tasks: tasks, issues: issues}, ownKey, 12)
 
-	if !errors.Is(err, panne) {
-		t.Errorf("erreur = %v, attendu la panne du module task remontée telle quelle", err)
+	if !errors.Is(err, outage) {
+		t.Errorf("error = %v, want the task module's outage carried up unchanged", err)
 	}
 	if issues.asked != 0 {
-		t.Error("le module issue a été interrogé après une panne du module task — une panne " +
-			"rejouée en issue se présente à l'agent comme une référence inexistante")
+		t.Error("the issue module was asked after a task module outage — an outage replayed as an " +
+			"issue presents itself to the agent as a non-existent reference")
 	}
 	if errors.Is(err, service.ErrNotFound) {
-		t.Error("la panne a été traduite en « introuvable » : l'appelant ne peut plus " +
-			"distinguer une instance cassée d'une référence qui n'existe pas")
+		t.Error("the outage was translated into \"not found\": the caller can no longer tell a " +
+			"broken instance from a reference that does not exist")
 	}
 }
 
-// Rien des deux côtés est un « introuvable » domaine, que le handler rend en 404 — jamais en 500.
+// Nothing on either side is a domain "not found", which the handler returns as a 404 — never a 500.
 func TestNothingAnywhereIsNotFound(t *testing.T) {
 	tasks := &peerDouble{err: module.ErrRefNotFound}
 	issues := &peerDouble{err: module.ErrRefNotFound}
@@ -210,23 +209,23 @@ func TestNothingAnywhereIsNotFound(t *testing.T) {
 	_, err := resolve(t, storeDouble{key: ownKey}, registryDouble{tasks: tasks, issues: issues}, ownKey, 99)
 
 	if !errors.Is(err, service.ErrNotFound) {
-		t.Errorf("erreur = %v, attendu service.ErrNotFound", err)
+		t.Errorf("error = %v, want service.ErrNotFound", err)
 	}
 }
 
-// Un pair absent du registre est une PANNE DE CÂBLAGE, jamais un « introuvable ».
+// A peer missing from the registry is a WIRING FAILURE, never a "not found".
 //
-// MUTATION : rendre `ErrNotFound` quand `registry.Get` échoue. Une ligne oubliée dans
-// buildModules ferait alors répondre « cette référence n'existe pas » à toutes les références du
-// produit, et l'instance passerait pour vide plutôt que pour cassée.
+// MUTATION: return `ErrNotFound` when `registry.Get` fails. A line forgotten in buildModules would
+// then answer "this reference does not exist" to every reference in the product, and the instance
+// would pass for empty rather than for broken.
 func TestAMissingPeerIsAWiringFailureNotAMissingReference(t *testing.T) {
 	_, err := resolve(t, storeDouble{key: ownKey}, registryDouble{issues: &peerDouble{}}, ownKey, 1)
 
 	if err == nil {
-		t.Fatal("aucune erreur alors que le module task n'est pas enregistré")
+		t.Fatal("no error although the task module is not registered")
 	}
 	if errors.Is(err, service.ErrNotFound) {
-		t.Errorf("erreur = %v, traduite en « introuvable » : une instance mal câblée doit se "+
-			"voir comme telle, pas comme un backlog vide", err)
+		t.Errorf("error = %v, translated into \"not found\": a badly wired instance must show as "+
+			"such, not as an empty backlog", err)
 	}
 }

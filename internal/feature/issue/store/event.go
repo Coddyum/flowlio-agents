@@ -6,14 +6,14 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/database"
 )
 
-// AppendEvent écrit une entrée du journal.
+// AppendEvent writes a journal entry.
 //
-// Toujours appelé dans la transaction de ce qui la produit : un événement écrit à part pourrait
-// manquer alors que l'issue existe, et le correspondant ne serait jamais prévenu.
+// Always called inside the transaction of whatever produces it: an event written apart could go
+// missing while the issue exists, and the correspondent would never be told.
 //
-// En v1 le journal ne sert qu'au drapeau « nouveau » de l'inbox — l'état de référence reste
-// issues.state — mais cette propriété est ce qui autorise à ne PAS payer une livraison
-// exactement-une-fois. Ne pas s'appuyer dessus pour autre chose sans relire docs/DESIGN-M3.md.
+// In v1 the journal only serves the inbox's "new" flag — the reference state stays issues.state —
+// but that property is what allows NOT paying for exactly-once delivery. Do not lean on it for
+// anything else without re-reading docs/DESIGN-M3.md.
 func (s *store) AppendEvent(ctx context.Context, event Event) error {
 	err := s.q.AppendEvent(ctx, database.AppendEventParams{
 		TeamID:         event.TeamID,

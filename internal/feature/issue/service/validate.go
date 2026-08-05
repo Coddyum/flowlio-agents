@@ -4,19 +4,19 @@ package service
 //
 // | Élément          | Résumé                                                      | Ligne |
 // |------------------|-------------------------------------------------------------|-------|
-// | validateTitle    | Vérifie qu'un titre n'est ni vide ni démesuré                 | 53    |
-// | validateBody     | Vérifie qu'un corps de message est présent et borné           | 68    |
-// | validateRole     | Vérifie qu'un rôle fait partie du vocabulaire                 | 80    |
-// | validateState    | Vérifie qu'un état fait partie du vocabulaire                 | 89    |
-// | validateScope    | Refuse un scope de tenancy incomplet                          | 99    |
-// | clampLimit       | Ramène une limite de listing dans les bornes                  | 107   |
-// | translateStore   | Traduit une erreur de store en erreur domaine                 | 122   |
+// | validateTitle    | Checks a title is neither empty nor oversized                 | 53    |
+// | validateBody     | Checks a message body is present and bounded                  | 68    |
+// | validateRole     | Checks a role belongs to the vocabulary                       | 80    |
+// | validateState    | Checks a state belongs to the vocabulary                      | 89    |
+// | validateScope    | Rejects an incomplete tenancy scope                           | 99    |
+// | clampLimit       | Brings a listing limit back within bounds                     | 107   |
+// | translateStore   | Turns a store error into a domain error                       | 122   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Les mêmes règles existent en ENUM et en CHECK dans la migration 000004 : la base est la
-// garantie, cette validation est le message d'erreur utile.
+// The very same rules exist as ENUM and CHECK in migration 000004: the database is the guarantee,
+// this validation is the useful error message.
 
 import (
 	"errors"
@@ -28,11 +28,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// MaxBodyLen est la taille maximale du corps markdown d'une issue ou d'un message.
+// MaxBodyLen is the largest markdown body an issue or a message may carry.
 //
-// Exportée pour la même raison que son homologue de la feature task : le handler doit DÉRIVER sa
-// borne de transport de ce que le service accepte, au lieu de la choisir à côté. Une borne de
-// champ qu'une requête ne peut pas atteindre n'est pas une borne.
+// Exported for the same reason as its counterpart in the task feature: the handler has to DERIVE
+// its transport bound from what the service accepts, instead of picking it alongside. A field bound
+// a request cannot reach is not a bound.
 const MaxBodyLen = 64 << 10
 
 const (
@@ -48,62 +48,62 @@ var (
 	states = []string{"open", "answered", "closed"}
 )
 
-// validateTitle vérifie le titre d'une issue. C'est la seule chose que verra le repo
-// destinataire dans son inbox : il doit tenir sur une ligne.
+// validateTitle checks an issue's title. It is the only thing the recipient repo will see in its
+// inbox: it has to fit on one line.
 func validateTitle(title string) error {
 	if title == "" {
-		return fmt.Errorf("%w: titre vide", ErrInvalidInput)
+		return fmt.Errorf("%w: empty title", ErrInvalidInput)
 	}
 	if len([]rune(title)) > maxTitleLen {
-		return fmt.Errorf("%w: titre de %d caractères, maximum %d",
+		return fmt.Errorf("%w: title of %d characters, maximum %d",
 			ErrInvalidInput, len([]rune(title)), maxTitleLen)
 	}
 	return nil
 }
 
-// validateBody vérifie qu'un message porte quelque chose.
+// validateBody checks a message carries something.
 //
-// Un corps vide est refusé même pour clore une issue : une clôture sans motif laisse le
-// correspondant devant une question fermée sans savoir pourquoi.
+// An empty body is refused even to close an issue: a closing with no reason leaves the
+// correspondent facing a shut question without knowing why.
 func validateBody(body string) error {
 	if body == "" {
-		return fmt.Errorf("%w: message vide", ErrInvalidInput)
+		return fmt.Errorf("%w: empty message", ErrInvalidInput)
 	}
 	if len(body) > maxBodyLen {
-		return fmt.Errorf("%w: message de %d octets, maximum %d",
+		return fmt.Errorf("%w: message of %d bytes, maximum %d",
 			ErrInvalidInput, len(body), maxBodyLen)
 	}
 	return nil
 }
 
-// validateRole vérifie le rôle demandé. Vide signifie « les deux sens ».
+// validateRole checks the requested role. Empty means "both directions".
 func validateRole(role string) error {
 	if role == "" || slices.Contains(roles, role) {
 		return nil
 	}
-	return fmt.Errorf("%w: rôle %q (attendu: %s)",
+	return fmt.Errorf("%w: role %q (expected: %s)",
 		ErrInvalidInput, role, strings.Join(roles, ", "))
 }
 
-// validateState vérifie l'état demandé. Vide signifie « tous les états ».
+// validateState checks the requested state. Empty means "every state".
 func validateState(state string) error {
 	if state == "" || slices.Contains(states, state) {
 		return nil
 	}
-	return fmt.Errorf("%w: état %q (attendu: %s)",
+	return fmt.Errorf("%w: state %q (expected: %s)",
 		ErrInvalidInput, state, strings.Join(states, ", "))
 }
 
-// validateScope refuse un scope de tenancy incomplet : une query filtrée sur un UUID nul ne
-// protège plus rien.
+// validateScope rejects an incomplete tenancy scope: a query filtered on a nil UUID protects
+// nothing any more.
 func validateScope(teamID, projectID uuid.UUID) error {
 	if teamID == uuid.Nil || projectID == uuid.Nil {
-		return fmt.Errorf("%w: scope de projet incomplet", ErrInvalidInput)
+		return fmt.Errorf("%w: incomplete project scope", ErrInvalidInput)
 	}
 	return nil
 }
 
-// clampLimit ramène une limite de listing dans les bornes.
+// clampLimit brings a listing limit back within bounds.
 func clampLimit(limit int) int32 {
 	if limit <= 0 {
 		return defaultLimit
@@ -114,15 +114,15 @@ func clampLimit(limit int) int32 {
 	return int32(limit)
 }
 
-// translateStore ramène les erreurs du store aux erreurs domaine.
+// translateStore brings store errors back to the domain errors.
 //
-// ErrCorrupted n'est PAS traduit en erreur domaine : un numéro servi deux fois est une panne
-// serveur, pas une faute de l'appelant. Il remonte tel quel et le handler en fera un 500 —
-// répondre 409 ferait réessayer indéfiniment un agent qui n'a rien fait de mal.
+// ErrCorrupted is NOT translated into a domain error: a number served twice is a server failure,
+// not a caller's fault. It travels up untouched and the handler turns it into a 500 — answering
+// 409 would make an agent that did nothing wrong retry forever.
 func translateStore(err error, op string) error {
-	// Le succès traverse cette fonction : les appels de la forme
-	// `return translateStore(tx.AppendEvent(...), "…")` sont le chemin nominal. Sans ce cas,
-	// fmt.Errorf envelopperait nil et fabriquerait une erreur là où il n'y en a pas.
+	// Success crosses this function: calls shaped like
+	// `return translateStore(tx.AppendEvent(...), "…")` are the nominal path. Without that case,
+	// fmt.Errorf would wrap nil and manufacture an error where there is none.
 	if err == nil {
 		return nil
 	}

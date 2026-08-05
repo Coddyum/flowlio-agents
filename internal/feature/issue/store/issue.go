@@ -4,12 +4,12 @@ package store
 //
 // | Élément           | Résumé                                                      | Ligne |
 // |-------------------|-------------------------------------------------------------|-------|
-// | store.CreateIssue | Ouvre une issue vers un projet frère, numéro compris          | 32    |
-// | store.IssueByRef  | Lit une issue visible par l'appelant                          | 64    |
-// | store.ListIssues  | Liste les issues visibles, filtrées par rôle et par état      | 81    |
-// | store.Answer      | Ajoute un message et applique la transition d'état            | 124   |
-// | toIssue           | Projette une ligne complète en type domaine                   | 148   |
-// | fromNullTime      | Convertit une date nullable lue en base en pointeur            | 167   |
+// | store.CreateIssue | Opens an issue towards a sibling project, number included     | 32    |
+// | store.IssueByRef  | Reads an issue the caller can see                             | 64    |
+// | store.ListIssues  | Lists the visible issues, filtered by role and by state       | 81    |
+// | store.Answer      | Appends a message and applies the state transition            | 124   |
+// | toIssue           | Projects a full row onto the domain type                      | 148   |
+// | fromNullTime      | Turns a nullable date read from the database into a pointer   | 167   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -23,12 +23,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// CreateIssue ouvre une issue vers un projet frère.
+// CreateIssue opens an issue towards a sibling project.
 //
-// La résolution du destinataire, la réservation de son numéro et l'insertion tiennent dans UNE
-// instruction : si la clé est inconnue — ou connue mais appartenant à une autre team — la CTE ne
-// produit rien, donc aucun numéro n'est consommé. On ne peut pas faire avancer le compteur d'un
-// projet tiers en devinant sa clé, et « inexistant » reste indiscernable de « hors team ».
+// Resolving the recipient, reserving its number and inserting all hold in ONE statement: if the key
+// is unknown — or known but belonging to another team — the CTE produces nothing, hence no number
+// is consumed. Nobody can push a third-party project's counter forward by guessing its key, and
+// "does not exist" stays indistinguishable from "outside the team".
 func (s *store) CreateIssue(ctx context.Context, in NewIssue) (Issue, error) {
 	row, err := s.q.CreateIssue(ctx, database.CreateIssueParams{
 		TeamID:          in.TeamID,
@@ -56,11 +56,11 @@ func (s *store) CreateIssue(ctx context.Context, in NewIssue) (Issue, error) {
 	}, nil
 }
 
-// IssueByRef lit une issue désignée par CORE-34.
+// IssueByRef reads an issue named by CORE-34.
 //
-// La clause de visibilité — auteur OU destinataire — est dans la query. Une issue que l'appelant
-// ne devrait pas voir remonte ErrNotFound, exactement comme un numéro inexistant : il n'existe
-// donc aucun moyen d'énumérer le backlog d'un repo frère en essayant des numéros.
+// The visibility clause — author OR recipient — is in the query. An issue the caller should not see
+// yields ErrNotFound, exactly like a non-existent number: there is therefore no way to enumerate a
+// sibling repo's backlog by trying numbers.
 func (s *store) IssueByRef(ctx context.Context, ref Ref) (Issue, error) {
 	row, err := s.q.GetIssueByRef(ctx, database.GetIssueByRefParams{
 		TeamID:          ref.TeamID,
@@ -74,10 +74,10 @@ func (s *store) IssueByRef(ctx context.Context, ref Ref) (Issue, error) {
 	return toIssue(row, ref.CallerProjectID), nil
 }
 
-// ListIssues liste les issues visibles par le projet appelant.
+// ListIssues lists the issues the calling project can see.
 //
-// Role restreint la clause de visibilité, il ne l'autorise jamais : les deux drapeaux
-// s'ajoutent au prédicat complet plutôt que de le remplacer.
+// Role narrows the visibility clause, it never authorises it: both flags add to the full predicate
+// rather than replace it.
 func (s *store) ListIssues(ctx context.Context, filter IssueFilter) ([]Issue, error) {
 	params := database.ListIssuesParams{
 		TeamID:        filter.TeamID,
@@ -114,13 +114,13 @@ func (s *store) ListIssues(ctx context.Context, filter IssueFilter) ([]Issue, er
 	return issues, nil
 }
 
-// Answer ajoute un message au fil et applique la transition d'état.
+// Answer appends a message to the thread and applies the state transition.
 //
-// Les deux tiennent dans une seule instruction : séparées, un correspondant pourrait fermer
-// l'issue entre les deux, et le message atterrirait dans une issue close sans faire bouger
-// updated_at — une réponse écrite qui n'apparaît jamais dans l'inbox de personne.
+// Both hold in a single statement: split apart, a correspondent could close the issue in between,
+// and the message would land in a closed issue without moving updated_at — a written answer that
+// never shows up in anyone's inbox.
 //
-// L'état n'est pas un paramètre : il est calculé en base depuis QUI parle.
+// The state is not a parameter: it is computed in the database from WHO is speaking.
 func (s *store) Answer(ctx context.Context, in Answer) (Issue, error) {
 	issue, err := s.IssueByRef(ctx, in.Ref)
 	if err != nil {
@@ -143,8 +143,8 @@ func (s *store) Answer(ctx context.Context, in Answer) (Issue, error) {
 	return issue, nil
 }
 
-// toIssue projette une ligne complète en type domaine. Le projet appelant sert à décider du
-// sens de la conversation, que cette query ne calcule pas elle-même.
+// toIssue projects a full row onto the domain type. The calling project serves to decide the
+// direction of the conversation, which this query does not compute itself.
 func toIssue(row database.GetIssueByRefRow, callerProjectID uuid.UUID) Issue {
 	return Issue{
 		ID:               row.ID,
@@ -163,7 +163,7 @@ func toIssue(row database.GetIssueByRefRow, callerProjectID uuid.UUID) Issue {
 	}
 }
 
-// fromNullTime convertit une date nullable lue en base en pointeur.
+// fromNullTime turns a nullable date read from the database into a pointer.
 func fromNullTime(t sql.NullTime) *time.Time {
 	if !t.Valid {
 		return nil

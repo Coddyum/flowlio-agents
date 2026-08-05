@@ -6,21 +6,21 @@ import (
 	"fmt"
 )
 
-// WithTx exécute fn dans une transaction et ne commite que si fn réussit.
+// WithTx runs fn inside a transaction and only commits if fn succeeds.
 //
-// L'imbrication est refusée, pas absorbée. Ouvrir une seconde transaction prendrait une autre
-// connexion du pool, qui attendrait le verrou que celle-ci détient déjà sur la ligne du projet
-// destinataire (réservation du numéro) : un interblocage qu'aucun test mono-thread ne révèle.
-// Et rejoindre silencieusement la transaction en cours ferait committer par l'extérieur les
-// écritures d'un appel interne dont l'erreur aurait été avalée.
+// Nesting is refused, not absorbed. Opening a second transaction would take another connection
+// from the pool, which would wait on the lock this one already holds on the recipient project's row
+// (the number reservation): a deadlock no single-threaded test reveals. And silently joining the
+// transaction in progress would have the outside commit the writes of an inner call whose error was
+// swallowed.
 func (s *store) WithTx(ctx context.Context, fn func(Store) error) error {
 	if s.inTx {
-		return errors.New("issue store: transaction imbriquée")
+		return errors.New("issue store: nested transaction")
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("issue store: ouverture de transaction: %w", err)
+		return fmt.Errorf("issue store: opening transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 

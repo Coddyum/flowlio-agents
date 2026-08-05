@@ -68,7 +68,7 @@ func openDB(t *testing.T) *sql.DB {
 
 	dsn := os.Getenv("FLOWLIO_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("FLOWLIO_TEST_DATABASE_URL non renseigné — test d'intégration ignoré")
+		t.Skip("FLOWLIO_TEST_DATABASE_URL not set — integration test skipped")
 	}
 
 	db, err := sql.Open("pgx", dsn)
@@ -92,7 +92,7 @@ func newTeam(t *testing.T, db *sql.DB) uuid.UUID {
 	if err := db.QueryRow(
 		"INSERT INTO teams (slug, name) VALUES ($1, $2) RETURNING id", slug, "Team de test ref",
 	).Scan(&teamID); err != nil {
-		t.Fatalf("création de la team: %v", err)
+		t.Fatalf("creating the team: %v", err)
 	}
 	t.Cleanup(func() {
 		if _, err := db.Exec("DELETE FROM teams WHERE id = $1", teamID); err != nil {
@@ -110,7 +110,7 @@ func newProject(t *testing.T, db *sql.DB, teamID uuid.UUID, key string) project 
 		"INSERT INTO projects (team_id, key, name) VALUES ($1, $2, $3) RETURNING id",
 		teamID, key, "Projet "+key,
 	).Scan(&id); err != nil {
-		t.Fatalf("création du projet %s: %v", key, err)
+		t.Fatalf("creating project %s: %v", key, err)
 	}
 	return project{teamID: teamID, id: id, key: key}
 }
@@ -127,7 +127,7 @@ func newTask(t *testing.T, db *sql.DB, p project, number int64, title string) {
 		"INSERT INTO tasks (team_id, project_id, number, title) VALUES ($1, $2, $3, $4)",
 		p.teamID, p.id, number, title,
 	); err != nil {
-		t.Fatalf("création de la tâche %s-%d: %v", p.key, number, err)
+		t.Fatalf("creating task %s-%d: %v", p.key, number, err)
 	}
 }
 
@@ -140,7 +140,7 @@ func newIssue(t *testing.T, db *sql.DB, recipient, author project, number int64,
 		 VALUES ($1, $2, $3, $4, $5)`,
 		recipient.teamID, recipient.id, author.id, number, title,
 	); err != nil {
-		t.Fatalf("création de l'issue %s-%d: %v", recipient.key, number, err)
+		t.Fatalf("creating issue %s-%d: %v", recipient.key, number, err)
 	}
 }
 
@@ -166,7 +166,7 @@ func serveRef(t *testing.T, db *sql.DB, caller project) (*httptest.Server, autht
 		}
 	}
 	if refMod == nil {
-		t.Fatal("le module ref n'a pas été monté")
+		t.Fatal("the ref module was not mounted")
 	}
 
 	ts := httptest.NewServer(refMod.Routes())
@@ -181,7 +181,7 @@ func get(t *testing.T, ts *httptest.Server, tok authtest.Token, projectKey strin
 	req, err := http.NewRequest(http.MethodGet,
 		ts.URL+"/"+projectKey+"/"+strconv.FormatInt(number, 10), nil)
 	if err != nil {
-		t.Fatalf("construction de la requête %s-%d: %v", projectKey, number, err)
+		t.Fatalf("building request %s-%d: %v", projectKey, number, err)
 	}
 
 	resp, err := ts.Client().Do(tok.Authorize(req))
@@ -192,13 +192,13 @@ func get(t *testing.T, ts *httptest.Server, tok authtest.Token, projectKey strin
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("lecture du corps pour %s-%d: %v", projectKey, number, err)
+		t.Fatalf("reading the body for %s-%d: %v", projectKey, number, err)
 	}
 
 	out := resolved{status: resp.StatusCode}
 	if resp.StatusCode == http.StatusOK {
 		if err := json.Unmarshal(body, &out); err != nil {
-			t.Fatalf("réponse illisible pour %s-%d: %v (%s)", projectKey, number, err, body)
+			t.Fatalf("unreadable response for %s-%d: %v (%s)", projectKey, number, err, body)
 		}
 	}
 	return out
@@ -209,8 +209,8 @@ func get(t *testing.T, ts *httptest.Server, tok authtest.Token, projectKey strin
 // The two WITNESSES open it and are not decorative: a run where nothing resolves would satisfy
 // every refusal below while proving nothing at all.
 //
-// MUTATION PLAYED: in resolve_ref.go, `if in.ProjectKey == ownKey` removed. The case "clé d'un
-// frère, numéro qui existe chez moi" comes back 200 with kind=task — the caller's OWN task 34,
+// MUTATION PLAYED: in resolve_ref.go, `if in.ProjectKey == ownKey` removed. The case "sibling key,
+// number that exists at mine" comes back 200 with kind=task — the caller's OWN task 34,
 // under the reference FRNT-34. Red here on the status, and red on nothing else in the repository.
 //
 // MUTATION PLAYED: in task/provider.go, `scope.ProjectID` replaced by `scope.TeamID`. Witness 1
@@ -220,7 +220,7 @@ func get(t *testing.T, ts *httptest.Server, tok authtest.Token, projectKey strin
 // from GetIssueByRef (issues.sql) does not compile — sqlc drops the parameter, and the issue store
 // stops building. The compiler guards that one; this file guards the thing it cannot see, which is
 // that the composition still ROUTES a third party's reference to the query in the first place. The
-// case "issue entre deux tiers" is the positive check that it does.
+// case "issue between two third parties" is the positive check that it does.
 func TestResolutionStaysInsideTheCallerScope(t *testing.T) {
 	db := openDB(t)
 	team := newTeam(t, db)
@@ -229,12 +229,12 @@ func TestResolutionStaysInsideTheCallerScope(t *testing.T) {
 	sibling := newProject(t, db, team, "FRNT")
 	third := newProject(t, db, team, "OPS")
 
-	// Le compteur est partagé entre tâches et issues, donc les collisions de numéro entre projets
-	// sont la norme, pas un cas tordu : c'est exactement ce que la garde de clé doit survivre.
-	newTask(t, db, caller, 34, "ma tâche 34")
-	newTask(t, db, sibling, 34, "la tâche 34 du frère")
-	newIssue(t, db, caller, sibling, 12, "question entrante")  // FRNT → CORE
-	newIssue(t, db, sibling, caller, 7, "question sortante")   // CORE → FRNT
+	// The counter is shared between tasks and issues, so number collisions across projects are the
+	// norm, not a contrived case: it is exactly what the key guard has to survive.
+	newTask(t, db, caller, 34, "my task 34")
+	newTask(t, db, sibling, 34, "the sibling's task 34")
+	newIssue(t, db, caller, sibling, 12, "question entrante")   // FRNT → CORE
+	newIssue(t, db, sibling, caller, 7, "question sortante")    // CORE → FRNT
 	newIssue(t, db, third, sibling, 1, "conversation de tiers") // FRNT → OPS
 
 	ts, tok := serveRef(t, db, caller)
@@ -247,15 +247,15 @@ func TestResolutionStaysInsideTheCallerScope(t *testing.T) {
 		kind   string
 		ref    string
 	}{
-		{"témoin — ma tâche", caller.key, 34, http.StatusOK, "task", "CORE-34"},
-		{"témoin — issue entrante", caller.key, 12, http.StatusOK, "issue", "CORE-12"},
-		{"issue sortante, clé du destinataire", sibling.key, 7, http.StatusOK, "issue", "FRNT-7"},
+		{"witness — my task", caller.key, 34, http.StatusOK, "task", "CORE-34"},
+		{"witness — incoming issue", caller.key, 12, http.StatusOK, "issue", "CORE-12"},
+		{"outgoing issue, recipient key", sibling.key, 7, http.StatusOK, "issue", "FRNT-7"},
 
-		{"clé d'un frère, numéro qui existe chez moi", sibling.key, 34, http.StatusNotFound, "", ""},
-		{"tâche d'un frère, sous sa propre clé", sibling.key, 99, http.StatusNotFound, "", ""},
-		{"issue entre deux tiers", third.key, 1, http.StatusNotFound, "", ""},
-		{"numéro qui n'existe nulle part", caller.key, 4242, http.StatusNotFound, "", ""},
-		{"clé inconnue", "ZZZZ", 1, http.StatusNotFound, "", ""},
+		{"sibling key, number that exists at mine", sibling.key, 34, http.StatusNotFound, "", ""},
+		{"sibling task, under its own key", sibling.key, 99, http.StatusNotFound, "", ""},
+		{"issue between two third parties", third.key, 1, http.StatusNotFound, "", ""},
+		{"number that exists nowhere", caller.key, 4242, http.StatusNotFound, "", ""},
+		{"unknown key", "ZZZZ", 1, http.StatusNotFound, "", ""},
 	}
 
 	for _, c := range cas {
@@ -263,43 +263,43 @@ func TestResolutionStaysInsideTheCallerScope(t *testing.T) {
 			got := get(t, ts, tok, c.key, c.number)
 
 			if got.status != c.status {
-				t.Fatalf("statut = %d, attendu %d pour %s-%d", got.status, c.status, c.key, c.number)
+				t.Fatalf("status = %d, want %d for %s-%d", got.status, c.status, c.key, c.number)
 			}
 			if c.status != http.StatusOK {
 				return
 			}
 			if got.Kind != c.kind {
-				t.Errorf("kind = %q, attendu %q", got.Kind, c.kind)
+				t.Errorf("kind = %q, want %q", got.Kind, c.kind)
 			}
 			if got.Ref != c.ref {
-				t.Errorf("ref = %q, attendu %q", got.Ref, c.ref)
+				t.Errorf("ref = %q, want %q", got.Ref, c.ref)
 			}
-			// Exactement une charge, jamais les deux : l'agent branche sur `kind`, et deux charges
-			// lui laisseraient le choix de la mauvaise — celle qui n'a pas été balisée.
+			// Exactly one payload, never both: the agent branches on `kind`, and two payloads would
+			// leave it free to pick the wrong one — the one that was never tagged.
 			if (len(got.Task) > 0) == (len(got.Issue) > 0) {
-				t.Errorf("charges rendues: task=%d octets, issue=%d octets — il en faut exactement une",
+				t.Errorf("payloads returned: task=%d bytes, issue=%d bytes — exactly one is required",
 					len(got.Task), len(got.Issue))
 			}
 		})
 	}
 }
 
-// Une clé en minuscules est acceptée : c'est une question de FORME d'entrée, et la refuser
-// coûterait un aller-retour à un agent qui a recopié une référence d'un message.
+// A lowercase key is accepted: it is a matter of input SHAPE, and refusing it would cost a round
+// trip to an agent that copied a reference out of a message.
 func TestLowerCaseKeyResolvesTheSameReference(t *testing.T) {
 	db := openDB(t)
 	team := newTeam(t, db)
 
 	caller := newProject(t, db, team, "CORE")
-	newTask(t, db, caller, 5, "tâche cinq")
+	newTask(t, db, caller, 5, "task five")
 
 	ts, tok := serveRef(t, db, caller)
 
 	got := get(t, ts, tok, "core", 5)
 	if got.status != http.StatusOK {
-		t.Fatalf("statut = %d, attendu 200 pour core-5", got.status)
+		t.Fatalf("status = %d, want 200 for core-5", got.status)
 	}
 	if got.Ref != "CORE-5" {
-		t.Errorf("ref = %q, attendu CORE-5 — la référence rendue est normalisée", got.Ref)
+		t.Errorf("ref = %q, want CORE-5 — the reference returned is normalised", got.Ref)
 	}
 }

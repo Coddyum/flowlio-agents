@@ -4,22 +4,22 @@ package service
 //
 // | Élément          | Résumé                                                      | Ligne |
 // |------------------|-------------------------------------------------------------|-------|
-// | Service          | Contrat consommé par le handler issue                         | 48    |
-// | service          | Implémentation, dépendante de l'interface store               | 61    |
-// | New              | Crée le service issue                                         | 66    |
-// | Issue            | Une issue telle qu'exposée par l'API                          | 75    |
-// | Message          | Un message du fil, attribué au projet qui l'a écrit           | 86    |
-// | IssueDetail      | Une issue et son fil de messages                              | 96    |
-// | Ref              | Désigne CORE-34 pour l'appelant, scope compris                | 106   |
-// | CreateIssueInput | Entrée d'ouverture d'une issue vers un projet frère           | 115   |
-// | ListIssuesInput  | Critères de lecture des issues visibles                       | 129   |
-// | AnswerInput      | Message à ajouter au fil, et clôture éventuelle               | 143   |
+// | Service          | The contract consumed by the issue handler                    | 48    |
+// | service          | Implementation, depending on the store interface              | 61    |
+// | New              | Creates the issue service                                     | 66    |
+// | Issue            | An issue as exposed by the API                                | 75    |
+// | Message          | A message of the thread, attributed to the project that wrote it | 86 |
+// | IssueDetail      | An issue together with its message thread                     | 96    |
+// | Ref              | Names CORE-34 for the caller, scope included                  | 106   |
+// | CreateIssueInput | Input for opening an issue towards a sibling project          | 115   |
+// | ListIssuesInput  | Criteria for reading the visible issues                       | 129   |
+// | AnswerInput      | A message to append to the thread, and an optional closing    | 143   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// CONTRAT UNIQUEMENT — les implémentations sont dans create_issue.go, list_issues.go,
-// get_issue.go et answer_issue.go.
+// CONTRACT ONLY — the implementations live in create_issue.go, list_issues.go, get_issue.go and
+// answer_issue.go.
 
 import (
 	"context"
@@ -30,48 +30,47 @@ import (
 	"github.com/google/uuid"
 )
 
-// Erreurs domaine, traduites en codes HTTP par le handler via errors.Is.
+// Domain errors, translated into HTTP codes by the handler through errors.Is.
 //
-// Il n'existe volontairement PAS d'erreur « interdit » sur une clé d'issue : une issue hors de
-// portée est introuvable. Distinguer les deux permettrait d'énumérer le backlog d'un repo frère
-// en essayant des numéros.
+// There is deliberately NO "forbidden" error on an issue key: an issue out of reach is not found.
+// Telling the two apart would allow enumerating a sibling repo's backlog by trying numbers.
 var (
 	ErrInvalidInput = errors.New("issue: invalid input")
 	ErrNotFound     = errors.New("issue: not found")
 	ErrConflict     = errors.New("issue: conflict")
 )
 
-// Service porte les questions inter-projets : ce qu'un repo demande à un repo frère.
+// Service carries the cross-project questions: what a repo asks of a sibling repo.
 //
-// TeamID et ProjectID viennent du Principal du token, jamais du corps de la requête. C'est ce
-// qui rend impossible d'agir au nom d'un autre projet.
+// TeamID and ProjectID come from the token's Principal, never from the request body. That is what
+// makes acting on behalf of another project impossible.
 type Service interface {
-	// CreateIssue ouvre une question vers un projet frère, désigné par sa clé.
+	// CreateIssue opens a question towards a sibling project, named by its key.
 	CreateIssue(ctx context.Context, in CreateIssueInput) (Issue, error)
 
 	ListIssues(ctx context.Context, in ListIssuesInput) ([]Issue, error)
 	GetIssue(ctx context.Context, ref Ref) (IssueDetail, error)
 
-	// Answer ajoute un message au fil et, si demandé, clôt l'issue. L'état résultant n'est pas
-	// choisi par l'appelant : il est déduit de son rôle dans la conversation.
+	// Answer appends a message to the thread and, when asked, closes the issue. The resulting state
+	// is not chosen by the caller: it is deduced from its role in the conversation.
 	Answer(ctx context.Context, in AnswerInput) (Issue, error)
 }
 
-// service dépend de l'interface store, jamais de sqlc.
+// service depends on the store interface, never on sqlc.
 type service struct {
 	store store.Store
 }
 
-// New crée le service issue.
+// New creates the issue service.
 func New(st store.Store) Service {
 	return &service{store: st}
 }
 
-// Issue est la vue API. Ref est la clé lisible complète (CORE-34), composée ici et nulle part
-// ailleurs. Elle porte toujours la clé du DESTINATAIRE, qui possède l'issue et son numéro.
+// Issue is the API view. Ref is the full readable key (CORE-34), composed here and nowhere else. It
+// always carries the RECIPIENT's key, which owns the issue and its number.
 //
-// Role et Peer sont relatifs à l'appelant : « qui suis-je dans cette conversation, et qui est en
-// face ». Un agent n'a pas à recomposer cette information.
+// Role and Peer are relative to the caller: "who am I in this conversation, and who is across from
+// me". An agent should not have to recompose that information.
 type Issue struct {
 	Ref       string     `json:"ref"`
 	Title     string     `json:"title"`
@@ -82,27 +81,27 @@ type Issue struct {
 	ClosedAt  *time.Time `json:"closed_at,omitempty"`
 }
 
-// Message est une entrée du fil. L'auteur est un PROJET : c'est un dialogue entre deux repos.
+// Message is an entry of the thread. The author is a PROJECT: this is a dialogue between two repos.
 type Message struct {
 	Author    string    `json:"author"`
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// IssueDetail est une issue et son fil, du plus ancien au plus récent.
+// IssueDetail is an issue and its thread, oldest to newest.
 //
-// MessagesTotal existe pour que l'agent sache qu'il ne lit qu'une fenêtre : un fil de cent
-// messages ne doit pas entrer d'un bloc dans son contexte.
+// MessagesTotal exists so the agent knows it is only reading a window: a hundred-message thread
+// must not enter its context in one block.
 type IssueDetail struct {
 	Issue
 	Messages      []Message `json:"messages"`
 	MessagesTotal int       `json:"messages_total"`
 }
 
-// Ref désigne CORE-34 pour l'appelant.
+// Ref names CORE-34 for the caller.
 //
-// ProjectKey est celle lue dans la référence, donc contrôlée par l'appelant ; TeamID et
-// CallerProjectID viennent du token. La visibilité se décide sur ces deux derniers.
+// ProjectKey is the one read from the reference, hence controlled by the caller; TeamID and
+// CallerProjectID come from the token. Visibility is decided on those two.
 type Ref struct {
 	TeamID          uuid.UUID `json:"-"`
 	CallerProjectID uuid.UUID `json:"-"`
@@ -110,8 +109,8 @@ type Ref struct {
 	Number          int64     `json:"-"`
 }
 
-// CreateIssueInput porte l'ouverture d'une issue. Le destinataire est une CLÉ de projet : un
-// agent ne manipule pas d'UUID, donc il ne peut pas en injecter un.
+// CreateIssueInput carries the opening of an issue. The recipient is a project KEY: an agent does
+// not handle UUIDs, so it cannot inject one.
 type CreateIssueInput struct {
 	TeamID          uuid.UUID `json:"-"`
 	AuthorProjectID uuid.UUID `json:"-"`
@@ -121,11 +120,11 @@ type CreateIssueInput struct {
 	Body      string `json:"body"`
 }
 
-// ListIssuesInput décrit une lecture.
+// ListIssuesInput describes one read.
 //
-// Role vaut "", "incoming" ou "outgoing" ; il restreint ce qui est déjà visible, il n'ouvre
-// jamais l'accès. Les issues closes sont exclues par défaut : ce qui est clos n'appelle plus
-// d'action, et le contexte d'un agent est une ressource rare.
+// Role is "", "incoming" or "outgoing"; it narrows what is already visible, it never opens access.
+// Closed issues are excluded by default: what is closed calls for no more action, and an agent's
+// context is a scarce resource.
 type ListIssuesInput struct {
 	TeamID    uuid.UUID `json:"-"`
 	ProjectID uuid.UUID `json:"-"`
@@ -136,10 +135,10 @@ type ListIssuesInput struct {
 	Limit         int    `json:"limit"`
 }
 
-// AnswerInput porte un message à ajouter au fil, et la clôture éventuelle.
+// AnswerInput carries a message to append to the thread, and an optional closing.
 //
-// Le corps est obligatoire même pour clore : une clôture sans motif ne dit rien au correspondant,
-// qui découvrirait sa question fermée sans savoir pourquoi.
+// The body is required even to close: a closing with no reason tells the correspondent nothing, and
+// they would find their question shut without knowing why.
 type AnswerInput struct {
 	Ref Ref `json:"-"`
 

@@ -4,9 +4,9 @@ package service
 //
 // | Élément  | Résumé                                                             | Ligne |
 // |----------|--------------------------------------------------------------------|-------|
-// | toIssue  | Projette une issue du store en vue API, du point de vue de l'appelant| 28    |
-// | toIssues | Projette une liste d'issues                                          | 46    |
-// | toMessage| Projette un message du store en vue API                              | 55    |
+// | toIssue  | Projects a store issue onto the API view, from the caller's side     | 28    |
+// | toIssues | Projects a list of issues                                            | 46    |
+// | toMessage| Projects a store message onto the API view                           | 55    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -17,14 +17,14 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 )
 
-// toIssue projette une issue en vue API, du point de vue du projet appelant.
+// toIssue projects an issue onto the API view, from the calling project's point of view.
 //
-// La référence porte TOUJOURS la clé du destinataire : c'est lui qui possède l'issue et son
-// numéro, et c'est cette clé que l'agent devra réutiliser pour répondre.
+// The reference ALWAYS carries the recipient's key: it owns the issue and its number, and it is
+// that key the agent will have to reuse in order to answer.
 //
-// Role et Peer sont calculés ici plutôt que renvoyés bruts : un agent qui reçoit « auteur : WEB,
-// destinataire : CORE » doit encore savoir lequel il est. Lui donner directement « rôle :
-// entrante, en face : WEB » supprime un raisonnement, donc une occasion de se tromper.
+// Role and Peer are computed here rather than returned raw: an agent receiving "author: WEB,
+// recipient: CORE" still has to work out which one it is. Handing it "role: incoming, across:
+// WEB" removes a piece of reasoning, hence a chance to get it wrong.
 func toIssue(i store.Issue) Issue {
 	role, peer := "outgoing", i.ProjectKey
 	if i.Incoming {
@@ -42,7 +42,7 @@ func toIssue(i store.Issue) Issue {
 	}
 }
 
-// toIssues projette une liste d'issues.
+// toIssues projects a list of issues.
 func toIssues(rows []store.Issue) []Issue {
 	issues := make([]Issue, 0, len(rows))
 	for _, row := range rows {
@@ -51,7 +51,7 @@ func toIssues(rows []store.Issue) []Issue {
 	return issues
 }
 
-// toMessage projette un message du store en vue API.
+// toMessage projects a store message onto the API view.
 func toMessage(m store.Message) Message {
 	return Message{
 		Author:    m.AuthorKey,

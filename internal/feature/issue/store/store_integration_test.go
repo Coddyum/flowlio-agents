@@ -15,7 +15,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// project est un projet de test et son scope de tenancy : exactement ce qu'un token porte.
+// project is a test project and its tenancy scope: exactly what a token carries.
 type project struct {
 	teamID uuid.UUID
 	id     uuid.UUID
@@ -27,77 +27,77 @@ func newStore(t *testing.T) (store.Store, *sql.DB) {
 
 	dsn := os.Getenv("FLOWLIO_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("FLOWLIO_TEST_DATABASE_URL non renseigné — test d'intégration ignoré")
+		t.Skip("FLOWLIO_TEST_DATABASE_URL not set — integration test skipped")
 	}
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		t.Fatalf("ouverture de la base: %v", err)
+		t.Fatalf("opening the database: %v", err)
 	}
 	if err := db.Ping(); err != nil {
-		t.Fatalf("base injoignable: %v", err)
+		t.Fatalf("database unreachable: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
 	return store.New(database.New(db), db), db
 }
 
-// newTeam crée une team jetable. La suppression emporte tout en cascade.
+// newTeam creates a throwaway team. Deleting it takes everything with it in cascade.
 func newTeam(t *testing.T, db *sql.DB) uuid.UUID {
 	t.Helper()
 
 	slug := "test-" + strings.ToLower(uuid.NewString()[:8])
 	var teamID uuid.UUID
 	if err := db.QueryRow(
-		"INSERT INTO teams (slug, name) VALUES ($1, $2) RETURNING id", slug, "Team de test",
+		"INSERT INTO teams (slug, name) VALUES ($1, $2) RETURNING id", slug, "Test team",
 	).Scan(&teamID); err != nil {
-		t.Fatalf("création de la team: %v", err)
+		t.Fatalf("creating the team: %v", err)
 	}
 	t.Cleanup(func() {
 		if _, err := db.Exec("DELETE FROM teams WHERE id = $1", teamID); err != nil {
-			t.Errorf("nettoyage de la team %s: %v", teamID, err)
+			t.Errorf("cleaning up team %s: %v", teamID, err)
 		}
 	})
 	return teamID
 }
 
-// newProject crée un projet dans une team. Les fixtures passent par du SQL direct : la feature
-// issue ne doit dépendre d'aucune autre feature, pas même dans ses tests.
+// newProject creates a project in a team. The fixtures go through direct SQL: the issue feature
+// must depend on no other feature, not even in its tests.
 func newProject(t *testing.T, db *sql.DB, teamID uuid.UUID, key string) project {
 	t.Helper()
 
 	var id uuid.UUID
 	if err := db.QueryRow(
 		"INSERT INTO projects (team_id, key, name) VALUES ($1, $2, $3) RETURNING id",
-		teamID, key, "Projet "+key,
+		teamID, key, "Project "+key,
 	).Scan(&id); err != nil {
-		t.Fatalf("création du projet %s: %v", key, err)
+		t.Fatalf("creating project %s: %v", key, err)
 	}
 	return project{teamID: teamID, id: id, key: key}
 }
 
-// trust déclare une confiance entre deux projets de test.
+// trust declares a trust between two test projects.
 //
-// Le graphe est posé À LA MAIN dans chaque test qui en a besoin, exactement comme le scope de
-// tenancy : le cacher dans newProject masquerait la garantie que ces tests existent pour prouver.
-// C'est la seule occurrence de `project_trust` dans du Go de ce dépôt hors code généré, et elle
-// est dans un fichier de test — une fixture, jamais une décision.
+// The graph is laid down BY HAND in every test that needs it, exactly like the tenancy scope:
+// hiding it inside newProject would mask the very guarantee these tests exist to prove. It is the
+// only occurrence of `project_trust` in this repo's Go outside generated code, and it sits in a
+// test file — a fixture, never a decision.
 func trust(t *testing.T, db *sql.DB, a, b project) {
 	t.Helper()
 
 	if a.teamID != b.teamID {
-		t.Fatalf("confiance %s ↔ %s: teams différentes, la paire est non insérable", a.key, b.key)
+		t.Fatalf("trust %s ↔ %s: different teams, the pair is not insertable", a.key, b.key)
 	}
 	if _, err := db.Exec(
 		`INSERT INTO project_trust (team_id, low_project_id, high_project_id)
 		 VALUES ($1, least($2::uuid, $3::uuid), greatest($2::uuid, $3::uuid))`,
 		a.teamID, a.id, b.id,
 	); err != nil {
-		t.Fatalf("confiance %s ↔ %s: %v", a.key, b.key, err)
+		t.Fatalf("trust %s ↔ %s: %v", a.key, b.key, err)
 	}
 }
 
-// open ouvre une issue de from vers to, en passant par le chemin nominal.
+// open opens an issue from `from` towards `to`, through the nominal path.
 func open(t *testing.T, st store.Store, from, to project, title string) store.Issue {
 	t.Helper()
 
@@ -114,7 +114,7 @@ func open(t *testing.T, st store.Store, from, to project, title string) store.Is
 		if err != nil {
 			return err
 		}
-		if err := tx.AddFirstMessage(ctx, created.ID, from.id, "corps de la question"); err != nil {
+		if err := tx.AddFirstMessage(ctx, created.ID, from.id, "body of the question"); err != nil {
 			return err
 		}
 		return tx.AppendEvent(ctx, store.Event{
@@ -126,12 +126,12 @@ func open(t *testing.T, st store.Store, from, to project, title string) store.Is
 		})
 	})
 	if err != nil {
-		t.Fatalf("ouverture de l'issue %q: %v", title, err)
+		t.Fatalf("opening issue %q: %v", title, err)
 	}
 	return created
 }
 
-// refFor compose la référence d'une issue pour un appelant donné.
+// refFor composes an issue's reference for a given caller.
 func refFor(caller project, target project, number int64) store.Ref {
 	return store.Ref{
 		TeamID:          caller.teamID,
@@ -149,38 +149,38 @@ func TestIssueConversation(t *testing.T) {
 	core := newProject(t, db, teamID, "CORE")
 	trust(t, db, web, core)
 
-	issue := open(t, st, web, core, "Le endpoint renvoie 500 sur un slug vide")
+	issue := open(t, st, web, core, "The endpoint returns 500 on an empty slug")
 	if issue.Number != 1 {
-		t.Errorf("numéro = %d, attendu 1 (compteur du DESTINATAIRE)", issue.Number)
+		t.Errorf("number = %d, want 1 (the RECIPIENT's counter)", issue.Number)
 	}
 	if issue.State != "open" {
-		t.Errorf("état = %q, attendu open", issue.State)
+		t.Errorf("state = %q, want open", issue.State)
 	}
 
 	ref := refFor(core, core, issue.Number)
 
-	// Le destinataire répond : l'issue passe en `answered`, l'auteur n'est plus bloqué.
-	answered, err := st.Answer(ctx, store.Answer{Ref: ref, Body: "corrigé en 1a2b3c"})
+	// The recipient answers: the issue moves to `answered`, the author is no longer blocked.
+	answered, err := st.Answer(ctx, store.Answer{Ref: ref, Body: "fixed in 1a2b3c"})
 	if err != nil {
-		t.Fatalf("Answer (destinataire): %v", err)
+		t.Fatalf("Answer (recipient): %v", err)
 	}
 	if answered.State != "answered" {
-		t.Errorf("état = %q après réponse du destinataire, attendu answered", answered.State)
+		t.Errorf("state = %q after the recipient answered, want answered", answered.State)
 	}
 
-	// L'auteur relance : l'issue repasse en `open`, le destinataire redevient en dette.
+	// The author follows up: the issue goes back to `open`, the recipient owes again.
 	reopened, err := st.Answer(ctx, store.Answer{
 		Ref:  refFor(web, core, issue.Number),
-		Body: "toujours reproductible chez moi",
+		Body: "still reproducible at mine",
 	})
 	if err != nil {
-		t.Fatalf("Answer (auteur): %v", err)
+		t.Fatalf("Answer (author): %v", err)
 	}
 	if reopened.State != "open" {
-		t.Errorf("état = %q après relance de l'auteur, attendu open", reopened.State)
+		t.Errorf("state = %q after the author followed up, want open", reopened.State)
 	}
 
-	// Le fil contient les trois messages, dans l'ordre.
+	// The thread holds all three messages, in order.
 	found, err := st.IssueByRef(ctx, ref)
 	if err != nil {
 		t.Fatalf("IssueByRef: %v", err)
@@ -190,33 +190,33 @@ func TestIssueConversation(t *testing.T) {
 		t.Fatalf("ListMessages: %v", err)
 	}
 	if len(messages) != 3 {
-		t.Fatalf("%d messages, attendu 3", len(messages))
+		t.Fatalf("%d messages, want 3", len(messages))
 	}
 	if total != 3 {
-		t.Errorf("total = %d, attendu 3", total)
+		t.Errorf("total = %d, want 3", total)
 	}
 	if messages[0].AuthorKey != "WEB" || messages[1].AuthorKey != "CORE" {
-		t.Errorf("auteurs du fil = %s puis %s, attendu WEB puis CORE",
+		t.Errorf("thread authors = %s then %s, want WEB then CORE",
 			messages[0].AuthorKey, messages[1].AuthorKey)
 	}
 
-	// Clôture, puis refus de toute réponse ultérieure : sans ce garde, une réponse tardive
-	// ressusciterait une discussion terminée dans l'inbox du correspondant.
-	closed, err := st.Answer(ctx, store.Answer{Ref: ref, Body: "on ferme", Close: true})
+	// Closing, then refusal of any later answer: without that guard, a late reply would resurrect a
+	// finished discussion in the correspondent's inbox.
+	closed, err := st.Answer(ctx, store.Answer{Ref: ref, Body: "closing this", Close: true})
 	if err != nil {
-		t.Fatalf("Answer (clôture): %v", err)
+		t.Fatalf("Answer (closing): %v", err)
 	}
 	if closed.State != "closed" {
-		t.Errorf("état = %q après clôture, attendu closed", closed.State)
+		t.Errorf("state = %q after closing, want closed", closed.State)
 	}
 
-	if _, err := st.Answer(ctx, store.Answer{Ref: ref, Body: "encore un mot"}); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("réponse à une issue close: erreur = %v, attendu ErrNotFound", err)
+	if _, err := st.Answer(ctx, store.Answer{Ref: ref, Body: "one more word"}); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("answering a closed issue: error = %v, want ErrNotFound", err)
 	}
 }
 
-// Le cœur du produit : un projet tiers de la MÊME team ne voit rien d'une conversation à
-// laquelle il ne participe pas, et ne peut pas y écrire.
+// The heart of the product: a third-party project of the SAME team sees nothing of a conversation
+// it takes no part in, and cannot write into it.
 func TestIssuesAreInvisibleToThirdProjects(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -226,18 +226,18 @@ func TestIssuesAreInvisibleToThirdProjects(t *testing.T) {
 	core := newProject(t, db, teamID, "CORE")
 	spy := newProject(t, db, teamID, "SPY")
 
-	// SPY est de confiance avec CORE : ce test prouve l'invisibilité d'une conversation, pas le
-	// graphe. Sans cette arête, les assertions de lecture resteraient vertes par simple absence
-	// d'autorisation d'écriture, ce qui masquerait la propriété qu'elles existent pour établir.
+	// SPY is trusted with CORE: this test proves a conversation's invisibility, not the graph.
+	// Without that edge, the read assertions would stay green through a plain lack of write
+	// permission, which would mask the property they exist to establish.
 	trust(t, db, web, core)
 	trust(t, db, spy, core)
 
-	issue := open(t, st, web, core, "question privée entre WEB et CORE")
+	issue := open(t, st, web, core, "private question between WEB and CORE")
 	spyRef := refFor(spy, core, issue.Number)
 
-	t.Run("lecture", func(t *testing.T) {
+	t.Run("read", func(t *testing.T) {
 		if _, err := st.IssueByRef(ctx, spyRef); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("SPY lit l'issue: erreur = %v, attendu ErrNotFound", err)
+			t.Errorf("SPY reads the issue: error = %v, want ErrNotFound", err)
 		}
 	})
 
@@ -249,49 +249,49 @@ func TestIssuesAreInvisibleToThirdProjects(t *testing.T) {
 			t.Fatalf("ListIssues: %v", err)
 		}
 		if len(issues) != 0 {
-			t.Errorf("SPY liste %d issues, attendu 0", len(issues))
+			t.Errorf("SPY lists %d issues, want 0", len(issues))
 		}
 	})
 
-	t.Run("fil de messages", func(t *testing.T) {
+	t.Run("message thread", func(t *testing.T) {
 		messages, total, err := st.ListMessages(ctx, spyRef, issue.ID, 50)
 		if err != nil {
 			t.Fatalf("ListMessages: %v", err)
 		}
 		if total != 0 {
-			t.Errorf("SPY lit un total de %d, attendu 0 : le compteur ne doit pas fuir hors du scope", total)
+			t.Errorf("SPY reads a total of %d, want 0: the counter must not leak outside the scope", total)
 		}
 		if len(messages) != 0 {
-			t.Errorf("SPY lit %d messages, attendu 0 (même en connaissant l'identifiant)", len(messages))
+			t.Errorf("SPY reads %d messages, want 0 (even knowing the identifier)", len(messages))
 		}
 	})
 
-	t.Run("réponse", func(t *testing.T) {
-		if _, err := st.Answer(ctx, store.Answer{Ref: spyRef, Body: "je m'invite"}); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("SPY répond: erreur = %v, attendu ErrNotFound", err)
+	t.Run("answer", func(t *testing.T) {
+		if _, err := st.Answer(ctx, store.Answer{Ref: spyRef, Body: "letting myself in"}); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("SPY answers: error = %v, want ErrNotFound", err)
 		}
 	})
 
-	t.Run("clôture", func(t *testing.T) {
-		if _, err := st.Answer(ctx, store.Answer{Ref: spyRef, Body: "je ferme", Close: true}); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("SPY ferme: erreur = %v, attendu ErrNotFound", err)
+	t.Run("closing", func(t *testing.T) {
+		if _, err := st.Answer(ctx, store.Answer{Ref: spyRef, Body: "closing it", Close: true}); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("SPY closes: error = %v, want ErrNotFound", err)
 		}
 	})
 
-	// La conversation est intacte pour ses deux participants.
+	// The conversation is untouched for both of its participants.
 	for _, caller := range []project{web, core} {
 		still, err := st.IssueByRef(ctx, refFor(caller, core, issue.Number))
 		if err != nil {
-			t.Fatalf("IssueByRef pour %s: %v", caller.key, err)
+			t.Fatalf("IssueByRef for %s: %v", caller.key, err)
 		}
 		if still.State != "open" {
-			t.Errorf("l'issue vue par %s est en %q, attendu open", caller.key, still.State)
+			t.Errorf("the issue seen by %s is in %q, want open", caller.key, still.State)
 		}
 	}
 }
 
-// Une issue ne franchit jamais la frontière d'une team, et une tentative ne doit pas révéler
-// l'existence du projet visé — ni faire avancer son compteur.
+// An issue never crosses a team boundary, and an attempt must reveal neither the existence of the
+// target project — nor push its counter forward.
 func TestIssuesCannotCrossTeams(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -302,26 +302,26 @@ func TestIssuesCannotCrossTeams(t *testing.T) {
 	sibling := newProject(t, db, teamA, "OPS")
 	foreign := newProject(t, db, teamB, "CORE")
 
-	// WEB est de confiance avec un frère de SA team. Sans cette arête, ce test resterait vert
-	// pour la mauvaise raison : le graphe vide masquerait la frontière de team qu'il existe pour
-	// prouver, et le rendrait indifférent à une régression de scope.
+	// WEB is trusted with a sibling of ITS OWN team. Without that edge, this test would stay green
+	// for the wrong reason: the empty graph would mask the team boundary it exists to prove, and
+	// would make it indifferent to a scope regression.
 	trust(t, db, web, sibling)
 
-	// La frontière n'est pas seulement une absence de résultat : la paire inter-team est NON
-	// INSÉRABLE, quel que soit le team_id passé. Aucun humain ne peut donc ouvrir ce canal.
+	// The boundary is not merely an absence of results: the cross-team pair is NOT INSERTABLE,
+	// whatever team_id is passed. No human can therefore open that channel.
 	for _, claimed := range []struct {
 		name   string
 		teamID uuid.UUID
 	}{
-		{"team de l'émetteur", teamA},
-		{"team du destinataire", teamB},
+		{"sender's team", teamA},
+		{"recipient's team", teamB},
 	} {
 		if _, err := db.Exec(
 			`INSERT INTO project_trust (team_id, low_project_id, high_project_id)
 			 VALUES ($1, least($2::uuid, $3::uuid), greatest($2::uuid, $3::uuid))`,
 			claimed.teamID, web.id, foreign.id,
 		); err == nil {
-			t.Fatalf("arête inter-team insérée en annonçant la %s, attendu une violation de clé étrangère", claimed.name)
+			t.Fatalf("cross-team edge inserted while claiming the %s, want a foreign key violation", claimed.name)
 		}
 	}
 
@@ -329,41 +329,41 @@ func TestIssuesCannotCrossTeams(t *testing.T) {
 		_, err := tx.CreateIssue(ctx, store.NewIssue{
 			TeamID:          teamA,
 			AuthorProjectID: web.id,
-			ToProjectKey:    "CORE", // existe, mais dans la team B
-			Title:           "traversée de team",
+			ToProjectKey:    "CORE", // exists, but in team B
+			Title:           "team crossing",
 		})
 		return err
 	})
 	if !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("issue vers une autre team: erreur = %v, attendu ErrNotFound", err)
+		t.Fatalf("issue towards another team: error = %v, want ErrNotFound", err)
 	}
 
-	// Une clé qui n'existe nulle part échoue de la MÊME façon : « inexistant » et « hors team »
-	// restent indiscernables, sinon on pourrait cartographier les projets des autres teams.
+	// A key that exists nowhere fails the SAME way: "does not exist" and "outside the team" stay
+	// indistinguishable, otherwise one could map out the projects of other teams.
 	err = st.WithTx(ctx, func(tx store.Store) error {
 		_, err := tx.CreateIssue(ctx, store.NewIssue{
 			TeamID:          teamA,
 			AuthorProjectID: web.id,
 			ToProjectKey:    "NOPE",
-			Title:           "clé inexistante",
+			Title:           "non-existent key",
 		})
 		return err
 	})
 	if !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("issue vers une clé inconnue: erreur = %v, attendu ErrNotFound", err)
+		t.Fatalf("issue towards an unknown key: error = %v, want ErrNotFound", err)
 	}
 
-	// Le compteur du projet étranger n'a pas bougé : on ne peut pas le faire avancer à distance.
+	// The foreign project's counter has not moved: it cannot be pushed forward from a distance.
 	var next int64
 	if err := db.QueryRow("SELECT next_number FROM projects WHERE id = $1", foreign.id).Scan(&next); err != nil {
-		t.Fatalf("lecture du compteur: %v", err)
+		t.Fatalf("reading the counter: %v", err)
 	}
 	if next != 1 {
-		t.Errorf("compteur du projet étranger = %d, attendu 1 (aucun numéro consommé)", next)
+		t.Errorf("foreign project counter = %d, want 1 (no number consumed)", next)
 	}
 }
 
-// tasks et issues partagent le compteur du projet : une référence désigne toujours un seul objet.
+// Tasks and issues share the project counter: a reference always names one single object.
 func TestIssuesAndTasksShareTheProjectCounter(t *testing.T) {
 	st, db := newStore(t)
 	teamID := newTeam(t, db)
@@ -371,45 +371,45 @@ func TestIssuesAndTasksShareTheProjectCounter(t *testing.T) {
 	core := newProject(t, db, teamID, "CORE")
 	trust(t, db, web, core)
 
-	first := open(t, st, web, core, "première issue chez CORE")
+	first := open(t, st, web, core, "first issue at CORE")
 	if first.Number != 1 {
-		t.Fatalf("numéro de la première issue = %d, attendu 1", first.Number)
+		t.Fatalf("number of the first issue = %d, want 1", first.Number)
 	}
 
-	// Une tâche créée ensuite dans CORE prend le numéro suivant, pas le même.
+	// A task created in CORE afterwards takes the next number, not the same one.
 	var claimed int64
 	if err := db.QueryRow(
 		"UPDATE projects SET next_number = next_number + 1 WHERE id = $1 RETURNING next_number - 1",
 		core.id,
 	).Scan(&claimed); err != nil {
-		t.Fatalf("réservation d'un numéro de tâche: %v", err)
+		t.Fatalf("reserving a task number: %v", err)
 	}
 	if claimed != 2 {
-		t.Errorf("numéro de la tâche = %d, attendu 2 (compteur partagé avec les issues)", claimed)
+		t.Errorf("task number = %d, want 2 (counter shared with issues)", claimed)
 	}
 
-	second := open(t, st, web, core, "seconde issue chez CORE")
+	second := open(t, st, web, core, "second issue at CORE")
 	if second.Number != 3 {
-		t.Errorf("numéro de la seconde issue = %d, attendu 3", second.Number)
+		t.Errorf("number of the second issue = %d, want 3", second.Number)
 	}
 
-	// Le compteur de WEB, lui, n'a pas bougé : chaque projet a le sien.
+	// WEB's own counter has not moved: every project has its own.
 	var webNext int64
 	if err := db.QueryRow("SELECT next_number FROM projects WHERE id = $1", web.id).Scan(&webNext); err != nil {
-		t.Fatalf("lecture du compteur de WEB: %v", err)
+		t.Fatalf("reading WEB's counter: %v", err)
 	}
 	if webNext != 1 {
-		t.Errorf("compteur de WEB = %d, attendu 1 : ouvrir une issue consomme le numéro du destinataire", webNext)
+		t.Errorf("WEB counter = %d, want 1: opening an issue consumes the recipient's number", webNext)
 	}
 }
 
-// Une question à son propre projet n'a pas de sens : elle serait à la fois entrante et sortante,
-// et ne pourrait jamais atteindre `answered` puisque la transition dépend de l'émetteur.
+// A question to one's own project makes no sense: it would be incoming and outgoing at once, and
+// could never reach `answered` since the transition depends on the sender.
 //
-// Depuis le graphe de confiance, le refus est ErrNotFound et non plus ErrConflict : l'auto-adressage
-// donne least = greatest, forme que project_trust_ordered rend NON INSÉRABLE, donc jamais présente
-// dans le graphe. La CHECK issues_not_self n'est plus atteinte — le refus devient uniforme avec
-// celui d'une clé inconnue, d'une autre team ou d'une paire non déclarée, et c'est le but.
+// Since the trust graph, the refusal is ErrNotFound rather than ErrConflict: self-addressing gives
+// least = greatest, a shape project_trust_ordered makes NOT INSERTABLE, hence never present in the
+// graph. The issues_not_self CHECK is no longer reached — the refusal becomes uniform with that of
+// an unknown key, of another team or of an undeclared pair, and that is the point.
 func TestSelfIssueIsRejectedByTheDatabase(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -417,7 +417,7 @@ func TestSelfIssueIsRejectedByTheDatabase(t *testing.T) {
 	web := newProject(t, db, teamID, "WEB")
 	core := newProject(t, db, teamID, "CORE")
 
-	// WEB a un voisin déclaré : le refus ci-dessous ne peut donc pas venir d'un graphe vide.
+	// WEB has a declared neighbour: the refusal below therefore cannot come from an empty graph.
 	trust(t, db, web, core)
 
 	err := st.WithTx(ctx, func(tx store.Store) error {
@@ -425,31 +425,31 @@ func TestSelfIssueIsRejectedByTheDatabase(t *testing.T) {
 			TeamID:          teamID,
 			AuthorProjectID: web.id,
 			ToProjectKey:    "WEB",
-			Title:           "je me parle à moi-même",
+			Title:           "talking to myself",
 		})
 		return err
 	})
 	if !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("issue vers soi-même: erreur = %v, attendu ErrNotFound (aucune auto-arête n'est insérable)", err)
+		t.Fatalf("issue towards oneself: error = %v, want ErrNotFound (no self-edge is insertable)", err)
 	}
 
-	// L'auto-arête est refusée par la base elle-même : la propriété ci-dessus ne repose pas sur
-	// une convention d'écriture, mais sur une contrainte.
+	// The self-edge is refused by the database itself: the property above does not rest on a writing
+	// convention, but on a constraint.
 	if _, err := db.Exec(
 		`INSERT INTO project_trust (team_id, low_project_id, high_project_id) VALUES ($1, $2, $2)`,
 		teamID, web.id,
 	); err == nil {
-		t.Fatal("une auto-arête a été insérée, attendu une violation de project_trust_ordered")
+		t.Fatal("a self-edge was inserted, want a project_trust_ordered violation")
 	}
 
-	// Et le compteur de WEB n'a pas bougé : un refus ne consomme aucun numéro, y compris quand
-	// l'émetteur et le destinataire sont le même projet.
+	// And WEB's counter has not moved: a refusal consumes no number, including when sender and
+	// recipient are the same project.
 	var next int64
 	if err := db.QueryRow("SELECT next_number FROM projects WHERE id = $1", web.id).Scan(&next); err != nil {
-		t.Fatalf("lecture du compteur de WEB: %v", err)
+		t.Fatalf("reading WEB's counter: %v", err)
 	}
 	if next != 1 {
-		t.Errorf("compteur de WEB = %d, attendu 1 (aucun numéro consommé par un auto-adressage refusé)", next)
+		t.Errorf("WEB counter = %d, want 1 (no number consumed by a refused self-addressing)", next)
 	}
 }
 
@@ -461,22 +461,22 @@ func TestListIssuesFiltersByRoleAndState(t *testing.T) {
 	core := newProject(t, db, teamID, "CORE")
 	trust(t, db, web, core)
 
-	outgoing := open(t, st, web, core, "WEB demande à CORE")
-	open(t, st, core, web, "CORE demande à WEB")
+	outgoing := open(t, st, web, core, "WEB asks CORE")
+	open(t, st, core, web, "CORE asks WEB")
 
 	base := store.IssueFilter{TeamID: teamID, ProjectID: web.id, Limit: 50}
 
-	t.Run("les deux sens sans filtre", func(t *testing.T) {
+	t.Run("both directions, no filter", func(t *testing.T) {
 		issues, err := st.ListIssues(ctx, base)
 		if err != nil {
 			t.Fatalf("ListIssues: %v", err)
 		}
 		if len(issues) != 2 {
-			t.Fatalf("%d issues, attendu 2", len(issues))
+			t.Fatalf("%d issues, want 2", len(issues))
 		}
 	})
 
-	t.Run("entrantes", func(t *testing.T) {
+	t.Run("incoming", func(t *testing.T) {
 		filter := base
 		filter.Role = "incoming"
 		issues, err := st.ListIssues(ctx, filter)
@@ -484,11 +484,11 @@ func TestListIssuesFiltersByRoleAndState(t *testing.T) {
 			t.Fatalf("ListIssues: %v", err)
 		}
 		if len(issues) != 1 || !issues[0].Incoming {
-			t.Fatalf("%d issues entrantes pour WEB, attendu 1 marquée entrante", len(issues))
+			t.Fatalf("%d incoming issues for WEB, want 1 marked incoming", len(issues))
 		}
 	})
 
-	t.Run("sortantes", func(t *testing.T) {
+	t.Run("outgoing", func(t *testing.T) {
 		filter := base
 		filter.Role = "outgoing"
 		issues, err := st.ListIssues(ctx, filter)
@@ -496,21 +496,21 @@ func TestListIssuesFiltersByRoleAndState(t *testing.T) {
 			t.Fatalf("ListIssues: %v", err)
 		}
 		if len(issues) != 1 || issues[0].Incoming {
-			t.Fatalf("%d issues sortantes pour WEB, attendu 1 marquée sortante", len(issues))
+			t.Fatalf("%d outgoing issues for WEB, want 1 marked outgoing", len(issues))
 		}
 		if issues[0].ProjectKey != "CORE" {
-			t.Errorf("clé de la référence = %s, attendu CORE (le destinataire possède l'issue)",
+			t.Errorf("reference key = %s, want CORE (the recipient owns the issue)",
 				issues[0].ProjectKey)
 		}
 	})
 
-	t.Run("les closes sont exclues par défaut", func(t *testing.T) {
+	t.Run("closed ones are excluded by default", func(t *testing.T) {
 		if _, err := st.Answer(ctx, store.Answer{
 			Ref:   refFor(web, core, outgoing.Number),
-			Body:  "abandon",
+			Body:  "dropping it",
 			Close: true,
 		}); err != nil {
-			t.Fatalf("clôture: %v", err)
+			t.Fatalf("closing: %v", err)
 		}
 
 		issues, err := st.ListIssues(ctx, base)
@@ -518,7 +518,7 @@ func TestListIssuesFiltersByRoleAndState(t *testing.T) {
 			t.Fatalf("ListIssues: %v", err)
 		}
 		if len(issues) != 1 {
-			t.Errorf("%d issues actives, attendu 1", len(issues))
+			t.Errorf("%d active issues, want 1", len(issues))
 		}
 
 		filter := base
@@ -528,13 +528,13 @@ func TestListIssuesFiltersByRoleAndState(t *testing.T) {
 			t.Fatalf("ListIssues: %v", err)
 		}
 		if len(all) != 2 {
-			t.Errorf("%d issues au total, attendu 2", len(all))
+			t.Errorf("%d issues in total, want 2", len(all))
 		}
 	})
 }
 
-// Le rôle restreint ce qui est déjà visible ; il ne peut jamais l'élargir. Un projet tiers qui
-// demanderait « les entrantes » ne doit pas pour autant voir celles des autres.
+// The role narrows what is already visible; it can never widen it. A third-party project asking
+// for "the incoming ones" must not thereby see other people's.
 func TestRoleFilterNeverWidensVisibility(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -544,13 +544,12 @@ func TestRoleFilterNeverWidensVisibility(t *testing.T) {
 	core := newProject(t, db, teamID, "CORE")
 	spy := newProject(t, db, teamID, "SPY")
 
-	// Même raison qu'au test précédent : SPY est de confiance avec CORE, donc ce qu'il ne voit
-	// pas, il ne le voit pas parce qu'il ne participe pas — pas parce qu'il n'a pas le droit
-	// d'écrire.
+	// Same reason as in the previous test: SPY is trusted with CORE, so what it does not see, it
+	// does not see because it takes no part — not because it lacks the right to write.
 	trust(t, db, web, core)
 	trust(t, db, spy, core)
 
-	open(t, st, web, core, "conversation privée")
+	open(t, st, web, core, "private conversation")
 
 	for _, role := range []string{"", "incoming", "outgoing"} {
 		issues, err := st.ListIssues(ctx, store.IssueFilter{
@@ -560,13 +559,13 @@ func TestRoleFilterNeverWidensVisibility(t *testing.T) {
 			t.Fatalf("ListIssues(role=%q): %v", role, err)
 		}
 		if len(issues) != 0 {
-			t.Errorf("SPY voit %d issues avec role=%q, attendu 0", len(issues), role)
+			t.Errorf("SPY sees %d issues with role=%q, want 0", len(issues), role)
 		}
 	}
 }
 
-// L'imbrication de transactions doit échouer bruyamment : une seconde transaction attendrait sur
-// une autre connexion le verrou détenu par la première.
+// Nesting transactions must fail loudly: a second transaction would wait, on another connection,
+// for the lock the first one holds.
 func TestNestedTransactionIsRefused(t *testing.T) {
 	st, _ := newStore(t)
 
@@ -574,17 +573,17 @@ func TestNestedTransactionIsRefused(t *testing.T) {
 		return tx.WithTx(context.Background(), func(store.Store) error { return nil })
 	})
 	if err == nil {
-		t.Fatal("une transaction imbriquée a été acceptée")
+		t.Fatal("a nested transaction was accepted")
 	}
-	if !strings.Contains(err.Error(), "imbriquée") {
-		t.Errorf("erreur = %v, attendu un refus explicite d'imbrication", err)
+	if !strings.Contains(err.Error(), "nested") {
+		t.Errorf("error = %v, want an explicit refusal of nesting", err)
 	}
 }
 
-// Miroir de TestCancelledRequestCreatesNothing côté issue, sur le chemin le plus coûteux : une
-// issue dupliquée pollue l'inbox d'un AUTRE repo. Quand le client abandonne, le contexte est
-// annulé et la transaction avec lui — aucune issue, et surtout aucun numéro consommé chez le
-// destinataire, dont le compteur n'appartient pas à l'émetteur.
+// Mirror of TestCancelledRequestCreatesNothing on the issue side, on the costliest path: a
+// duplicated issue pollutes ANOTHER repo's inbox. When the client gives up, the context is
+// cancelled and the transaction with it — no issue, and above all no number consumed at the
+// recipient's, whose counter does not belong to the sender.
 func TestCancelledRequestOpensNothing(t *testing.T) {
 	st, db := newStore(t)
 	teamID := newTeam(t, db)
@@ -598,45 +597,45 @@ func TestCancelledRequestOpensNothing(t *testing.T) {
 			TeamID:          teamID,
 			AuthorProjectID: frnt.id,
 			ToProjectKey:    core.key,
-			Title:           "question dont la réponse se perdra",
+			Title:           "question whose answer will be lost",
 		})
 		if err != nil {
 			return err
 		}
 
-		// Le client abandonne une fois le numéro du destinataire réservé.
+		// The client gives up once the recipient's number is reserved.
 		cancel()
 
-		return tx.AddFirstMessage(ctx, created.ID, frnt.id, "corps de la question")
+		return tx.AddFirstMessage(ctx, created.ID, frnt.id, "body of the question")
 	})
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("erreur = %v, attendu context.Canceled", err)
+		t.Fatalf("error = %v, want context.Canceled", err)
 	}
 
 	var count int
 	if err := db.QueryRow("SELECT count(*) FROM issues WHERE team_id = $1", teamID).Scan(&count); err != nil {
-		t.Fatalf("comptage des issues: %v", err)
+		t.Fatalf("counting the issues: %v", err)
 	}
 	if count != 0 {
-		t.Fatalf("%d issue(s) créée(s) par une requête annulée, attendu 0", count)
+		t.Fatalf("%d issue(s) created by a cancelled request, want 0", count)
 	}
 
-	// Le rejeu de l'agent prend le numéro 1 : le compteur du destinataire n'a pas bougé.
-	replayed := open(t, st, frnt, core, "question dont la réponse se perdra")
+	// The agent's replay takes number 1: the recipient's counter has not moved.
+	replayed := open(t, st, frnt, core, "question whose answer will be lost")
 	if replayed.Number != 1 {
-		t.Errorf("numéro = %d après annulation, attendu 1 (compteur du destinataire intact)", replayed.Number)
+		t.Errorf("number = %d after cancellation, want 1 (recipient counter untouched)", replayed.Number)
 	}
 }
 
-// M5 — le refus vit dans la QUERY, pas dans un `if` de service.
+// M5 — the refusal lives in the QUERY, not in a service `if`.
 //
-// Ce test court-circuite entièrement le service : il fabrique un store.NewIssue à la main et
-// appelle le store directement, exactement comme le ferait un appelant fautif d'un futur module.
-// Il doit rendre ErrNotFound quand même. Si le prédicat migrait un jour dans un `if` en amont, ce
-// test serait le seul du dépôt à virer au rouge.
+// This test short-circuits the service entirely: it builds a store.NewIssue by hand and calls the
+// store directly, exactly as a faulty caller from some future module would. It must return
+// ErrNotFound all the same. Were the predicate ever to migrate into an upstream `if`, this test
+// would be the only one in the repo to go red.
 //
-// Il prouve aussi la SYMÉTRIE de l'arête : une seule ligne, et le canal s'ouvre dans les deux
-// sens. Une table orientée aurait laissé passer un sens et refusé l'autre.
+// It also proves the edge's SYMMETRY: a single row, and the channel opens both ways. A directed
+// table would have let one direction through and refused the other.
 func TestTrustPredicateLivesInTheQueryNotInAService(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -646,7 +645,7 @@ func TestTrustPredicateLivesInTheQueryNotInAService(t *testing.T) {
 	core := newProject(t, db, teamID, "CORE")
 	ops := newProject(t, db, teamID, "OPS")
 
-	// FRNT ↔ CORE seulement. OPS existe, est dans la même team, et n'a aucune arête.
+	// FRNT ↔ CORE only. OPS exists, is in the same team, and has no edge.
 	trust(t, db, frnt, core)
 
 	createDirectly := func(from, to project) error {
@@ -655,64 +654,64 @@ func TestTrustPredicateLivesInTheQueryNotInAService(t *testing.T) {
 				TeamID:          from.teamID,
 				AuthorProjectID: from.id,
 				ToProjectKey:    to.key,
-				Title:           "appel direct au store, service court-circuité",
+				Title:           "direct store call, service short-circuited",
 			})
 			return err
 		})
 	}
 
-	t.Run("paire non déclarée", func(t *testing.T) {
+	t.Run("undeclared pair", func(t *testing.T) {
 		if err := createDirectly(frnt, ops); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("FRNT → OPS: erreur = %v, attendu ErrNotFound", err)
+			t.Errorf("FRNT → OPS: error = %v, want ErrNotFound", err)
 		}
 	})
 
-	t.Run("paire non déclarée, sens inverse", func(t *testing.T) {
+	t.Run("undeclared pair, reverse direction", func(t *testing.T) {
 		if err := createDirectly(ops, frnt); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("OPS → FRNT: erreur = %v, attendu ErrNotFound", err)
+			t.Errorf("OPS → FRNT: error = %v, want ErrNotFound", err)
 		}
 	})
 
-	// L'arête est une PAIRE, pas une flèche : elle a été posée dans le sens FRNT → CORE, et les
-	// deux sens passent.
-	t.Run("paire déclarée, sens de déclaration", func(t *testing.T) {
+	// The edge is a PAIR, not an arrow: it was laid down in the FRNT → CORE direction, and both
+	// directions go through.
+	t.Run("declared pair, declaration direction", func(t *testing.T) {
 		if err := createDirectly(frnt, core); err != nil {
-			t.Errorf("FRNT → CORE: %v, attendu succès", err)
+			t.Errorf("FRNT → CORE: %v, want success", err)
 		}
 	})
 
-	t.Run("paire déclarée, sens inverse", func(t *testing.T) {
+	t.Run("declared pair, reverse direction", func(t *testing.T) {
 		if err := createDirectly(core, frnt); err != nil {
-			t.Errorf("CORE → FRNT: %v, attendu succès (l'arête est symétrique)", err)
+			t.Errorf("CORE → FRNT: %v, want success (the edge is symmetric)", err)
 		}
 	})
 
-	// Le refus est indiscernable d'une clé inconnue : même erreur, sur le même chemin.
-	t.Run("clé inconnue", func(t *testing.T) {
+	// The refusal is indistinguishable from an unknown key: same error, on the same path.
+	t.Run("unknown key", func(t *testing.T) {
 		err := st.WithTx(ctx, func(tx store.Store) error {
 			_, err := tx.CreateIssue(ctx, store.NewIssue{
 				TeamID:          teamID,
 				AuthorProjectID: frnt.id,
 				ToProjectKey:    "NOPE",
-				Title:           "clé qui n'existe nulle part",
+				Title:           "key that exists nowhere",
 			})
 			return err
 		})
 		if !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("FRNT → NOPE: erreur = %v, attendu ErrNotFound, identique à une paire non déclarée", err)
+			t.Errorf("FRNT → NOPE: error = %v, want ErrNotFound, identical to an undeclared pair", err)
 		}
 	})
 }
 
-// M2 — un refus de confiance ne laisse AUCUNE trace.
+// M2 — a trust refusal leaves NO trace at all.
 //
-// C'est le test que la mutation « déplacer l'EXISTS sur l'INSERT ... SELECT » fait virer au rouge.
-// Sous cette mutation l'UPDATE matche toujours : le compteur du destinataire avance, et la ligne
-// projet reste verrouillée pendant toute la transaction du refusé — un émetteur non autorisé
-// gagnerait un canal d'écriture chez sa victime ET un déni de service sur un tiers légitime.
+// This is the test the "move the EXISTS onto the INSERT ... SELECT" mutation turns red. Under that
+// mutation the UPDATE still matches: the recipient's counter moves forward, and the project row
+// stays locked for the whole of the refused sender's transaction — an unauthorised sender would
+// gain a write channel at its victim's AND a denial of service on a legitimate third party.
 //
-// Les quatre compteurs sont relevés avant et après, et comparés à l'identique. Aucune assertion
-// de latence : ce que la mutation ouvre se mesure déterministement.
+// The four counters are read before and after, and compared as-is. No latency assertion: what the
+// mutation opens is measured deterministically.
 func TestRefusedIssueLeavesNoTrace(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -736,76 +735,76 @@ func TestRefusedIssueLeavesNoTrace(t *testing.T) {
 			        (SELECT count(*) FROM project_trust  WHERE team_id = $2)`,
 			ops.id, teamID,
 		).Scan(&s.nextNumber, &s.issues, &s.messages, &s.events, &s.edges); err != nil {
-			t.Fatalf("relevé de l'état: %v", err)
+			t.Fatalf("reading the state: %v", err)
 		}
 		return s
 	}
 
 	before := take()
 
-	// LA TRANSACTION EST COMMITÉE, et c'est tout l'intérêt du test.
+	// THE TRANSACTION IS COMMITTED, and that is the whole point of the test.
 	//
-	// Renvoyer l'erreur ferait ROLLBACK, et le rollback masquerait la mutation : sous « EXISTS
-	// déplacé sur l'INSERT », l'UPDATE matche, next_number avance, puis la transaction annule
-	// tout — et le test resterait vert en observant une propriété que le prédicat ne fournit pas.
-	// La garantie du canal 3 est « fermé PAR LE PRÉDICAT, sûr même si la transaction est
-	// commitée » : on la vérifie donc en commitant.
+	// Returning the error would ROLL BACK, and the rollback would mask the mutation: under "EXISTS
+	// moved onto the INSERT", the UPDATE matches, next_number moves forward, then the transaction
+	// undoes everything — and the test would stay green while observing a property the predicate
+	// does not provide. Channel 3's guarantee is "closed BY THE PREDICATE, safe even if the
+	// transaction is committed": so we check it by committing.
 	var refusal error
 	if err := st.WithTx(ctx, func(tx store.Store) error {
 		_, refusal = tx.CreateIssue(ctx, store.NewIssue{
 			TeamID:          teamID,
 			AuthorProjectID: frnt.id,
 			ToProjectKey:    ops.key,
-			Title:           "tentative vers une paire non déclarée",
+			Title:           "attempt towards an undeclared pair",
 		})
-		return nil // commit délibéré
+		return nil // deliberate commit
 	}); err != nil {
-		t.Fatalf("la transaction du refus n'a pas commité: %v", err)
+		t.Fatalf("the refusal transaction did not commit: %v", err)
 	}
 	if !errors.Is(refusal, store.ErrNotFound) {
-		t.Fatalf("erreur = %v, attendu ErrNotFound", refusal)
+		t.Fatalf("error = %v, want ErrNotFound", refusal)
 	}
 
 	after := take()
 
 	if after.nextNumber != before.nextNumber {
-		t.Errorf("next_number d'OPS = %d, attendu %d : un refus ne réserve aucun numéro chez la victime",
+		t.Errorf("OPS next_number = %d, want %d: a refusal reserves no number at the victim's",
 			after.nextNumber, before.nextNumber)
 	}
 	if after.issues != before.issues {
-		t.Errorf("%d issues, attendu %d", after.issues, before.issues)
+		t.Errorf("%d issues, want %d", after.issues, before.issues)
 	}
 	if after.messages != before.messages {
-		t.Errorf("%d messages, attendu %d", after.messages, before.messages)
+		t.Errorf("%d messages, want %d", after.messages, before.messages)
 	}
 	if after.events != before.events {
-		t.Errorf("%d événements, attendu %d", after.events, before.events)
+		t.Errorf("%d events, want %d", after.events, before.events)
 	}
-	// Un refus n'écrit JAMAIS dans le graphe : ni pour se souvenir, ni pour « apprendre » la
-	// paire. Le graphe n'a qu'un seul auteur, l'humain sous token admin.
+	// A refusal NEVER writes into the graph: neither to remember, nor to "learn" the pair. The graph
+	// has a single author, the human under an admin token.
 	if after.edges != before.edges {
-		t.Errorf("%d arêtes, attendu %d : un refus n'écrit jamais dans project_trust", after.edges, before.edges)
+		t.Errorf("%d edges, want %d: a refusal never writes into project_trust", after.edges, before.edges)
 	}
 
-	// Et le canal reste ouvrable dès que l'humain déclare la paire : le refus n'a rien cassé.
+	// And the channel stays openable as soon as the human declares the pair: the refusal broke nothing.
 	trust(t, db, frnt, ops)
-	opened := open(t, st, frnt, ops, "la même question, une fois la paire déclarée")
+	opened := open(t, st, frnt, ops, "the same question, once the pair is declared")
 	if opened.Number != 1 {
-		t.Errorf("numéro = %d après déclaration, attendu 1 : le refus n'avait consommé aucun numéro", opened.Number)
+		t.Errorf("number = %d after declaration, want 1: the refusal had consumed no number", opened.Number)
 	}
 }
 
-// M2, second canal — un refus de confiance ne POSE AUCUN VERROU sur la ligne du destinataire.
+// M2, second channel — a trust refusal TAKES NO LOCK on the recipient's row.
 //
-// C'est la propriété qui empêche un repo non autorisé de faire un déni de service ciblé sur un
-// tiers légitime : sans elle, il lui suffit d'ouvrir une transaction, de tenter une issue vers sa
-// victime et de traîner, pour bloquer tout créateur légitime pendant ce temps. Mesuré à la
-// conception : 1933 ms contre 73 ms.
+// This is the property that stops an unauthorised repo from running a targeted denial of service on
+// a legitimate third party: without it, all it takes is opening a transaction, attempting an issue
+// towards its victim and dragging its feet, to block every legitimate creator for that whole time.
+// Measured at design time: 1933 ms against 73 ms.
 //
-// La sonde est FOR NO KEY UPDATE ... NOWAIT depuis une SECONDE connexion, pendant que la
-// transaction du refus est encore ouverte. Elle est déterministe : soit le verrou est détenu et
-// Postgres lève 55P03 immédiatement, soit il ne l'est pas et la sonde passe. Aucune assertion de
-// latence — un test de latence en CI est rouge un jour sur trois, donc un test qu'on désactive.
+// The probe is FOR NO KEY UPDATE ... NOWAIT from a SECOND connection, while the refusal's
+// transaction is still open. It is deterministic: either the lock is held and Postgres raises 55P03
+// immediately, or it is not and the probe goes through. No latency assertion — a latency test in CI
+// is red one day in three, hence a test people switch off.
 func TestRefusedIssueLocksNothing(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -820,12 +819,11 @@ func TestRefusedIssueLocksNothing(t *testing.T) {
 			TeamID:          teamID,
 			AuthorProjectID: frnt.id,
 			ToProjectKey:    ops.key,
-			Title:           "tentative vers une paire non déclarée",
+			Title:           "attempt towards an undeclared pair",
 		})
 
-		// Toujours DANS la transaction du refus : c'est le seul moment où le verrou existerait.
-		// db est un pool, donc cette requête part sur une autre connexion que celle de la
-		// transaction.
+		// Still INSIDE the refusal's transaction: that is the only moment the lock would exist. db
+		// is a pool, so this query leaves on a different connection from the transaction's.
 		var id uuid.UUID
 		probe = db.QueryRow(
 			"SELECT id FROM projects WHERE id = $1 FOR NO KEY UPDATE NOWAIT", ops.id,
@@ -833,29 +831,29 @@ func TestRefusedIssueLocksNothing(t *testing.T) {
 
 		return nil
 	}); err != nil {
-		t.Fatalf("la transaction du refus n'a pas commité: %v", err)
+		t.Fatalf("the refusal transaction did not commit: %v", err)
 	}
 
 	if !errors.Is(refusal, store.ErrNotFound) {
-		t.Fatalf("erreur = %v, attendu ErrNotFound", refusal)
+		t.Fatalf("error = %v, want ErrNotFound", refusal)
 	}
 	if probe != nil {
-		t.Errorf("la ligne d'OPS était verrouillée pendant le refus (%v) : un émetteur non autorisé "+
-			"peut bloquer un créateur légitime en traînant dans sa transaction", probe)
+		t.Errorf("the OPS row was locked during the refusal (%v): an unauthorised sender can block a "+
+			"legitimate creator by dragging its feet inside its transaction", probe)
 	}
 }
 
-// LA BORNE DU FIL EST DANS LA QUERY, PAS EN MÉMOIRE.
+// THE THREAD BOUND IS IN THE QUERY, NOT IN MEMORY.
 //
-// Le service tranchait le résultat après coup : la base sérialisait le fil ENTIER, le réseau le
-// transportait, et Go en jetait tout sauf les derniers messages. Le contexte de l'agent était
-// protégé ; ni la base, ni le réseau, ni le tas du process ne l'étaient. Sur une issue les corps
-// sont COMPLETS — c'est la restitution la plus lourde du produit.
+// The service used to slice the result afterwards: the database serialised the WHOLE thread, the
+// network carried it, and Go threw away everything but the last messages. The agent's context was
+// protected; neither the database, nor the network, nor the process heap were. On an issue the
+// bodies are COMPLETE — it is the heaviest thing the product hands back.
 //
-// Ce test appelle le STORE directement, donc il ne peut pas être satisfait par un découpage en
-// aval : si la query rend tout, il vire au rouge.
+// This test calls the STORE directly, so it cannot be satisfied by slicing downstream: if the query
+// returns everything, it goes red.
 //
-// MUTATION : retirer `LIMIT @lim` de ListIssueMessages fait tomber le sous-test « la query borne ».
+// MUTATION: removing `LIMIT @lim` from ListIssueMessages makes the "the query bounds" subtest fail.
 func TestIssueThreadIsBoundedByTheQuery(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -865,12 +863,12 @@ func TestIssueThreadIsBoundedByTheQuery(t *testing.T) {
 	core := newProject(t, db, teamID, "CORE")
 	trust(t, db, frnt, core)
 
-	issue := open(t, st, frnt, core, "fil long")
+	issue := open(t, st, frnt, core, "long thread")
 	ref := refFor(core, core, issue.Number)
 
-	// Le premier message vient de open() ; on en ajoute 24, soit 25 au total.
-	const ecrits = 25
-	for i := 1; i < ecrits; i++ {
+	// The first message comes from open(); we add 24 more, 25 in total.
+	const written = 25
+	for i := 1; i < written; i++ {
 		caller, target := core, core
 		if i%2 == 0 {
 			caller = frnt
@@ -883,54 +881,54 @@ func TestIssueThreadIsBoundedByTheQuery(t *testing.T) {
 		}
 	}
 
-	t.Run("la query borne", func(t *testing.T) {
+	t.Run("the query bounds", func(t *testing.T) {
 		messages, total, err := st.ListMessages(ctx, ref, issue.ID, 10)
 		if err != nil {
 			t.Fatalf("ListMessages: %v", err)
 		}
 		if len(messages) != 10 {
-			t.Errorf("%d messages rendus pour une limite de 10 : la borne n'est pas dans la query",
+			t.Errorf("%d messages returned for a limit of 10: the bound is not in the query",
 				len(messages))
 		}
-		// Le total est celui du fil ENTIER, pas de la fenêtre : sans lui, un agent croirait avoir
-		// lu toute la conversation.
-		if total != ecrits {
-			t.Errorf("total = %d, attendu %d : le compteur doit porter sur le fil entier", total, ecrits)
+		// The total is that of the WHOLE thread, not of the window: without it, an agent would
+		// believe it had read the entire conversation.
+		if total != written {
+			t.Errorf("total = %d, want %d: the counter must cover the whole thread", total, written)
 		}
 	})
 
-	t.Run("la fenêtre est la FIN du fil, dans l'ordre d'écriture", func(t *testing.T) {
+	t.Run("the window is the TAIL of the thread, in write order", func(t *testing.T) {
 		messages, _, err := st.ListMessages(ctx, ref, issue.ID, 10)
 		if err != nil {
 			t.Fatalf("ListMessages: %v", err)
 		}
 		if len(messages) != 10 {
-			t.Fatalf("%d messages, attendu 10", len(messages))
+			t.Fatalf("%d messages, want 10", len(messages))
 		}
-		// Les derniers écrits sont les messages 15 à 24.
+		// The last ones written are messages 15 to 24.
 		if messages[0].Body != "message 15" {
-			t.Errorf("premier message de la fenêtre = %q, attendu \"message 15\" : ce sont les "+
-				"DERNIERS messages qui portent l'état", messages[0].Body)
+			t.Errorf("first message of the window = %q, want \"message 15\": it is the LAST "+
+				"messages that carry the state", messages[0].Body)
 		}
 		if messages[9].Body != "message 24" {
-			t.Errorf("dernier message = %q, attendu \"message 24\" : le fil doit ressortir dans "+
-				"l'ordre d'écriture", messages[9].Body)
+			t.Errorf("last message = %q, want \"message 24\": the thread must come back out in "+
+				"write order", messages[9].Body)
 		}
 		for i := 1; i < len(messages); i++ {
 			if messages[i].CreatedAt.Before(messages[i-1].CreatedAt) {
-				t.Fatalf("le fil n'est pas dans l'ordre chronologique à l'indice %d", i)
+				t.Fatalf("the thread is not in chronological order at index %d", i)
 			}
 		}
 	})
 
-	t.Run("une limite plus large que le fil rend tout", func(t *testing.T) {
+	t.Run("a limit wider than the thread returns everything", func(t *testing.T) {
 		messages, total, err := st.ListMessages(ctx, ref, issue.ID, 1000)
 		if err != nil {
 			t.Fatalf("ListMessages: %v", err)
 		}
-		if len(messages) != ecrits || total != ecrits {
-			t.Errorf("%d messages / total %d, attendu %d : une borne large ne doit rien retirer",
-				len(messages), total, ecrits)
+		if len(messages) != written || total != written {
+			t.Errorf("%d messages / total %d, want %d: a wide bound must remove nothing",
+				len(messages), total, written)
 		}
 	})
 }

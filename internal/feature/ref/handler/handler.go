@@ -95,7 +95,7 @@ func (h *Handler) writeError(w http.ResponseWriter, err error) {
 func (h *Handler) scope(w http.ResponseWriter, r *http.Request) (teamID, projectID uuid.UUID, ok bool) {
 	p, found := auth.FromContext(r.Context())
 	if !found || p.Scope != auth.ScopeProject || p.TeamID == uuid.Nil || p.ProjectID == uuid.Nil {
-		log.Printf("ref handler: route sans token de projet: %s %s", r.Method, r.URL.Path)
+		log.Printf("ref handler: route without a project token: %s %s", r.Method, r.URL.Path)
 		h.writeJSON(w, http.StatusForbidden, errorBody{Error: "forbidden"})
 		return uuid.Nil, uuid.Nil, false
 	}

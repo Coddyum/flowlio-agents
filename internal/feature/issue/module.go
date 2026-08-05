@@ -4,11 +4,11 @@ package issue
 //
 // | Élément             | Résumé                                                   | Ligne |
 // |---------------------|----------------------------------------------------------|-------|
-// | NewModule           | Câble store → service → handler et renvoie le module       | 33    |
-// | mod                 | Module issue, porteur du handler et du middleware d'auth   | 48    |
-// | mod.Key             | Renvoie la clé du module                                   | 55    |
-// | mod.Routes          | Déclare les routes, middleware lié une seule fois          | 68    |
-// | requireProjectScope | Refuse tout token qui n'est pas scopé à un projet          | 88    |
+// | NewModule           | Wires store → service → handler and returns the module     | 33    |
+// | mod                 | The issue module, holding the handler and auth middleware  | 48    |
+// | mod.Key             | Returns the module key                                     | 55    |
+// | mod.Routes          | Declares the routes, middleware bound exactly once         | 68    |
+// | requireProjectScope | Rejects any token that is not scoped to a project          | 88    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -23,13 +23,13 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 )
 
-// Key identifie le module dans le FeatureRegistry et sert de préfixe à ses routes.
+// Key identifies the module in the FeatureRegistry and prefixes its routes.
 const Key = "issue"
 
-// NewModule câble la feature : store → service → handler.
+// NewModule wires the feature: store → service → handler.
 //
-// Le store reçoit RawDB : l'issue, son premier message et son événement s'écrivent dans une
-// seule transaction. *sql.DB s'arrête à cette couche.
+// The store gets RawDB: the issue, its first message and its event are written in a single
+// transaction. *sql.DB stops at that layer.
 func NewModule(cfg module.ModuleConfig) module.Module {
 	st := store.New(cfg.DB, cfg.RawDB)
 	svc := service.New(st)
@@ -41,30 +41,30 @@ func NewModule(cfg module.ModuleConfig) module.Module {
 	}
 }
 
-// mod porte le handler, le service et le service d'auth partagé.
+// mod holds the handler, the service and the shared auth service.
 //
-// Le service est retenu EN PLUS du handler parce que ce module a deux surfaces : HTTP, servie par
-// le handler, et le FeatureRegistry, servie par provider.go.
+// The service is kept ON TOP of the handler because this module has two surfaces: HTTP, served by
+// the handler, and the FeatureRegistry, served by provider.go.
 type mod struct {
 	h    *handler.Handler
 	svc  service.Service
 	auth auth.Service
 }
 
-// Key renvoie la clé du module.
+// Key returns the module key.
 func (m *mod) Key() string {
 	return Key
 }
 
-// Routes déclare les routes de la feature. Le middleware est lié ICI, une seule fois.
+// Routes declares the feature routes. The middleware is bound HERE, exactly once.
 //
-// Toutes les routes exigent un token de portée projet : une issue est un dialogue entre deux
-// repos, un token admin n'en est partie prenante d'aucun.
+// Every route requires a project-scoped token: an issue is a dialogue between two repos, and an
+// admin token is party to none of them.
 //
-// La clé de projet figure dans le chemin d'une référence (`/CORE/34`) parce qu'une issue
-// appartient au projet destinataire, qui n'est pas toujours celui de l'appelant. Ce n'est PAS un
-// paramètre de scope : la visibilité se décide sur le projet du token, dans la query. Une clé
-// désignant un projet dont l'appelant n'est ni auteur ni destinataire remonte 404.
+// The project key appears in a reference path (`/CORE/34`) because an issue belongs to the
+// recipient project, which is not always the caller's. It is NOT a scope parameter: visibility is
+// decided on the token's project, inside the query. A key naming a project of which the caller is
+// neither author nor recipient returns 404.
 func (m *mod) Routes() http.Handler {
 	r := http.NewServeMux()
 
@@ -81,10 +81,10 @@ func (m *mod) Routes() http.Handler {
 	return r
 }
 
-// requireProjectScope refuse tout principal qui n'est pas scopé à un projet.
+// requireProjectScope rejects any principal that is not scoped to a project.
 //
-// Il enveloppe le Middleware d'auth plutôt que de vivre dans les handlers : ajouter une route
-// sans passer par le helper se verrait immédiatement dans Routes.
+// It wraps the auth middleware rather than living inside the handlers: adding a route without
+// going through the helper shows up immediately in Routes.
 func requireProjectScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.FromContext(r.Context())

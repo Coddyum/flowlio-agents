@@ -8,26 +8,26 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 )
 
-// CreateIssue ouvre une question vers un projet frère de la même team.
+// CreateIssue opens a question towards a sibling project of the same team.
 //
-// L'issue, son premier message et son événement s'écrivent dans UNE transaction : un événement
-// perdu est une notification jamais reçue, et une issue sans message serait une question vide.
+// The issue, its first message and its event are written in ONE transaction: a lost event is a
+// notification never received, and an issue with no message would be an empty question.
 //
-// Le destinataire est désigné par sa clé, résolue DANS la query d'insertion. Une clé inconnue,
-// appartenant à une autre team, ou vers laquelle aucune confiance n'est déclarée, ne réserve aucun
-// numéro et remonte la MÊME erreur : on ne peut donc ni découvrir l'existence d'un projet d'une
-// autre team en essayant des clés, ni cartographier le graphe de confiance de la sienne.
+// The recipient is named by its key, resolved INSIDE the insert query. A key that is unknown,
+// belongs to another team, or has no declared trust towards it, reserves no number and yields the
+// SAME error: one can therefore neither discover that a project of another team exists by trying
+// keys, nor map out the trust graph of one's own.
 //
-// AUCUN CONTRÔLE D'AUTORISATION ICI, ET C'EST LA RÈGLE. Le destinataire, sa team et le droit de
-// lui écrire sont trois conditions du même WHERE, dans la même instruction. Un `if` ajouté ici
-// devrait re-résoudre la clé lisible en UUID, c'est-à-dire fabriquer à la main la query
-// d'énumération que le modèle refuse d'exposer.
+// NO AUTHORISATION CHECK HERE, AND THAT IS THE RULE. The recipient, its team and the right to write
+// to it are three conditions of the same WHERE, in the same statement. An `if` added here would
+// have to re-resolve the readable key into a UUID, that is, hand-build the enumeration query the
+// model refuses to expose.
 //
-// Un garde anti-auto-adressage a vécu ici jusqu'à FLWL-19. Il était MORT : la CHECK issues_not_self
-// levait à l'intérieur de tx.CreateIssue, donc le test qui suivait n'était jamais atteint et son
-// message n'a jamais été rendu à personne. Depuis le prédicat de confiance il est doublement
-// inatteignable — l'auto-adressage donne least = greatest, forme non insérable dans le graphe.
-// Le garde qui produit vraiment le message utile est côté client, cmd/flowlio/mcp_issue_tools.go.
+// A self-addressing guard lived here until FLWL-19. It was DEAD: the issues_not_self CHECK raised
+// inside tx.CreateIssue, so the test that followed was never reached and its message was never
+// returned to anyone. Since the trust predicate it is doubly unreachable — self-addressing gives
+// least = greatest, a shape not insertable in the graph. The guard that really produces the useful
+// message is client-side, in cmd/flowlio/mcp_issue_tools.go.
 func (s *service) CreateIssue(ctx context.Context, in CreateIssueInput) (Issue, error) {
 	if err := validateScope(in.TeamID, in.AuthorProjectID); err != nil {
 		return Issue{}, err
@@ -35,7 +35,7 @@ func (s *service) CreateIssue(ctx context.Context, in CreateIssueInput) (Issue, 
 
 	toProject := strings.ToUpper(strings.TrimSpace(in.ToProject))
 	if toProject == "" {
-		return Issue{}, fmt.Errorf("%w: projet destinataire manquant", ErrInvalidInput)
+		return Issue{}, fmt.Errorf("%w: missing recipient project", ErrInvalidInput)
 	}
 
 	title := strings.TrimSpace(in.Title)
@@ -58,11 +58,11 @@ func (s *service) CreateIssue(ctx context.Context, in CreateIssueInput) (Issue, 
 			Body:            body,
 		})
 		if err != nil {
-			return translateStore(err, "projet "+toProject)
+			return translateStore(err, "project "+toProject)
 		}
 
 		if err := tx.AddFirstMessage(ctx, created.ID, in.AuthorProjectID, body); err != nil {
-			return translateStore(err, "premier message")
+			return translateStore(err, "first message")
 		}
 
 		return translateStore(tx.AppendEvent(ctx, store.Event{
@@ -71,7 +71,7 @@ func (s *service) CreateIssue(ctx context.Context, in CreateIssueInput) (Issue, 
 			ActorProjectID: in.AuthorProjectID,
 			Kind:           store.KindIssueOpened,
 			SubjectID:      created.ID,
-		}), "événement d'ouverture")
+		}), "opening event")
 	})
 	if err != nil {
 		return Issue{}, err

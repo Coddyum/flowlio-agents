@@ -6,14 +6,14 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 )
 
-// maxThreadMessages borne le fil renvoyé. Un échange long ne doit pas entrer d'un bloc dans le
-// contexte d'un agent ; les derniers messages sont ceux qui portent l'état de la discussion.
+// maxThreadMessages bounds the thread returned. A long exchange must not enter an agent's context
+// in one block; the last messages are the ones carrying the state of the discussion.
 const maxThreadMessages = 10
 
-// GetIssue renvoie une issue et la fin de son fil.
+// GetIssue returns an issue and the tail of its thread.
 //
-// Les deux lectures portent la même clause de visibilité, appliquée indépendamment : la seconde
-// ne fait pas confiance au résultat de la première.
+// Both reads carry the same visibility clause, applied independently: the second one does not trust
+// the result of the first.
 func (s *service) GetIssue(ctx context.Context, ref Ref) (IssueDetail, error) {
 	if err := validateScope(ref.TeamID, ref.CallerProjectID); err != nil {
 		return IssueDetail{}, err
@@ -31,9 +31,9 @@ func (s *service) GetIssue(ctx context.Context, ref Ref) (IssueDetail, error) {
 		return IssueDetail{}, translateStore(err, "issue by ref")
 	}
 
-	// La borne part DANS la query : le store rend au plus maxThreadMessages lignes et le total
-	// réel. Trancher ici, comme avant, laissait la base sérialiser et transporter un fil entier
-	// dont le service jetait tout sauf la fin.
+	// The bound travels INSIDE the query: the store returns at most maxThreadMessages rows and the
+	// real total. Slicing here, as before, left the database serialising and carrying a whole thread
+	// of which the service threw away everything but the tail.
 	rows, total, err := s.store.ListMessages(ctx, storeRef, found.ID, maxThreadMessages)
 	if err != nil {
 		return IssueDetail{}, translateStore(err, "list messages")
