@@ -4,15 +4,17 @@ package service
 //
 // | Élément         | Résumé                                                        | Ligne |
 // |-----------------|---------------------------------------------------------------|-------|
-// | Service         | Contrat consommé par le handler task                            | 48    |
-// | service         | Implémentation, dépendante de l'interface store                 | 63    |
-// | New             | Crée le service task                                            | 68    |
-// | Task            | Une tâche telle qu'exposée par l'API                            | 74    |
-// | Note            | Une note de progression exposée par l'API                       | 87    |
-// | TaskDetail      | Une tâche et son fil de notes                                   | 98    |
-// | CreateTaskInput | Entrée de création d'une tâche                                  | 106   |
-// | ListTasksInput  | Critères de lecture du backlog                                  | 121   |
-// | UpdateTaskInput | Patch partiel d'une tâche, note de progression comprise         | 134   |
+// | Service         | Contrat consommé par le handler task                            | 50    |
+// | service         | Implémentation, dépendante de l'interface store                 | 78    |
+// | New             | Crée le service task                                            | 83    |
+// | Task            | Une tâche telle qu'exposée par l'API                            | 89    |
+// | Note            | Une note de progression exposée par l'API                       | 102   |
+// | TaskDetail      | Une tâche et son fil de notes                                   | 113   |
+// | CreateTaskInput | Entrée de création d'une tâche                                  | 121   |
+// | ListTasksInput  | Critères de lecture du backlog                                  | 136   |
+// | UpdateTaskInput | Patch partiel d'une tâche, note de progression comprise         | 149   |
+// | BlockTaskInput  | Ouverture d'une arête de blocage entre deux tâches du projet     | 187   |
+// | UnblockTaskInput| Libération à la main d'une arête nommée                          | 201   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -56,7 +58,20 @@ type Service interface {
 	// UpdateTask applique un patch et, si Note est fourni, écrit la note de progression dans la
 	// MÊME transaction : « passer en done et dire pourquoi » est une seule intention, donc une
 	// seule écriture, qui réussit ou échoue d'un bloc.
+	//
+	// C'est aussi ce qui LIBÈRE les arêtes de blocage : une tâche qui atteint son statut de
+	// libération, ou qui est archivée, débloque celles qui l'attendaient, dans la même transaction.
+	// Un chemin séparé aurait rendu possible « la bloquante est done, la bloquée l'ignore ».
 	UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, error)
+
+	// BlockTask ouvre une arête « cette tâche est bloquée par une autre du MÊME projet, jusqu'à ce
+	// que celle-ci atteigne Until ». Renvoie la tâche bloquée dans son état d'après.
+	BlockTask(ctx context.Context, in BlockTaskInput) (Task, error)
+
+	// UnblockTask libère une arête à la main, sans attendre que la bloquante avance. Le retour à
+	// `todo` obéit à la même règle que la libération automatique : seulement si l'arête avait posé
+	// le blocage et qu'aucune autre ne subsiste.
+	UnblockTask(ctx context.Context, in UnblockTaskInput) (Task, error)
 }
 
 // service dépend de l'interface store, jamais de sqlc.
@@ -158,5 +173,35 @@ type UpdateTaskInput struct {
 	// second aller-retour HTTP, et l'atomicité s'arrêtait à cette frontière. Une panne entre les
 	// deux commitait la note sans archiver, l'agent lisait une erreur et rejouait — ce qui écrivait
 	// la note une seconde fois. Replié, l'appel réussit ou échoue d'un bloc.
+	//
+	// Archiver LIBÈRE aussi les arêtes que cette tâche bloquait : archivée, elle n'atteindra jamais
+	// son statut de libération, et les laisser en place fabriquerait des tâches mortes-vivantes.
 	Archive bool `json:"archive"`
+}
+
+// BlockTaskInput ouvre une arête « Number est bloquée par Blocker ».
+//
+// Blocker est un NUMÉRO, pas une référence : il n'existe pas de forme inter-repos, et ce n'est pas
+// un manque. Une dépendance qui traverse un dépôt a déjà son objet, l'issue (D42). La garde tient
+// en base — les deux extrémités de l'arête partagent la même colonne project_id — et non ici.
+type BlockTaskInput struct {
+	TeamID    uuid.UUID `json:"-"`
+	ProjectID uuid.UUID `json:"-"`
+	Number    int64     `json:"-"`
+
+	Blocker int64 `json:"blocker"`
+
+	// Until est le statut que la bloquante doit atteindre pour libérer l'arête. Vide vaut `done`.
+	// Seuls `in_progress` et `done` sont acceptés : les deux autres ne sont pas des progrès, et
+	// une arête qui se libère sur `todo` naîtrait déjà libérée.
+	Until string `json:"until"`
+}
+
+// UnblockTaskInput libère à la main l'arête entre Number et Blocker.
+type UnblockTaskInput struct {
+	TeamID    uuid.UUID `json:"-"`
+	ProjectID uuid.UUID `json:"-"`
+	Number    int64     `json:"-"`
+
+	Blocker int64 `json:"-"`
 }

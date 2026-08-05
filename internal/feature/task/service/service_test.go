@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -36,9 +37,75 @@ type fakeStore struct {
 	// en ouvre une, et qu'une écriture simple n'en paie pas le coût.
 	txCalls int
 
+	// Blocage. Ce double reste DÉLIBÉRÉMENT bête : la règle de retour à `todo` — toutes les arêtes
+	// libérées ET au moins une ayant posé le blocage — vit dans la query ClearTaskBlock, et la
+	// rejouer ici prouverait la réimplémentation, pas le produit. Elle se vérifie contre Postgres
+	// (store/dependency_integration_test.go). Ce qui se teste ici est ce que le SERVICE décide
+	// seul : les refus, et ce qu'il transmet au store.
+	statusByNumber  map[int64]string
+	archivedNumbers map[int64]bool
+	activeEdges     []store.Edge
+	lastDependency  store.NewDependency
+	events          []store.Event
+	cleared         []uuid.UUID
+	releasedPairs   int
+
 	claimErr error
 	writeErr error
 	noteErr  error
+}
+
+// taskID donne un identifiant stable par numéro : sans stabilité, les deux lectures d'une même
+// tâche dans une transaction désigneraient deux objets, et le refus d'auto-blocage passerait.
+func (f *fakeStore) taskID(number int64) uuid.UUID {
+	return uuid.NewSHA1(uuid.Nil, []byte(strconv.FormatInt(number, 10)))
+}
+
+func (f *fakeStore) CreateDependency(_ context.Context, in store.NewDependency) (store.Dependency, error) {
+	if f.writeErr != nil {
+		return store.Dependency{}, f.writeErr
+	}
+	f.lastDependency = in
+	return store.Dependency{
+		TaskID:        in.TaskID,
+		BlockerTaskID: in.BlockerTaskID,
+		UntilStatus:   in.UntilStatus,
+		SetBlocked:    in.SetBlocked,
+	}, nil
+}
+
+func (f *fakeStore) ReleaseBlockerEdges(_ context.Context, _, blockerTaskID uuid.UUID, _ string, _ bool) ([]uuid.UUID, error) {
+	freed := make([]uuid.UUID, 0, len(f.activeEdges))
+	for _, edge := range f.activeEdges {
+		if edge.BlockerTaskID == blockerTaskID {
+			freed = append(freed, edge.TaskID)
+		}
+	}
+	return freed, nil
+}
+
+func (f *fakeStore) ReleaseEdge(_ context.Context, _, taskID, blockerTaskID uuid.UUID) ([]uuid.UUID, error) {
+	for _, edge := range f.activeEdges {
+		if edge.TaskID == taskID && edge.BlockerTaskID == blockerTaskID {
+			f.releasedPairs++
+			return []uuid.UUID{taskID}, nil
+		}
+	}
+	return nil, nil
+}
+
+func (f *fakeStore) ClearBlock(_ context.Context, _, _, taskID uuid.UUID) (bool, error) {
+	f.cleared = append(f.cleared, taskID)
+	return true, nil
+}
+
+func (f *fakeStore) ActiveEdges(context.Context, uuid.UUID) ([]store.Edge, error) {
+	return f.activeEdges, nil
+}
+
+func (f *fakeStore) AppendEvent(_ context.Context, event store.Event) error {
+	f.events = append(f.events, event)
+	return nil
 }
 
 func (f *fakeStore) WithTx(ctx context.Context, fn func(store.Store) error) error {
@@ -73,7 +140,23 @@ func (f *fakeStore) TaskByNumber(_ context.Context, _, _ uuid.UUID, number int64
 	if f.writeErr != nil {
 		return store.Task{}, f.writeErr
 	}
-	return store.Task{Number: number, Title: "tâche", Status: "todo", Priority: "normal"}, nil
+
+	status := "todo"
+	if s, ok := f.statusByNumber[number]; ok {
+		status = s
+	}
+	task := store.Task{
+		ID:       f.taskID(number),
+		Number:   number,
+		Title:    "tâche",
+		Status:   status,
+		Priority: "normal",
+	}
+	if f.archivedNumbers[number] {
+		archivedAt := time.Unix(0, 0)
+		task.ArchivedAt = &archivedAt
+	}
+	return task, nil
 }
 
 func (f *fakeStore) ListTasks(_ context.Context, filter store.TaskFilter) ([]store.Task, error) {
@@ -379,27 +462,65 @@ func TestUpdateTaskWritesNoteInTheSameTransaction(t *testing.T) {
 	}
 }
 
-// Le cas fréquent — un patch sans note — ne doit pas payer l'aller-retour d'une transaction.
-func TestUpdateTaskWithoutNoteDoesNotOpenTransaction(t *testing.T) {
+// Le cas fréquent — un patch qui ne compose rien — ne doit pas payer l'aller-retour d'une
+// transaction.
+//
+// L'exemple était `status: in_progress` jusqu'à ce que les arêtes de blocage existent : ce statut
+// LIBÈRE désormais, donc il compose. Le patch nominal est celui qui ne touche ni au fil de notes,
+// ni à l'archivage, ni à un statut de libération.
+func TestUpdateTaskWithoutCompositionDoesNotOpenTransaction(t *testing.T) {
 	svc, fake, teamID, projectID := newService()
 
-	status := "in_progress"
+	priority := "urgent"
 	if _, err := svc.UpdateTask(context.Background(), service.UpdateTaskInput{
 		TeamID:    teamID,
 		ProjectID: projectID,
 		Number:    3,
-		Status:    &status,
+		Priority:  &priority,
 	}); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
 
 	if fake.txCalls != 0 {
-		t.Errorf("%d transaction(s) pour un patch sans note, attendu 0", fake.txCalls)
+		t.Errorf("%d transaction(s) pour un patch simple, attendu 0", fake.txCalls)
 	}
 	if fake.lastNote != "" {
 		t.Errorf("note écrite sans qu'on en demande une: %q", fake.lastNote)
 	}
 }
+
+// La contrepartie, et c'est elle qui compte : un patch qui peut libérer une arête DOIT ouvrir une
+// transaction. Hors transaction, le défaut serait celui que la feature existe pour supprimer — la
+// bloquante commitée `done`, et la bloquée qui l'ignore pour toujours.
+func TestUpdateTaskOpensTransactionWhenItCanRelease(t *testing.T) {
+	releasing := []struct {
+		name  string
+		patch service.UpdateTaskInput
+	}{
+		{"passage en in_progress", service.UpdateTaskInput{Status: ptr("in_progress")}},
+		{"passage en done", service.UpdateTaskInput{Status: ptr("done")}},
+		{"archivage", service.UpdateTaskInput{Archive: true}},
+	}
+
+	for _, tc := range releasing {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, fake, teamID, projectID := newService()
+
+			in := tc.patch
+			in.TeamID, in.ProjectID, in.Number = teamID, projectID, 3
+			if _, err := svc.UpdateTask(context.Background(), in); err != nil {
+				t.Fatalf("UpdateTask: %v", err)
+			}
+			if fake.txCalls != 1 {
+				t.Errorf("%d transaction(s), attendu 1 : la libération doit être écrite avec le patch",
+					fake.txCalls)
+			}
+		})
+	}
+}
+
+// ptr rend l'adresse d'une chaîne littérale, que les patches partiels réclament partout.
+func ptr(s string) *string { return &s }
 
 // Une note qui échoue doit faire échouer TOUT l'appel : un patch appliqué seul rendrait le
 // « et dire pourquoi » facultatif à l'insu de l'appelant.

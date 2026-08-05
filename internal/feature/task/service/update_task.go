@@ -64,7 +64,11 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 		patch.Priority = in.Priority
 	}
 
-	if in.Note == nil {
+	// Le chemin sans transaction est celui du patch nominal : un titre, une priorité, une échéance.
+	// Il ne s'ouvre que si RIEN d'autre n'a besoin d'être écrit avec — ni note, ni libération
+	// d'arête. Une transaction sur ce chemin coûterait deux allers-retours de plus à chaque édition.
+	releases := releasesOnPatch(patch)
+	if in.Note == nil && !releases {
 		updated, err := s.store.UpdateTask(ctx, patch)
 		if err != nil {
 			return Task{}, translateStore(err, "update task")
@@ -72,12 +76,15 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 		return toTask(updated), nil
 	}
 
-	note := strings.TrimSpace(*in.Note)
-	if note == "" {
-		return Task{}, fmt.Errorf("%w: note vide", ErrInvalidInput)
-	}
-	if err := validateBody("note", note); err != nil {
-		return Task{}, err
+	note := ""
+	if in.Note != nil {
+		note = strings.TrimSpace(*in.Note)
+		if note == "" {
+			return Task{}, fmt.Errorf("%w: note vide", ErrInvalidInput)
+		}
+		if err := validateBody("note", note); err != nil {
+			return Task{}, err
+		}
 	}
 
 	// La note s'écrit AVANT le patch, et cet ordre n'est pas indifférent : depuis que l'archivage
@@ -92,15 +99,29 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 	// garantit l'atomicité, jamais la visibilité.
 	var updated store.Task
 	err := s.store.WithTx(ctx, func(tx store.Store) error {
-		if _, err := tx.AddNote(ctx, in.TeamID, in.ProjectID, in.Number, note); err != nil {
-			return err
+		if note != "" {
+			if _, err := tx.AddNote(ctx, in.TeamID, in.ProjectID, in.Number, note); err != nil {
+				return translateStore(err, "update task")
+			}
 		}
+
 		var err error
 		updated, err = tx.UpdateTask(ctx, patch)
-		return err
+		if err != nil {
+			return translateStore(err, "update task")
+		}
+		if !releases {
+			return nil
+		}
+
+		// La libération suit le patch dans la MÊME transaction, et c'est ce qui rend impossible
+		// l'état « la bloquante est done, la bloquée l'ignore ». Une tâche archivée force la
+		// libération : elle n'atteindra jamais rien, et laisser ses arêtes en place fabriquerait
+		// des tâches que plus rien ne peut débloquer.
+		return s.releaseBlocker(ctx, tx, updated, patch.Archive)
 	})
 	if err != nil {
-		return Task{}, translateStore(err, "update task")
+		return Task{}, err
 	}
 	return toTask(updated), nil
 }

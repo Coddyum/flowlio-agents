@@ -4,14 +4,14 @@ package service
 //
 // | Élément          | Résumé                                                      | Ligne |
 // |------------------|-------------------------------------------------------------|-------|
-// | validateStatus   | Vérifie qu'un statut fait partie du vocabulaire du produit    | 65    |
-// | validatePriority | Vérifie qu'une priorité fait partie du vocabulaire            | 74    |
-// | validateTitle    | Vérifie qu'un titre n'est ni vide ni démesuré                 | 84    |
-// | validateBody     | Vérifie qu'un corps markdown ne dépasse pas la borne          | 96    |
-// | validateDeadline | Refuse une échéance dont l'année n'est pas sérialisable       | 115   |
-// | validateScope    | Refuse un scope de tenancy incomplet                          | 128   |
-// | clampLimit       | Ramène une limite de listing dans les bornes                  | 138   |
-// | translateStore   | Traduit une erreur de store en erreur domaine                 | 154   |
+// | validateStatus   | Vérifie qu'un statut fait partie du vocabulaire du produit    | 79    |
+// | validatePriority | Vérifie qu'une priorité fait partie du vocabulaire            | 88    |
+// | validateTitle    | Vérifie qu'un titre n'est ni vide ni démesuré                 | 98    |
+// | validateBody     | Vérifie qu'un corps markdown ne dépasse pas la borne          | 110   |
+// | validateDeadline | Refuse une échéance dont l'année n'est pas sérialisable       | 129   |
+// | validateScope    | Refuse un scope de tenancy incomplet                          | 142   |
+// | clampLimit       | Ramène une limite de listing dans les bornes                  | 152   |
+// | translateStore   | Traduit une erreur de store en erreur domaine                 | 168   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -54,11 +54,25 @@ const (
 	maxDeadlineYear = 9999
 )
 
+// Statuts nommés. Seuls ceux dont le code raisonne le sont : les autres n'existent que dans la
+// liste ci-dessous, qui est le vocabulaire complet.
+const (
+	statusTodo       = "todo"
+	statusInProgress = "in_progress"
+	statusBlocked    = "blocked"
+	statusDone       = "done"
+)
+
 // Vocabulaire du domaine. Il doit rester identique aux enums task_status et task_priority de la
 // migration 000003 : si les deux divergent, la base refuse l'écriture.
 var (
-	statuses   = []string{"todo", "in_progress", "blocked", "done"}
+	statuses   = []string{statusTodo, statusInProgress, statusBlocked, statusDone}
 	priorities = []string{"low", "normal", "high", "urgent"}
+
+	// releaseStatuses est ce qu'une arête peut attendre. `todo` et `blocked` en sont exclus :
+	// ce ne sont pas des progrès, et une arête qui se libère sur `todo` naîtrait déjà libérée.
+	// Miroir de la contrainte task_dependencies_until_is_progress.
+	releaseStatuses = []string{statusInProgress, statusDone}
 )
 
 // validateStatus vérifie qu'un statut fait partie du vocabulaire du produit.

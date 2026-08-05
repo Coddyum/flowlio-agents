@@ -8,7 +8,7 @@ package task
 // | mod                | Module task, porteur du handler et du middleware d'auth     | 50    |
 // | mod.Key            | Renvoie la clé du module                                    | 57    |
 // | mod.Routes         | Déclare les routes, middleware lié une seule fois           | 68    |
-// | requireProjectScope| Refuse tout token qui n'est pas scopé à un projet           | 96    |
+// | requireProjectScope| Refuse tout token qui n'est pas scopé à un projet           | 103   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -78,12 +78,19 @@ func (m *mod) Routes() http.Handler {
 	r.Handle("GET /{number}", project(m.h.GetTask))
 	r.Handle("PATCH /{number}", project(m.h.UpdateTask))
 
-	// UNE SEULE route d'écriture sur une tâche, et c'est voulu.
+	// UNE SEULE route d'écriture sur une TÂCHE, et c'est voulu.
 	//
 	// Ni /notes ni /archive : la note et l'archivage sont des CHAMPS du PATCH, écrits dans la même
 	// transaction que le reste. Deux chemins d'écriture pour un même objet, c'est deux surfaces à
 	// sécuriser, et surtout une couture non atomique — l'agent qui archivait passait par deux
 	// requêtes HTTP, et une panne entre les deux lui faisait rejouer une note déjà écrite.
+
+	// Les deux routes ci-dessous n'écrivent pas la tâche mais l'ARÊTE DE BLOCAGE, qui a son propre
+	// cycle de vie. Elles ne rouvrent donc pas la couture que le PATCH a refermée : le patch n'a
+	// aucune forme capable d'exprimer « retire CE bloqueur-là et garde les autres », puisque chez
+	// lui un champ absent veut déjà dire « laisse en place ».
+	r.Handle("POST /{number}/blockers", project(m.h.BlockTask))
+	r.Handle("DELETE /{number}/blockers/{blocker}", project(m.h.UnblockTask))
 
 	return r
 }
