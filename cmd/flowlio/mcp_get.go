@@ -77,7 +77,7 @@ func (s *mcpServer) get(ctx context.Context, args json.RawMessage) (any, error) 
 	return getIssueResult{
 		Kind:    "issue",
 		Ref:     issue.Ref,
-		Lecture: f.notice(),
+		Reading: f.notice(),
 		Issue:   f.markIssueDetail(issue),
 	}, nil
 }
@@ -102,6 +102,6 @@ type getTaskResult struct {
 type getIssueResult struct {
 	Kind    string                   `json:"kind"`
 	Ref     string                   `json:"ref"`
-	Lecture string                   `json:"lecture"`
+	Reading string                   `json:"reading"`
 	Issue   issueservice.IssueDetail `json:"issue"`
 }

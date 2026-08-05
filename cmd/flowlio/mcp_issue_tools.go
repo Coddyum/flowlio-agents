@@ -150,7 +150,7 @@ func (s *mcpServer) checkInbox(ctx context.Context, _ json.RawMessage) (any, err
 	if err != nil {
 		return nil, err
 	}
-	return inboxResult{Lecture: f.notice(), Inbox: f.markInbox(inbox)}, nil
+	return inboxResult{Reading: f.notice(), Inbox: f.markInbox(inbox)}, nil
 }
 
 // issuePath compose le chemin d'API d'une issue.

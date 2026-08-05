@@ -104,7 +104,7 @@ func writeResult(kind, ref string, value any) map[string]any {
 // L'échappement HTML est DÉSACTIVÉ, et ce n'est pas cosmétique. Par défaut, encoding/json écrit
 // `<` en `<` pour rendre le JSON sûr à coller dans une balise <script> — un souci que ce
 // binaire n'a pas, puisque sa sortie part sur stdout dans un flux JSON-RPC. Avec l'échappement,
-// le balisage du contenu externe arrivait à l'agent sous la forme `<externe:…>` : un
+// the marking of external content reached à l'agent sous la forme `<external:…>` : un
 // marquage qui n'est lisible qu'après un second décodage n'est pas un marquage. Voir
 // mcp_untrusted.go.
 //
