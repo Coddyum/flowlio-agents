@@ -4,13 +4,14 @@ package store
 //
 // | Élément   | Résumé                                                              | Ligne |
 // |-----------|---------------------------------------------------------------------|-------|
-// | Scope     | Scope complet d'une lecture d'inbox, curseur compris                  | 40    |
-// | Cursor    | Position de lecture du token et tête du journal de la team            | 51    |
-// | IssueLine | Une issue actionnable, résumée pour l'inbox                           | 61    |
-// | TaskLine  | Une tâche en cours, résumée pour l'inbox                              | 73    |
-// | Store     | Contrat de lecture de l'état actionnable d'un projet                  | 85    |
-// | store     | Implémentation adossée aux queries générées par sqlc                  | 104   |
-// | New       | Crée le store inbox                                                   | 109   |
+// | Scope     | Scope complet d'une lecture d'inbox, curseur compris                  | 41    |
+// | Cursor    | Position de lecture du token et tête du journal de la team            | 52    |
+// | IssueLine | Une issue actionnable, résumée pour l'inbox                           | 62    |
+// | TaskLine  | Une tâche en cours, résumée pour l'inbox                              | 74    |
+// | UnblockedLine | Une tâche dont les dépendances internes sont toutes levées        | 87    |
+// | Store     | Contrat de lecture de l'état actionnable d'un projet                  | 100   |
+// | store     | Implémentation adossée aux queries générées par sqlc                  | 121   |
+// | New       | Crée le store inbox                                                   | 126   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -77,6 +78,20 @@ type TaskLine struct {
 	UpdatedAt time.Time
 }
 
+// UnblockedLine est une tâche dont toutes les dépendances internes sont levées.
+//
+// Status est porté ici et pas dans TaskLine parce que c'est l'information utile du seau : `todo`
+// dit « reprends-la », `blocked` dit « ton obstacle est levé, mais tu l'avais bloquée toi-même
+// pour autre chose et personne n'a décidé à ta place ». Sans lui, les deux cas seraient
+// indiscernables et l'agent devrait relire la tâche pour savoir quoi faire.
+type UnblockedLine struct {
+	Number   int64
+	Title    string
+	Priority string
+	Status   string
+	New      bool
+}
+
 // Store lit l'état actionnable d'un projet.
 //
 // Le journal d'événements n'est jamais interrogé par un prédicat propre : il est atteint par un
@@ -94,6 +109,8 @@ type Store interface {
 	OutgoingAnswered(ctx context.Context, sc Scope, lastEventID int64) ([]IssueLine, error)
 	// InProgressTasks : mon travail interrompu.
 	InProgressTasks(ctx context.Context, sc Scope) ([]TaskLine, error)
+	// UnblockedTasks : mes tâches qu'une autre tâche du repo bloquait, et qui ne le sont plus.
+	UnblockedTasks(ctx context.Context, sc Scope, lastEventID int64) ([]UnblockedLine, error)
 
 	// Advance avance le curseur du token, sans jamais le faire reculer.
 	Advance(ctx context.Context, tokenID uuid.UUID, headEventID int64) error

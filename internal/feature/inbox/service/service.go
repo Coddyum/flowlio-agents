@@ -4,14 +4,15 @@ package service
 //
 // | Élément    | Résumé                                                             | Ligne |
 // |------------|--------------------------------------------------------------------|-------|
-// | Service    | Contrat consommé par le handler inbox                                | 53    |
-// | service    | Implémentation, dépendante de l'interface store                      | 62    |
-// | New        | Crée le service inbox                                                | 67    |
-// | CheckInput | Scope de l'appel, entièrement issu du token                          | 73    |
-// | IssueLine  | Une issue actionnable telle qu'exposée                               | 81    |
-// | TaskLine   | Une tâche en cours telle qu'exposée                                  | 93    |
-// | More       | Ce qui n'a pas tenu dans les seaux                                   | 101   |
-// | Inbox      | L'état actionnable du projet, en trois seaux                         | 111   |
+// | Service    | Contrat consommé par le handler inbox                                | 54    |
+// | service    | Implémentation, dépendante de l'interface store                      | 63    |
+// | New        | Crée le service inbox                                                | 68    |
+// | CheckInput | Scope de l'appel, entièrement issu du token                          | 74    |
+// | IssueLine  | Une issue actionnable telle qu'exposée                               | 82    |
+// | TaskLine   | Une tâche en cours telle qu'exposée                                  | 94    |
+// | UnblockedLine | Une tâche que plus aucune dépendance interne ne bloque            | 105   |
+// | More       | Ce qui n'a pas tenu dans les seaux                                   | 115   |
+// | Inbox      | L'état actionnable du projet, en quatre seaux                        | 131   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -96,22 +97,42 @@ type TaskLine struct {
 	Priority string `json:"priority"`
 }
 
+// UnblockedLine est une tâche dont plus aucune dépendance interne ne bloque l'avancement.
+//
+// Status distingue les deux issues du déblocage, et c'est l'information utile du seau : `todo` dit
+// « reprends-la », `blocked` dit « ton obstacle est levé, mais tu l'avais bloquée toi-même pour
+// autre chose et personne n'a décidé à ta place ».
+type UnblockedLine struct {
+	Ref      string `json:"ref"`
+	Title    string `json:"title"`
+	Priority string `json:"priority"`
+	Status   string `json:"status"`
+	New      bool   `json:"new"`
+}
+
 // More compte ce qui n'a pas tenu dans les seaux, pour qu'un agent sache qu'il ne voit pas tout
 // et aille chercher le reste avec list_issues ou list_tasks.
 type More struct {
 	NeedsAnswer int `json:"needs_answer,omitempty"`
 	Answered    int `json:"answered,omitempty"`
 	InProgress  int `json:"in_progress,omitempty"`
+	Unblocked   int `json:"unblocked,omitempty"`
 }
 
-// Inbox est l'état actionnable du projet, en trois seaux :
+// Inbox est l'état actionnable du projet, en quatre seaux :
 //   - NeedsAnswer : quelqu'un est bloqué sur moi ;
-//   - Answered    : j'étais bloqué, je ne le suis plus ;
-//   - InProgress  : mon propre travail interrompu.
+//   - Answered    : j'étais bloqué sur un AUTRE repo, je ne le suis plus ;
+//   - InProgress  : mon propre travail interrompu ;
+//   - Unblocked   : j'étais bloqué par une autre tâche de CE repo, je ne le suis plus.
+//
+// Les deux formes de déblocage sont des seaux distincts et doivent le rester : l'une se règle en
+// répondant à un pair (answer_issue), l'autre en reprenant son propre travail. Les confondre
+// obligerait l'agent à relire chaque ligne pour savoir laquelle des deux il regarde.
 type Inbox struct {
-	Project     string      `json:"project"`
-	NeedsAnswer []IssueLine `json:"needs_answer"`
-	Answered    []IssueLine `json:"answered"`
-	InProgress  []TaskLine  `json:"in_progress"`
-	More        *More       `json:"more,omitempty"`
+	Project     string          `json:"project"`
+	NeedsAnswer []IssueLine     `json:"needs_answer"`
+	Answered    []IssueLine     `json:"answered"`
+	InProgress  []TaskLine      `json:"in_progress"`
+	Unblocked   []UnblockedLine `json:"unblocked"`
+	More        *More           `json:"more,omitempty"`
 }

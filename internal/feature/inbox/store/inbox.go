@@ -4,13 +4,14 @@ package store
 //
 // | Élément                | Résumé                                                  | Ligne |
 // |------------------------|---------------------------------------------------------|-------|
-// | store.ProjectKey       | Résout la clé du projet du token                          | 28    |
-// | store.Cursor           | Lit le curseur du token et la tête du journal             | 44    |
-// | store.IncomingOpen     | Les questions entrantes en attente de réponse             | 59    |
-// | store.OutgoingAnswered | Mes questions qui ont reçu une réponse                    | 87    |
-// | store.InProgressTasks  | Mes tâches en cours, signe d'une session interrompue      | 115   |
-// | store.Advance          | Avance le curseur du token sans le faire reculer          | 142   |
-// | translate              | Ramène une erreur de base à une erreur domaine            | 150   |
+// | store.ProjectKey       | Résout la clé du projet du token                          | 29    |
+// | store.Cursor           | Lit le curseur du token et la tête du journal             | 45    |
+// | store.IncomingOpen     | Les questions entrantes en attente de réponse             | 60    |
+// | store.OutgoingAnswered | Mes questions qui ont reçu une réponse                    | 88    |
+// | store.InProgressTasks  | Mes tâches en cours, signe d'une session interrompue      | 116   |
+// | store.UnblockedTasks   | Mes tâches que plus aucune dépendance interne ne bloque   | 143   |
+// | store.Advance          | Avance le curseur du token sans le faire reculer          | 172   |
+// | translate              | Ramène une erreur de base à une erreur domaine            | 180   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -129,6 +130,35 @@ func (s *store) InProgressTasks(ctx context.Context, sc Scope) ([]TaskLine, erro
 			Title:     row.Title,
 			Priority:  string(row.Priority),
 			UpdatedAt: row.UpdatedAt,
+		})
+	}
+	return lines, nil
+}
+
+// UnblockedTasks liste les tâches que plus aucune dépendance interne ne bloque.
+//
+// C'est le seul seau de tâches à porter un drapeau « nouveau » : contrairement à mon travail en
+// cours, le déblocage m'arrive du dehors — c'est une AUTRE tâche qui a avancé — et je peux ne pas
+// l'avoir vu passer.
+func (s *store) UnblockedTasks(ctx context.Context, sc Scope, lastEventID int64) ([]UnblockedLine, error) {
+	rows, err := s.q.ListUnblockedTasks(ctx, database.ListUnblockedTasksParams{
+		TeamID:      sc.TeamID,
+		ProjectID:   sc.ProjectID,
+		LastEventID: lastEventID,
+		MaxRows:     sc.Limit,
+	})
+	if err != nil {
+		return nil, translate(err, "unblocked tasks")
+	}
+
+	lines := make([]UnblockedLine, 0, len(rows))
+	for _, row := range rows {
+		lines = append(lines, UnblockedLine{
+			Number:   row.Number,
+			Title:    row.Title,
+			Priority: string(row.Priority),
+			Status:   string(row.Status),
+			New:      row.IsNew,
 		})
 	}
 	return lines, nil

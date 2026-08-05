@@ -4,10 +4,11 @@ package service
 //
 // | Élément       | Résumé                                                         | Ligne |
 // |---------------|----------------------------------------------------------------|-------|
-// | service.Check | Renvoie l'état actionnable du projet et avance le curseur        | 38    |
-// | toIssueLines  | Projette des issues du store en lignes d'inbox                   | 101   |
-// | toTaskLines   | Projette des tâches du store en lignes d'inbox                   | 122   |
-// | overflow      | Compte ce qui n'a pas tenu dans un seau                          | 136   |
+// | service.Check | Renvoie l'état actionnable du projet et avance le curseur        | 39    |
+// | toIssueLines  | Projette des issues du store en lignes d'inbox                   | 110   |
+// | toTaskLines   | Projette des tâches du store en lignes d'inbox                   | 131   |
+// | toUnblockedLines | Projette des tâches débloquées en lignes d'inbox              | 144   |
+// | overflow      | Compte ce qui n'a pas tenu dans un seau                          | 160   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -69,6 +70,10 @@ func (s *service) Check(ctx context.Context, in CheckInput) (Inbox, error) {
 	if err != nil {
 		return Inbox{}, fmt.Errorf("inbox service: tasks: %w", err)
 	}
+	unblocked, err := s.store.UnblockedTasks(ctx, scope, cursor.LastEventID)
+	if err != nil {
+		return Inbox{}, fmt.Errorf("inbox service: unblocked: %w", err)
+	}
 
 	inbox := Inbox{
 		Project: projectKey,
@@ -77,12 +82,16 @@ func (s *service) Check(ctx context.Context, in CheckInput) (Inbox, error) {
 		NeedsAnswer: toIssueLines(incoming, projectKey, true),
 		Answered:    toIssueLines(answered, projectKey, false),
 		InProgress:  toTaskLines(tasks, projectKey),
+		// Une dépendance ne traverse jamais un repo (D42) : les deux extrémités portent donc MA
+		// clé, sans exception possible.
+		Unblocked: toUnblockedLines(unblocked, projectKey),
 	}
 
 	if more := (More{
 		NeedsAnswer: overflow(len(incoming)),
 		Answered:    overflow(len(answered)),
 		InProgress:  overflow(len(tasks)),
+		Unblocked:   overflow(len(unblocked)),
 	}); more != (More{}) {
 		inbox.More = &more
 	}
@@ -126,6 +135,21 @@ func toTaskLines(rows []store.TaskLine, projectKey string) []TaskLine {
 			Ref:      fmt.Sprintf("%s-%d", projectKey, row.Number),
 			Title:    row.Title,
 			Priority: row.Priority,
+		})
+	}
+	return lines
+}
+
+// toUnblockedLines projette des tâches débloquées du store en lignes d'inbox.
+func toUnblockedLines(rows []store.UnblockedLine, projectKey string) []UnblockedLine {
+	lines := make([]UnblockedLine, 0, min(len(rows), bucketSize))
+	for _, row := range rows[:min(len(rows), bucketSize)] {
+		lines = append(lines, UnblockedLine{
+			Ref:      fmt.Sprintf("%s-%d", projectKey, row.Number),
+			Title:    row.Title,
+			Priority: row.Priority,
+			Status:   row.Status,
+			New:      row.New,
 		})
 	}
 	return lines
