@@ -54,8 +54,9 @@ docker compose up -d
 docker compose logs api        # prints the admin token, once
 ```
 
-Three containers start in order: Postgres, migrations, API. The logs print two ready-to-paste
-lines:
+Two containers start: Postgres, then the API. The API carries its own migrations and applies them
+itself, so the image is all you need — nothing to sequence, nothing else to install. The logs print
+two ready-to-paste lines:
 
 ```bash
 export FLOWLIO_API_URL=http://localhost:42058

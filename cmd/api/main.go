@@ -4,9 +4,10 @@ package main
 //
 // | Élément      | Résumé                                                           | Ligne |
 // |--------------|------------------------------------------------------------------|-------|
-// | main         | Charge la config, câble l'infra, monte les modules, sert l'API     | 46    |
-// | buildModules   | Instancie les modules de feature — point d'ajout unique          | 105   |
-// | bootstrapLocal | Émet le token admin au tout premier démarrage local              | 120   |
+// | main         | Charge la config, câble l'infra, monte les modules, sert l'API     | 49    |
+// | buildModules   | Instancie les modules de feature — point d'ajout unique          | 112   |
+// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 130   |
+// | bootstrapLocal | Émet le token admin au tout premier démarrage local              | 157   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -15,12 +16,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	flowlio "github.com/Coddyum/flowlio-agents"
 	"github.com/Coddyum/flowlio-agents/internal/core"
 	"github.com/Coddyum/flowlio-agents/internal/core/bootstrap"
 	"github.com/Coddyum/flowlio-agents/internal/core/engine"
@@ -56,6 +59,10 @@ func main() {
 		log.Fatalf("main: %v", err)
 	}
 	defer func() { _ = rawDB.Close() }()
+
+	if err := ensureSchema(ctx, rawDB, cfg.IsLocal()); err != nil {
+		log.Fatalf("main: %v", err)
+	}
 
 	queries := database.New(rawDB)
 
@@ -110,6 +117,36 @@ func buildModules(cfg module.ModuleConfig) []module.Module {
 		inbox.NewModule(cfg),
 		overview.NewModule(cfg),
 	}
+}
+
+// ensureSchema brings the database in line with the migrations embedded in this binary.
+//
+// Local mode APPLIES them: a self-hosted user starts one container and gets a working instance,
+// without a checkout of this repository and without a second migrate container to sequence.
+//
+// Any other mode only CHECKS, and refuses to serve when the schema lags. Production migrations stay
+// an explicit human operation (`make up-prod`): chaining them to a container start would let a
+// redeploy touch the schema without anyone having decided so.
+func ensureSchema(ctx context.Context, db *sql.DB, isLocal bool) error {
+	if !isLocal {
+		ahead, err := pgdb.VerifySchema(ctx, db, flowlio.Migrations)
+		if err != nil {
+			return err
+		}
+		if ahead {
+			log.Printf("main: database schema is ahead of this binary — rolled back release?")
+		}
+		return nil
+	}
+
+	applied, err := pgdb.Migrate(ctx, db, flowlio.Migrations)
+	if err != nil {
+		return err
+	}
+	if len(applied) > 0 {
+		log.Printf("main: applied %d migration(s), through %s", len(applied), applied[len(applied)-1])
+	}
+	return nil
 }
 
 // bootstrapLocal émet le token d'administration au tout premier démarrage en mode local, puis

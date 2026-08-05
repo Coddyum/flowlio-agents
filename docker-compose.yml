@@ -1,15 +1,18 @@
-# Pile de développement complète. Une commande, aucune installation locale :
+# Full development stack. One command, nothing to install locally:
 #   docker compose up -d
 #
-# Trois services enchaînés : Postgres, les migrations, l'API. C'est l'enchaînement qui compte —
-# sans lui, un nouvel arrivant doit installer golang-migrate, comprendre l'ordre des cibles du
-# Makefile et lire la documentation avant d'obtenir quoi que ce soit. Le premier démarrage de
-# l'API affiche le token d'administration, une seule fois : c'est le point d'entrée du produit.
+# Two services: Postgres, then the API. The API carries its own migrations — they are embedded in
+# the binary (see embed.go) and applied at startup in local mode, so there is no third container to
+# sequence and, more importantly, the image is usable WITHOUT a checkout of this repository.
 #
-# Port 5433 pour Postgres, afin de ne pas entrer en conflit avec une installation locale sur 5432.
+# In production the schema stays a human, explicit operation (`make up-prod`). The API detects that
+# case and refuses to serve on a schema it does not match, rather than migrating on its own: a
+# redeploy must never touch the schema without someone having decided so.
 #
-# Même version majeure qu'en production (Neon, Postgres 18) : un écart de version majeure entre
-# dev et prod, c'est une classe de bugs qu'on ne voit qu'après déploiement.
+# Port 5433 for Postgres, so it does not collide with a local install on 5432.
+#
+# Same major version as production (Neon, Postgres 18): a major-version gap between dev and prod is
+# a class of bugs you only see after deploying.
 services:
   postgres:
     image: postgres:18-alpine
@@ -22,34 +25,14 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      # Postgres 18 attend le montage sur /var/lib/postgresql (et non .../data) : les données
-      # vont dans un sous-répertoire, ce qui rend `pg_upgrade --link` possible plus tard.
+      # Postgres 18 expects the mount on /var/lib/postgresql (not .../data): the data goes into a
+      # subdirectory, which keeps `pg_upgrade --link` possible later on.
       - flowlio-pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U flowlio -d flowlio"]
       interval: 5s
       timeout: 3s
       retries: 10
-
-  # Service à usage unique : applique les migrations puis sort. L'API attend qu'il ait terminé
-  # avec succès, donc elle ne démarre jamais sur un schéma en retard.
-  #
-  # Ce service existe pour le DÉVELOPPEMENT. En production, les migrations restent une opération
-  # humaine et explicite (`make up-prod`) : les enchaîner à un démarrage de conteneur, c'est
-  # laisser un redéploiement toucher au schéma sans que personne l'ait décidé.
-  migrate:
-    image: migrate/migrate:v4.19.0
-    container_name: flowlio-migrate
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./sql/migrations:/migrations:ro
-    command:
-      - -path=/migrations
-      - -database=postgres://flowlio:flowlio@postgres:5432/flowlio?sslmode=disable
-      - up
-    restart: "no"
 
   api:
     build:
@@ -59,11 +42,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
     environment:
-      # Le service parle à Postgres par le réseau du compose, donc sur 5432 et par son nom de
-      # service — pas par le 5433 publié sur l'hôte, qui n'existe que vu de l'extérieur.
+      # The service talks to Postgres over the compose network, so on 5432 and by service name —
+      # not through the 5433 published on the host, which only exists seen from outside.
       DATABASE_URL: postgres://flowlio:flowlio@postgres:5432/flowlio?sslmode=disable
       ADDR: ":42058"
       ENV: dev

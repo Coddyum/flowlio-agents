@@ -98,6 +98,7 @@ internal/store/          ← interfaces store globales / composition inter-featu
 internal/database/       ← code généré sqlc (ne pas éditer à la main)
 internal/pkg/            ← cache, config, database
 sql/                     ← migrations / queries (sqlc) / schema
+embed.go                 ← les migrations embarquées dans le binaire (go:embed ne remonte pas)
 ```
 
 Détail système de modules, règles inter-modules, limite de taille de fichier :
