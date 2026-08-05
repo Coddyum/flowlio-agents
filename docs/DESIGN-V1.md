@@ -1,196 +1,195 @@
 # DESIGN v1 — flowlio-agents
 
-Décisions arrêtées à partir de `docs/concept.md`. Ce document est le contrat de ce qu'on
-construit en v1 ; `docs/ARCHITECTURE.md` reste la carte technique du repo.
+Decisions settled from `docs/concept.md`. This document is the contract of what we build in v1;
+`docs/ARCHITECTURE.md` remains the technical map of the repo.
 
-## Décisions structurantes
+## Structuring decisions
 
-| # | Décision | Conséquence |
+| # | Decision | Consequence |
 | - | -------- | ----------- |
-| 1 | **Pas de board ni de colonnes.** Une tâche porte un `status`. | Modèle aplati `team → project → task`. Une vue kanban est reconstituée en lecture si un humain la veut. |
-| 2 | **v1 = tasks + issues + inbox en pull.** | Pas de daemon, pas de wake-up automatique. L'agent appelle `check_inbox` lui-même. |
-| 3 | **La mémoire = décisions + contrats typés** (v2, modèle déjà anticipé). | Pas de blob mémoire ni d'embeddings. Recherche Postgres FTS + tags. |
-| 4 | **Multi-tenant dès j1**, `team_id` dans chaque query store. | Adaptateur d'auth `local` en v1, `hosted` + billing ajoutés sans toucher aux stores. |
-| 5 | **Zéro IA dans le produit.** | Tout comportement est déterministe et testable. |
-| 6 | **Postgres 18 partout, jamais SQLite.** Prod hébergée sur Neon. | Un seul dialecte SQL, un seul jeu de queries sqlc, aucune migration en double. La friction d'installation en self-host est assumée et compensée par `docker compose`. |
+| 1 | **No board and no columns.** A task carries a `status`. | Flattened `team → project → task` model. A kanban view is reconstituted at read time if a human wants one. |
+| 2 | **v1 = tasks + issues + a pull inbox.** | No daemon, no automatic wake-up. The agent calls `check_inbox` itself. |
+| 3 | **Memory = decisions + typed contracts** (v2, model already anticipated). | No memory blob and no embeddings. Postgres FTS search + tags. |
+| 4 | **Multi-tenant from day one**, `team_id` in every store query. | `local` auth adapter in v1, `hosted` + billing added without touching the stores. |
+| 5 | **Zero AI inside the product.** | Every behaviour is deterministic and testable. |
+| 6 | **Postgres 18 everywhere, never SQLite.** Production hosted on Neon. | One single SQL dialect, one single set of sqlc queries, no duplicated migration. The install friction in self-hosting is accepted and offset by `docker compose`. |
 
-## Modèle de domaine
+## Domain model
 
 ```
 team (tenant)
- └── project (= 1 repo, clé courte : FRNT, CORE)
-      ├── task     ← travail interne au repo, l'agent de CE repo le gère
-      └── issue    ← question inter-projets, dans la team uniquement
+ └── project (= 1 repo, short key: FRNT, CORE)
+      ├── task     ← work internal to the repo, THIS repo's agent handles it
+      └── issue    ← cross-project question, within the team only
 ```
 
-- **task** : `FRNT-34`, `status ∈ {todo, in_progress, blocked, done}`, `priority`, `deadline`,
-  description markdown riche, notes de progression, archivage.
-- **issue** : ouverte par le projet A vers le projet B, `state ∈ {open, answered, closed}`,
-  fil de messages. Isolée des tâches de B : répondre à une issue ne pollue pas son backlog.
-- **event** : journal append-only par team. Alimente `check_inbox` en v1 et servira de flux
-  SSE au daemon de wake-up en v2 sans changer de modèle.
+- **task**: `FRNT-34`, `status ∈ {todo, in_progress, blocked, done}`, `priority`, `deadline`, rich
+  markdown description, progress notes, archiving.
+- **issue**: opened by project A towards project B, `state ∈ {open, answered, closed}`, thread of
+  messages. Isolated from B's tasks: answering an issue does not pollute its backlog.
+- **event**: append-only journal per team. Feeds `check_inbox` in v1 and will serve as the SSE
+  stream for the wake-up daemon in v2 without changing model.
 
-### Identifiants
+### Identifiers
 
-`<PROJECT_KEY>-<n>` (`FRNT-34`) pour tasks et issues. Compteur par projet, incrémenté dans la
-transaction d'insertion. Les agents ne manipulent jamais d'UUID.
+`<PROJECT_KEY>-<n>` (`FRNT-34`) for tasks and issues. Counter per project, incremented inside the
+insertion transaction. Agents never handle a UUID.
 
-## Isolation et permissions
+## Isolation and permissions
 
-Un token d'agent est scopé à **un projet**, dans une team.
+An agent token is scoped to **one project**, within a team.
 
-| Ressource                      | Portée du token projet          |
-| ------------------------------ | ------------------------------- |
-| tasks de son projet            | lecture / écriture              |
-| tasks des autres projets       | **aucun accès**                 |
-| issues dont il est émetteur    | lecture / écriture              |
-| issues dont il est destinataire| lecture / écriture              |
-| autres issues de la team       | aucun accès                     |
-| métadonnées projets de la team | lecture seule (clé, nom)        |
-| autre team                     | **aucun accès**                 |
+| Resource                        | Scope of the project token     |
+| ------------------------------- | ------------------------------- |
+| tasks of its own project        | read / write                    |
+| tasks of the other projects     | **no access**                   |
+| issues it is the sender of      | read / write                    |
+| issues it is the recipient of   | read / write                    |
+| other issues of the team        | no access                       |
+| project metadata of the team    | read-only (key, name)           |
+| another team                    | **no access**                   |
 
-Le filtrage `team_id` + `project_id` est appliqué **dans le store**, jamais seulement dans le
-handler : une query sans scope est un bug de sécurité, pas un oubli d'UI.
+The `team_id` + `project_id` filtering is applied **in the store**, never only in the handler: a
+query without a scope is a security bug, not a UI oversight.
 
-### La seconde règle de scope, depuis `overview`
+### The second scoping rule, since `overview`
 
-Le module `overview` a introduit une **deuxième** forme de portée : `team_id` **seul**, en lecture,
-derrière `AdminOnly`. Elle ne remplace pas la première, elle coexiste avec — c'est la configuration
-où une relecture se trompe, donc les deux règles sont nommées et opposées dans
-[ARCHITECTURE.md](ARCHITECTURE.md) § Les deux règles de scope.
+The `overview` module introduced a **second** form of scope: `team_id` **alone**, read-only, behind
+`AdminOnly`. It does not replace the first, it coexists with it — that is the setup where a
+re-reading gets it wrong, so the two rules are named and set against each other in
+[ARCHITECTURE.md](ARCHITECTURE.md) § The repository's two scoping rules.
 
-Ce qui la rend tenable :
+What makes it tenable:
 
-- **Un seul fichier de queries la porte** (`sql/queries/overview.sql`), qui déclare sa règle
-  inverse en tête. L'ensemble des requêtes capables de traverser les projets est énumérable en un
-  `cat`.
-- **Lecture seule, vérifié mécaniquement** — `scripts/check-overview-scope.sh`, dans `make lint`.
-- **Le `team_id` ne vient jamais du client** : il est résolu côté serveur depuis le slug `?team=`
-  (`OverviewTeamBySlug`), jamais accepté en UUID.
-- **Rien de tout ça n'est exposé en MCP.** Un agent qui lirait l'état de sa team détruirait la
-  promesse d'isolation du produit, en lecture, sans qu'aucun test de tenancy ne tombe.
+- **One single query file carries it** (`sql/queries/overview.sql`), which declares its inverse
+  rule at the top. The set of queries able to cross projects is enumerable in one `cat`.
+- **Read-only, checked mechanically** — `scripts/check-overview-scope.sh`, in `make lint`.
+- **The `team_id` never comes from the client**: it is resolved server-side from the `?team=` slug
+  (`OverviewTeamBySlug`), never accepted as a UUID.
+- **None of that is exposed over MCP.** An agent reading the state of its team would destroy the
+  product's isolation promise, through reads, without a single tenancy test falling over.
 
-La séparation des deux règles est tenue par un test, pas par une intention :
-`internal/feature/matrix_integration_test.go` (`TestScopeRouteMatrix`) monte les cinq modules sur
-leurs vrais stores et croise trois principaux — projet, admin, aucun — avec les cinq préfixes de
-routes. Un `requireProjectScope` qui accepterait `|| p.IsAdmin()`, ou un `AdminOnly` qui
-accepterait un scope projet, fait tomber une case.
+The separation of the two rules is held by a test, not by an intention:
+`internal/feature/matrix_integration_test.go` (`TestScopeRouteMatrix`) mounts the five modules on
+their real stores and crosses three principals — project, admin, none — with the five route
+prefixes. A `requireProjectScope` that accepted `|| p.IsAdmin()`, or an `AdminOnly` that accepted a
+project scope, makes a cell fall over.
 
-## Modes de déploiement
+## Deployment modes
 
-> **Révisé le 2026-08-05 — voir `docs/DECISION-hosted.md`.** Ce tableau annonçait des comptes, du
-> JWT et un module `billing` **dans ce dépôt**. Ce n'est plus le plan.
+> **Revised on 2026-08-05 — see `docs/DECISION-hosted.md`.** This table announced accounts, JWT and
+> a `billing` module **in this repository**. That is no longer the plan.
 
 | Mode     | Auth                                                     | Billing |
 | -------- | -------------------------------------------------------- | ------- |
-| `local`  | Pas de compte. `flowlio init` crée team + projet + token  | —       |
-| `hosted` | **Identique.** Un token admin, celui de l'opérateur       | **Ailleurs** |
+| `local`  | No account. `flowlio init` creates team + project + token | —       |
+| `hosted` | **Identical.** One admin token, the operator's            | **Elsewhere** |
 
-Ce dépôt ne porte **jamais** de comptes ni de facturation. L'offre hébergée est ce même binaire,
-exploité par flowlio-core : il appelle l'API d'administration pour créer la team, le projet et le
-token du client, exactement comme le ferait `flowlio init` depuis un terminal. Le seul port `Auth()`
-de `CoreServices` reste celui qui existe, avec un seul adaptateur.
+This repository **never** carries accounts or billing. The hosted offer is that same binary,
+operated by flowlio-core: it calls the administration API to create the customer's team, project
+and token, exactly as `flowlio init` would from a terminal. The single `Auth()` port of
+`CoreServices` stays the one that exists, with a single adapter.
 
-`MODE=hosted` ne sert donc plus à monter un module de facturation. Il ne décide que d'une chose :
-**où va le secret d'amorçage** — un magasin de secrets, jamais la sortie standard.
+`MODE=hosted` therefore no longer serves to mount a billing module. It decides one thing only:
+**where the bootstrap secret goes** — a secret store, never standard output.
 
-## Sécurité (repo open source — non négociable)
+## Security (open-source repo — not negotiable)
 
-- Token : `flw_<prefix>_<secret>`, secret de 32 octets aléatoires. Stockage **hashé SHA-256**,
-  `prefix` indexé pour le lookup. Le secret n'est affiché **qu'une fois**, à la création.
-  Pas d'argon2id ici : un secret de 256 bits n'a rien à craindre d'un dictionnaire, et un KDF à
-  coût mémoire sur le chemin d'authentification serait un vecteur de déni de service. argon2id
-  reste prévu pour les mots de passe des comptes hosted (M7).
-- Jamais de token dans les logs, les erreurs, les traces ou les messages d'issue.
-- Comparaison de secret en temps constant.
-- Aucun secret en dur dans le binaire ni dans le repo ; `.env` ignoré par git, `.env.example`
-  sans valeur réelle.
-- Rate limiting sur la résolution de token — calibré ci-dessous.
-- Révocation : `revoked_at`, vérifiée à chaque requête.
-- Rejeu d'une création interrompue : aucune déduplication, décision argumentée et vérifiée par
-  exécution dans `docs/DECISION-idempotence.md`.
+- Token: `flw_<prefix>_<secret>`, 32 random bytes of secret. Storage **hashed with SHA-256**,
+  `prefix` indexed for the lookup. The secret is shown **once only**, at creation. No argon2id
+  here: a 256-bit secret has nothing to fear from a dictionary, and a memory-hard KDF on the
+  authentication path would be a denial-of-service vector. argon2id is still planned for the
+  passwords of hosted accounts (M7).
+- Never a token in the logs, the errors, the traces or the issue messages.
+- Constant-time secret comparison.
+- No secret hard-coded in the binary nor in the repo; `.env` ignored by git, `.env.example` with no
+  real value.
+- Rate limiting on the token resolution — calibrated below.
+- Revocation: `revoked_at`, checked on every request.
+- Replay of an interrupted creation: no deduplication, decision argued and verified by execution in
+  `docs/DECISION-idempotence.md`.
 
-### Calibrage du rate limiting
+### Calibrating the rate limiting
 
-Livré dans `internal/core/auth/rate_limit.go`, `trusted_tokens.go` et `request_source.go`.
+Shipped in `internal/core/auth/rate_limit.go`, `trusted_tokens.go` and `request_source.go`.
 
-**Ce que ce limiteur protège, et ce qu'il ne protège pas.** Il ne protège **pas** contre la
-découverte d'un token : un secret fait 32 octets aléatoires, soit 2^256 possibilités, et aucun
-seuil ne change cette arithmétique — c'est l'entropie qui tient. Il protège contre la
-**consommation de ressources** par une source qui échoue en boucle : un aller-retour Postgres et
-un SHA-256 par tentative.
+**What this limiter protects, and what it does not.** It does **not** protect against a token being
+discovered: a secret is 32 random bytes, that is 2^256 possibilities, and no threshold changes that
+arithmetic — the entropy is what holds. It protects against the **consumption of resources** by a
+source failing in a loop: one Postgres round trip and one SHA-256 per attempt.
 
-Cette distinction commande le reste : puisque ce contre quoi on se défend est déjà impossible,
-tout mécanisme capable de refuser un token **valide** est un bilan négatif.
+That distinction commands the rest: since what we defend against is already impossible, any
+mechanism able to refuse a **valid** token is a net loss.
 
-**Un seul seau**, à fenêtre fixe d'une minute, consommé **avant** l'aller-retour store — compter
-après laissait passer toute une rafale concurrente pendant la latence de la base.
+**One single bucket**, with a fixed one-minute window, consumed **before** the store round trip —
+counting after let a whole concurrent burst through during the database latency.
 
-| Seau               | Seuil | Ce qu'il borne                                          |
-| ------------------ | ----- | --------------------------------------------------------- |
-| `maxAttemptsPerIP` | 120   | les tentatives de tokens distincts depuis une même source   |
+| Bucket             | Threshold | What it bounds                                          |
+| ------------------ | --------- | --------------------------------------------------------- |
+| `maxAttemptsPerIP` | 120       | the attempts on distinct tokens from one same source        |
 
-La « source » n'est pas l'adresse exacte : en IPv6 elle est réduite à son **/64**. Le plus petit
-bloc attribué à un client vaut 2^64 adresses — compter l'adresse exacte revenait à ne rien
-compter, un attaquant ouvrant un compteur neuf à chaque requête.
+The "source" is not the exact address: in IPv6 it is reduced to its **/64**. The smallest block
+assigned to a client is 2^64 addresses — counting the exact address amounted to counting nothing,
+an attacker opening a fresh counter on every request.
 
-Le seuil est volontairement large : il borne une consommation de ressources, pas une force
-brute. Le serrer refuserait des agents légitimes à froid derrière un même NAT sans rien gagner.
+The threshold is deliberately wide: it bounds a consumption of resources, not a brute force.
+Tightening it would refuse legitimate agents starting cold behind one same NAT while gaining
+nothing.
 
-**Le seau par préfixe a été supprimé après revue.** Il existait pour freiner l'acharnement sur un
-token précis. Le préfixe étant la partie **publique** du token, il s'est révélé être le seul
-moyen de couper un agent légitime : mesuré, 11 requêtes par minute sur le préfixe d'une victime
-lui faisaient refuser son token valide, fenêtre après fenêtre, et 4 400 requêtes depuis une seule
-source coupaient 400 victimes à la fois. En face il ne rachetait rien. Un dispositif qui ne
-défend rien et qui coupe les légitimes se supprime, il ne se recalibre pas.
+**The per-prefix bucket was removed after review.** It existed to slow down relentless attacks on a
+specific token. The prefix being the **public** part of the token, it turned out to be the only way
+to cut a legitimate agent off: measured, 11 requests a minute on a victim's prefix got their valid
+token refused, window after window, and 4,400 requests from a single source cut 400 victims off at
+once. In exchange it bought nothing. A device that defends nothing and cuts the legitimate off is
+removed, not recalibrated.
 
-**Un token valide ne consomme jamais de quota**, par deux mécanismes indexés sur l'empreinte
-SHA-256 du **token complet** — jamais sur le préfixe :
+**A valid token never consumes quota**, through two mechanisms indexed on the SHA-256 fingerprint
+of the **whole token** — never on the prefix:
 
-1. les requêtes concurrentes portant le même token partagent **une seule** charge. Un groupe
-   cesse d'accueillir dès sa première réponse : sans cette borne, un flux pipeliné entretenait un
-   groupe indéfiniment et passait sans limite (3 200 requêtes en 480 ms, mesurées). La borne
-   exacte est donc `maxAttemptsPerIP × concurrence`, et seulement pour des requêtes portant le
-   même token, dont la répétition n'apprend rien à l'attaquant ;
-2. un token qui s'est authentifié est exempté de quota (24 h), exemption **retirée au premier
-   refus**, ce qui fait tomber un token révoqué. Une tentative exemptée qui finit **sans
-   verdict** — client qui abandonne — est facturée après coup : sinon il suffisait de couper la
-   connexion pour ne jamais produire de refus, donc pour garder l'exemption jusqu'au TTL.
+1. concurrent requests carrying the same token share **one single** charge. A group stops accepting
+   new members from its first answer on: without that bound, a pipelined stream kept a group alive
+   indefinitely and went through without limit (3,200 requests in 480 ms, measured). The exact
+   bound is therefore `maxAttemptsPerIP × concurrency`, and only for requests carrying the same
+   token, whose repetition teaches the attacker nothing;
+2. a token that authenticated is exempt from quota (24 h), an exemption **withdrawn on the first
+   refusal**, which drops a revoked token. An exempt attempt that ends **without a verdict** — a
+   client giving up — is charged after the fact: otherwise it was enough to cut the connection to
+   never produce a refusal, hence to keep the exemption until the TTL.
 
-Ce n'est pas un cache d'authentification : chaque requête va quand même au store et compare le
-secret, la révocation reste immédiate.
+This is not an authentication cache: every request still goes to the store and compares the secret,
+revocation stays immediate.
 
-**Une seule issue rend la charge : l'authentification réussie.** Ni l'échec, ni la panne du
-store, ni l'abandon du client. Une version précédente remboursait aussi les pannes, au nom de la
-disponibilité pendant un incident ; c'était un contournement complet, parce que l'attaquant
-provoque lui-même cette issue en abandonnant sa requête HTTP — le contexte annulé remonte comme
-une panne et rembourse la charge que la requête jumelle vient de payer. Le prix de ce
-renversement est borné : pendant un incident l'API ne répond de toute façon pas, et un token déjà
-authentifié reste exempté, donc les agents en session ne sont pas touchés — **sauf si l'incident
-se termine par un redémarrage**, le cache de confiance vivant en mémoire du process.
+**One single outcome gives the charge back: a successful authentication.** Neither the failure, nor
+the store outage, nor the client giving up. A previous version also refunded outages, in the name
+of availability during an incident; that was a complete bypass, because the attacker brings that
+outcome about themselves by abandoning their HTTP request — the cancelled context surfaces as an
+outage and refunds the charge the twin request has just paid. The price of that reversal is
+bounded: during an incident the API does not answer anyway, and an already authenticated token
+stays exempt, so agents in session are untouched — **unless the incident ends in a restart**, the
+trust cache living in the process memory.
 
-Limites connues, assumées, non compensées ailleurs :
+Known limits, accepted, not compensated elsewhere:
 
-- **la boucle locale est exemptée du seau, donc le limiteur ne freine rien en mode local.** C'est
-  cohérent avec le modèle de menace, pas un oubli : un attaquant capable d'émettre depuis
-  `127.0.0.1` lit déjà le fichier de credentials, il n'a aucune raison de deviner un token. Ce
-  limiteur défend le mode hosted, où la source d'une requête est une information ; en local,
-  c'est le système de fichiers qui protège. Corollaire : la boucle locale ne crée **aucune** clé
-  de cache. **Attention** : un reverse proxy installé sur la même machine que l'API fait
-  apparaître tout le trafic comme du loopback, donc désarme le limiteur sans le dire. Tant
-  qu'aucune configuration de proxy de confiance n'existe, ne pas en mettre un devant ;
-- le chemin bloqué calcule bien un SHA-256 mais ne touche pas la base : sa **latence** distingue
-  « limité » de « refusé ». L'aligner supposerait d'offrir la requête que le limiteur existe pour
-  refuser ;
-- NAT, conteneur ou proxy partagé : un voisin bruyant peut faire refuser un token valide **pas
-  encore authentifié** dans le process courant. À traiter le jour où un proxy de confiance
-  existe, par configuration explicite, jamais en faisant confiance à `X-Forwarded-For` ;
-- plusieurs instances de l'API multiplient la limite effective par leur nombre, chacune portant
-  son propre compteur mémoire. Le jour où ça arrive, c'est le cache qui change.
+- **the loopback is exempt from the bucket, so the limiter slows nothing down in local mode.** That
+  is consistent with the threat model, not an oversight: an attacker able to emit from `127.0.0.1`
+  already reads the credentials file, they have no reason to guess a token. This limiter defends
+  the hosted mode, where the source of a request is a piece of information; locally, it is the
+  filesystem that protects. Corollary: the loopback creates **no** cache key. **Careful**: a
+  reverse proxy installed on the same machine as the API makes all traffic look like loopback, and
+  therefore disarms the limiter without saying so. For as long as no trusted-proxy configuration
+  exists, do not put one in front;
+- the blocked path does compute a SHA-256 but does not touch the database: its **latency** tells
+  "limited" apart from "refused". Aligning it would mean offering the very query the limiter exists
+  to refuse;
+- NAT, container or shared proxy: a noisy neighbour can get a valid token refused if it is **not
+  yet authenticated** in the current process. To be dealt with the day a trusted proxy exists,
+  through explicit configuration, never by trusting `X-Forwarded-For`;
+- several instances of the API multiply the effective limit by their number, each carrying its own
+  memory counter. The day that happens, it is the cache that changes.
 
-## Schéma
+## Schema
 
-Livré (migrations `000001_init`, `000002_token_scope`, `000003_tasks`) :
+Shipped (migrations `000001_init`, `000002_token_scope`, `000003_tasks`):
 
 ```
 teams(id, slug, name, created_at, updated_at)
@@ -203,19 +202,19 @@ tasks(id, team_id, project_id, number, title, body_md, status,
 task_notes(id, task_id, body_md, created_at)
 ```
 
-`tokens.scope` vaut `admin` (amorçage local, aucune team) ou `project` (agent, team et projet
-obligatoires) — une seule table, donc un seul chemin de vérification de secret.
+`tokens.scope` is `admin` (local bootstrap, no team) or `project` (agent, team and project
+mandatory) — one single table, hence one single secret-verification path.
 
-`tasks` porte un `team_id` **dénormalisé** pour que chaque query puisse embarquer son scope de
-tenancy complet sans jointure. La clé étrangère composite `(project_id, team_id)` vers
-`projects (id, team_id)` — d'où l'unicité ajoutée sur `projects` — garantit que cette
-dénormalisation ne peut jamais diverger : une tâche dont le `team_id` ment est impossible en base,
-pas seulement improbable. Le même schéma s'appliquera aux issues.
+`tasks` carries a **denormalised** `team_id` so that every query can embed its full tenancy scope
+without a join. The composite foreign key `(project_id, team_id)` towards `projects (id, team_id)`
+— hence the uniqueness added on `projects` — guarantees that this denormalisation can never
+diverge: a task whose `team_id` lies is impossible in the database, not merely improbable. The same
+schema will apply to the issues.
 
 `task_status ∈ {todo, in_progress, blocked, done}`,
-`task_priority ∈ {low, normal, high, urgent}` (défaut `normal`).
+`task_priority ∈ {low, normal, high, urgent}` (default `normal`).
 
-Livré aussi (migration `000004_issues`) :
+Also shipped (migration `000004_issues`):
 
 ```
 issues(id, team_id, project_id, author_project_id, number, title,
@@ -225,99 +224,96 @@ events(id, team_id, project_id, actor_project_id, kind, subject_type, subject_id
 token_cursors(token_id, last_event_id, updated_at)
 ```
 
-`events` porte un `actor_project_id` que le modèle annoncé n'avait pas, et **check_inbox ne lit
-pas ce journal comme un flux** : il renvoie l'état actionnable courant, et le curseur ne sert
-qu'au drapeau « nouveau ». Raison complète dans [DESIGN-M3.md](DESIGN-M3.md) — c'est ce qui rend
-sans conséquence le trou de séquence d'un compteur `bigserial`, au lieu d'en faire une classe de
-bugs.
+`events` carries an `actor_project_id` the announced model did not have, and **check_inbox does not
+read that journal as a stream**: it yields the current actionable state, and the cursor only serves
+the "new" flag. Full reason in [DESIGN-M3.md](DESIGN-M3.md) — that is what makes the sequence gap
+of a `bigserial` counter inconsequential, instead of a class of bugs.
 
-Une issue appartient au projet **destinataire** (`project_id`) et mémorise son auteur
-(`author_project_id`), comme une issue GitHub appartient au repo sur lequel elle est ouverte.
-Elle tire son numéro du compteur de ce projet : tasks et issues partagent la même suite, donc
-`CORE-34` désigne toujours un seul objet.
+An issue belongs to the **recipient** project (`project_id`) and remembers its author
+(`author_project_id`), like a GitHub issue belongs to the repo it is opened on. It draws its number
+from that project's counter: tasks and issues share the same sequence, so `CORE-34` always
+designates one single object.
 
-Conséquence sur la surface MCP : `get(ref)` n'est pas typé. Un agent qui lit `CORE-34` dans un
-commit ou dans son inbox ne sait pas si c'est une tâche ou une issue — deux outils typés
-échoueraient une fois sur deux.
+Consequence on the MCP surface: `get(ref)` is not typed. An agent reading `CORE-34` in a commit or
+in its inbox does not know whether it is a task or an issue — two typed tools would fail one time
+out of two.
 
-## Découpage en modules (`internal/feature/`)
+## Split into modules (`internal/feature/`)
 
-| Module      | Clé         | Responsabilité                                              | État |
+| Module      | Key         | Responsibility                                              | State |
 | ----------- | ----------- | ----------------------------------------------------------- | ---- |
-| `workspace` | `workspace` | teams, projects, tokens d'agent (création, révocation)       | livré |
-| `task`      | `task`      | tâches d'un projet + notes de progression + archivage        | livré |
-| `issue`     | `issue`     | issues inter-projets, fil de messages, changements d'état    | livré |
-| `inbox`     | `inbox`     | état actionnable du projet (trois seaux) + curseur du token  | livré |
+| `workspace` | `workspace` | teams, projects, agent tokens (creation, revocation)         | shipped |
+| `task`      | `task`      | a project's tasks + progress notes + archiving               | shipped |
+| `issue`     | `issue`     | cross-project issues, message thread, state changes          | shipped |
+| `inbox`     | `inbox`     | actionable state of the project (three buckets) + token cursor | shipped |
 
-`auth` n'est pas une feature : c'est un service transverse de `internal/core`, exposé via
-`CoreServices.Auth()` (résolution token → `Principal{TeamID, ProjectID}` + middleware).
+`auth` is not a feature: it is a cross-cutting service of `internal/core`, exposed through
+`CoreServices.Auth()` (token → `Principal{TeamID, ProjectID}` resolution + middleware).
 
-Dépendance inter-modules attendue : `issue` et `task` émettent des événements consommés par
-`inbox`. Passe par `FeatureRegistry`, jamais par un import direct — ou par un port `EventWriter`
-côté `internal/store/` si l'écriture doit être transactionnelle avec la tâche/issue.
+Expected inter-module dependency: `issue` and `task` emit events consumed by `inbox`. Goes through
+the `FeatureRegistry`, never through a direct import — or through an `EventWriter` port on the
+`internal/store/` side if the write must be transactional with the task/issue.
 
-## Surface MCP (v1)
+## MCP surface (v1)
 
-Petite par conception : chaque outil superflu coûte des tokens à **chaque tour** d'agent.
+Small by design: every superfluous tool costs tokens on **every turn** of an agent.
 
-Surface réellement servie (M2 → M3, resserrée par FLWL-15). **Huit outils**, arbitrés dans
-`docs/DESIGN-M3.md` : c'est ce fichier-là qui fait foi sur la surface MCP.
-
-```
-list_tasks(status?, limit?, archived?)       → backlog du projet courant
-get(ref)                                     → tâche + fil de notes, ou issue + fil de messages
-create_task(title, body?, ...)               → nouvelle tâche, renvoie sa référence
-update_task(ref, ..., note?, archive?)       → statut, priorité, deadline, description,
-                                               note de progression, archivage
-```
-
-`whoami` n'est pas un outil : son contenu est constant sur la vie du token, il est injecté dans
-`initialize.instructions`. `get_task` est absorbé par `get(ref)` — tâches et issues partagent le
-compteur du projet, donc un outil typé échouerait une fois sur deux. `add_task_note` est replié
-dans `update_task(note:)`, écrit dans la même transaction que le patch.
-
-Livrés en M3 :
+Surface really served (M2 → M3, tightened by FLWL-15). **Eight tools**, settled in
+`docs/DESIGN-M3.md`: that file is what counts on the MCP surface.
 
 ```
-create_issue(to_project, title, body)        → question à un projet frère
-list_issues(role?, state?, limit?, closed?)  → les questions échangées
-answer_issue(ref, body, close?)              → répondre, et clore si demandé
-check_inbox()                                → l'état actionnable courant
+list_tasks(status?, limit?, archived?)       → backlog of the current project
+get(ref)                                     → task + note thread, or issue + message thread
+create_task(title, body?, ...)               → new task, yields its reference
+update_task(ref, ..., note?, archive?)       → status, priority, deadline, description,
+                                               progress note, archiving
 ```
 
-`close_issue` n'a jamais existé : c'est le drapeau `close` d'`answer_issue`, parce que le cas
-majoritaire est « je réponds et ça clôt le sujet ».
+`whoami` is not a tool: its content is constant over the life of the token, it is injected into
+`initialize.instructions`. `get_task` is absorbed by `get(ref)` — tasks and issues share the
+project's counter, so a typed tool would fail one time out of two. `add_task_note` is folded into
+`update_task(note:)`, written in the same transaction as the patch.
 
-> `check_inbox` ne rend PAS « les événements depuis le curseur » comme l'annonçait cette section
-> avant M3. Il rend l'**état actionnable courant**, recalculé à chaque appel ; le curseur ne
-> pilote que le drapeau `new`. Le motif est dans `docs/DESIGN-M3.md` — un flux exigerait une
-> livraison exactement-une-fois que `events.id` ne peut pas garantir, et une issue perdue le
-> serait pour toujours.
+Shipped in M3:
 
-**Aucun outil n'accepte de projet en paramètre** (sauf `to_project` d'une issue, qui désigne un
-destinataire et non un scope de lecture) : le projet vient du token. Il n'existe donc aucun appel
-MCP capable de désigner le backlog d'un autre projet.
+```
+create_issue(to_project, title, body)        → question to a sibling project
+list_issues(role?, state?, limit?, closed?)  → the questions exchanged
+answer_issue(ref, body, close?)              → answer, and close if asked
+check_inbox()                                → the current actionable state
+```
 
-`archive_task` et `add_task_note` ont été fusionnés dans `update_task`, en drapeau `archive` et
-en champ `note`. Même raison dans les deux cas : un outil de plus se paie dans le contexte de
-chaque tour, pour des actions que personne n'appelle sans changer un statut dans le même geste.
-Et pour la note, le repli ferme un état de fait : le patch et la note partagent désormais une
-transaction, donc « statut changé, motif perdu » n'est plus atteignable.
+`close_issue` never existed: it is the `close` flag of `answer_issue`, because the majority case is
+"I answer and that closes the subject".
 
-Tout retour d'écriture a la même forme, `{ref, task}` ou `{ref, issue}` : l'agent lit la
-référence au même endroit quel que soit l'outil qu'il vient d'appeler.
+> `check_inbox` does NOT yield "the events since the cursor" as this section announced before M3.
+> It yields the **current actionable state**, recomputed on every call; the cursor only drives the
+> `new` flag. The reason is in `docs/DESIGN-M3.md` — a stream would require exactly-once delivery
+> that `events.id` cannot guarantee, and a lost issue would be lost forever.
 
-## Binaires
+**No tool accepts a project as a parameter** (except `to_project` of an issue, which designates a
+recipient and not a read scope): the project comes from the token. There is therefore no MCP call
+able to designate another project's backlog.
 
-- `cmd/api` — serveur HTTP (existant).
-- `cmd/flowlio` — CLI humain (`init`, `project`, `token`, `task`, `issue`) **et** serveur MCP
-  stdio via `flowlio mcp`. Même binaire, même auth, même client HTTP : local et hosted ne
-  divergent pas.
+`archive_task` and `add_task_note` were merged into `update_task`, as an `archive` flag and a
+`note` field. The same reason in both cases: one more tool is paid for in the context of every
+turn, for actions nobody calls without changing a status in the same move. And for the note, the
+folding closes a state of affairs: the patch and the note now share a transaction, so "status
+changed, reason lost" is no longer reachable.
 
-## Hors périmètre v1 (assumé)
+Every write return has the same shape, `{ref, task}` or `{ref, issue}`: the agent reads the
+reference in the same place whichever tool it has just called.
 
-- Wake-up automatique des sessions (daemon local + SSE) — le journal d'événements est déjà là
-  pour l'accueillir.
-- Décisions / contrats versionnés — modèle prévu, non implémenté.
-- Comptes hosted, JWT, Stripe.
-- Toute interface web.
+## Binaries
+
+- `cmd/api` — HTTP server (existing).
+- `cmd/flowlio` — human CLI (`init`, `project`, `token`, `task`, `issue`) **and** stdio MCP server
+  through `flowlio mcp`. Same binary, same auth, same HTTP client: local and hosted do not diverge.
+
+## Out of scope for v1 (accepted)
+
+- Automatic wake-up of the sessions (local daemon + SSE) — the event journal is already there to
+  host it.
+- Versioned decisions / contracts — model planned, not implemented.
+- Hosted accounts, JWT, Stripe.
+- Any web interface.

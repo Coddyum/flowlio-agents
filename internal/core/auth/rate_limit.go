@@ -66,7 +66,7 @@ package auth
 // a fresh counter on every request. An attacker with many sources still creates one key per
 // source: that is bounded by what they have, not by the limiter.
 //
-// Threshold, trade-offs and known limits: docs/DESIGN-V1.md § Calibrage du rate limiting.
+// Threshold, trade-offs and known limits: docs/DESIGN-V1.md § Calibrating the rate limiting.
 
 import (
 	"strconv"

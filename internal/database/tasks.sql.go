@@ -43,7 +43,7 @@ type CreateTaskParams struct {
 //
 // (Deux fichiers ne relèvent d'aucune des deux règles : `projects.sql`, team-seul mais SANS
 // AdminOnly parce que c'est l'annuaire de la team, et `teams.sql`, sans aucun prédicat de
-// tenancy. Le tableau complet est dans docs/ARCHITECTURE.md § Les deux règles de scope.)
+// tenancy. Le tableau complet est dans docs/ARCHITECTURE.md § The repository's two scoping rules.)
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error) {
 	row := q.db.QueryRowContext(ctx, createTask,
 		arg.TeamID,

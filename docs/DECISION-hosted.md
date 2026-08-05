@@ -1,6 +1,6 @@
 # DECISION — hosted runs the same engine, operated by flowlio-core
 
-Decided 2026-08-05. Supersedes the `hosted` row of `DESIGN-V1.md` § "Modes de déploiement",
+Decided 2026-08-05. Supersedes the `hosted` row of `DESIGN-V1.md` § "Deployment modes",
 which announced accounts, JWT and a `billing` module inside this repository. None of that is
 happening here.
 
@@ -100,7 +100,7 @@ must not promise "nothing to install".
 
 ## What this deletes
 
-- `DESIGN-V1.md` § "Modes de déploiement" — the `hosted` row and the `billing` module it announced.
+- `DESIGN-V1.md` § "Deployment modes" — the `hosted` row and the `billing` module it announced.
 - The reading of FLWL-59 that hosted meant "one flowlio-agents instance per account". It means one
   operated instance, and the tenancy it needs already exists and is proven by mutation (FLWL-31).
 

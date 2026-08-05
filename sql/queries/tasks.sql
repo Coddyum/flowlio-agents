@@ -10,7 +10,7 @@
 --
 -- (Deux fichiers ne relèvent d'aucune des deux règles : `projects.sql`, team-seul mais SANS
 -- AdminOnly parce que c'est l'annuaire de la team, et `teams.sql`, sans aucun prédicat de
--- tenancy. Le tableau complet est dans docs/ARCHITECTURE.md § Les deux règles de scope.)
+-- tenancy. Le tableau complet est dans docs/ARCHITECTURE.md § The repository's two scoping rules.)
 
 -- name: CreateTask :one
 INSERT INTO tasks (team_id, project_id, number, title, body_md, status, priority, deadline)

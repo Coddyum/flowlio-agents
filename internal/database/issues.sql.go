@@ -166,7 +166,7 @@ type CreateIssueParams struct {
 // des deux règles du dépôt ; la seconde — team_id SEUL, en lecture, derrière AdminOnly — vit
 // exclusivement dans `overview.sql`. Aucune query team-seule n'entre ici. Tableau complet des
 // quatre situations (dont `projects.sql` et `teams.sql`, hors des deux règles) :
-// docs/ARCHITECTURE.md § Les deux règles de scope.
+// docs/ARCHITECTURE.md § The repository's two scoping rules.
 //
 // Le scope est DANS la query, sans exception. La clause de visibilité canonique est
 //

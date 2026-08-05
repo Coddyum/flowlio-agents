@@ -1,113 +1,113 @@
-# Décision — idempotence de `create_task` et `create_issue`
+# Decision — idempotence of `create_task` and `create_issue`
 
-> Note produite le 2026-08-02 par un fan-out de conception (quatre angles indépendants — clé
-> client, empreinte serveur, produit, sécurité — chacun critiqué par un agent adversarial), puis
-> vérifiée par exécution contre la base de dev.
+> Note produced on 2026-08-02 by a design fan-out (four independent angles — client key, server
+> fingerprint, product, security — each critiqued by an adversarial agent), then verified by
+> execution against the dev database.
 >
-> **Statut : DÉCISION ACTÉE le 2026-08-02 par Maxence — aucune déduplication ne sera construite.**
-> Motif retenu : « jouer sur quelques millisecondes est ridicule ». Ce document existe pour que
-> la session suivante n'ait pas à refaire l'analyse, et pour que la décision soit contestable sur
-> des faits plutôt que réimprovisée.
+> **Status: DECISION SETTLED on 2026-08-02 by Maxence — no deduplication will be built.**
+> Reason given: "playing on a few milliseconds is ridiculous". This document exists so that the
+> next session does not have to redo the analysis, and so that the decision can be contested on
+> facts rather than re-improvised.
 >
-> Ce qui rouvrirait le sujet : un client MCP qui **rejoue mécaniquement** un appel d'outil dont la
-> réponse s'est perdue. Aucun ne le fait aujourd'hui ; le jour où l'un le fait, la variante à
-> retenir est l'empreinte du contenu sur une fenêtre courte, et rien d'autre.
+> What would reopen the subject: an MCP client that **mechanically replays** a tool call whose
+> response was lost. None does today; the day one does, the variant to pick is the content
+> fingerprint over a short window, and nothing else.
 
 ---
 
-## Ce que la tâche affirmait
+## What the task claimed
 
-> Un agent appelle `create_issue`, la réponse se perd (délai dépassé, session tuée, contexte
-> compacté au mauvais moment). L'agent **rejoue** l'appel : deuxième issue identique chez le
-> destinataire, et un numéro brûlé dans une suite dont la densité est un invariant du produit.
+> An agent calls `create_issue`, the response is lost (timeout, session killed, context compacted
+> at the wrong moment). The agent **replays** the call: a second identical issue at the
+> recipient's, and a number burnt in a sequence whose density is an invariant of the product.
 
-Deux des trois affirmations de ce paragraphe sont fausses, et la troisième est plus étroite
-qu'annoncée.
+Two of the three claims in that paragraph are false, and the third is narrower than announced.
 
-## Fait 1 — une création interrompue ne laisse rien derrière elle
+## Fact 1 — an interrupted creation leaves nothing behind
 
-`internal/pkg/client/client.go` construit chaque requête avec `http.NewRequestWithContext` et un
-`requestTimeout` de 15 s. Les handlers passent `r.Context()` au service ; `WithTx` ouvre par
-`s.db.BeginTx(ctx, nil)`. Délai dépassé, session tuée, agent interrompu : le contexte est annulé,
-la transaction est annulée avec lui. **Aucune ligne, aucun numéro consommé.**
+`internal/pkg/client/client.go` builds every request with `http.NewRequestWithContext` and a
+15 s `requestTimeout`. The handlers pass `r.Context()` to the service; `WithTx` opens through
+`s.db.BeginTx(ctx, nil)`. Timeout, session killed, agent interrupted: the context is cancelled,
+and the transaction is cancelled with it. **No row, no number consumed.**
 
-Prouvé par exécution, sur les deux chemins :
+Proven by execution, on both paths:
 
-| Test                                     | Fichier                                              |
+| Test                                     | File                                                 |
 | ---------------------------------------- | ---------------------------------------------------- |
 | `TestCancelledRequestCreatesNothing`     | `internal/feature/task/store/store_integration_test.go`  |
 | `TestCancelledRequestOpensNothing`       | `internal/feature/issue/store/store_integration_test.go` |
 
-Les deux annulent le contexte **après** la réservation du numéro — le pire instant possible — et
-vérifient qu'aucune ligne n'existe et que le rejeu obtient bien le numéro 1.
+Both cancel the context **after** the number is reserved — the worst possible instant — and check
+that no row exists and that the replay does get number 1.
 
-> Non-vacuité vérifiée par mutation : détacher la transaction du contexte **ne suffit pas** à
-> faire échouer le test, parce que l'instruction elle-même porte le contexte annulé. Il faut
-> retirer les DEUX mécanismes — `BeginTx(ctx)` et la remontée de l'erreur de `fn` — pour que le
-> test tombe. La propriété est défendue en profondeur, ce n'est pas un test complaisant.
+> Non-vacuity checked by mutation: detaching the transaction from the context **is not enough** to
+> make the test fail, because the statement itself carries the cancelled context. BOTH mechanisms
+> have to be removed — `BeginTx(ctx)` and the propagation of `fn`'s error — for the test to fall
+> over. The property is defended in depth, this is not a complacent test.
 
-La seule fenêtre où un rejeu duplique réellement est l'intervalle entre le `COMMIT` réussi et
-l'arrivée des octets chez le client : de l'ordre de la milliseconde.
+The only window where a replay really duplicates is the interval between the successful `COMMIT`
+and the bytes reaching the client: of the order of a millisecond.
 
-## Fait 2 — un doublon ne brûle aucun numéro
+## Fact 2 — a duplicate burns no number
 
-`ClaimNumber` et l'insertion sont dans la même transaction. Deux créations qui réussissent
-produisent `CORE-34` **et** `CORE-35` : deux lignes, aucun trou. La densité de la suite n'est
-menacée que par un **échec**, et un échec fait un rollback (`TestFailedCreateDoesNotBurnNumber`).
+`ClaimNumber` and the insert are in the same transaction. Two creations that succeed produce
+`CORE-34` **and** `CORE-35`: two rows, no gap. The density of the sequence is only threatened by a
+**failure**, and a failure rolls back (`TestFailedCreateDoesNotBurnNumber`).
 
-Le dommage résiduel d'un doublon se réduit donc à : un objet en trop, et un second événement
-`issue.opened` qui rallume `is_new` chez le pair — un tour de contexte pour le repo frère.
+The residual damage of a duplicate therefore reduces to: one object too many, and a second
+`issue.opened` event that relights `is_new` at the peer's — one turn of context for the sibling
+repo.
 
-## Fait 3 — le rejeu n'est pas mécanique, donc aucun dispositif ne l'attrape
+## Fact 3 — the replay is not mechanical, so no device catches it
 
-`docs/DESIGN-M3.md` le dit déjà : « sera rejoué par **l'agent** ». Le rejoueur est le modèle,
-dans une nouvelle session, à partir d'un contexte recomposé. Il n'existe aucune boucle de réessai
-dans le dépôt : `Client.Do` fait un seul `c.http.Do(req)` et rend l'erreur telle quelle.
+`docs/DESIGN-M3.md` already says it: "will be replayed by **the agent**". The replayer is the
+model, in a new session, from a recomposed context. There is no retry loop in the repository:
+`Client.Do` makes a single `c.http.Do(req)` and yields the error as such.
 
-Conséquence, dispositif par dispositif :
+Consequence, device by device:
 
-| Dispositif                                | Pourquoi il rate le rejeu réel                                                                 |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Clé d'idempotence mintée par le client    | neuve à chaque appel d'outil, jamais revue : zéro rejeu détecté, jamais                            |
-| Empreinte du contenu                      | diverge dès que le modèle reformule un `body` dont l'outil exige « le contexte complet »           |
-| Identité métier `(destinataire, titre)`   | attrape autre chose que des rejeux, et casse la relance (`closed` terminal, rouvrir = reposer)     |
+| Device                                      | Why it misses the real replay                                                                  |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Idempotency key minted by the client        | fresh on every tool call, never seen again: zero replays detected, ever                          |
+| Content fingerprint                         | diverges as soon as the model rewords a `body` for which the tool demands "the full context"     |
+| Business identity `(recipient, title)`       | catches things other than replays, and breaks the follow-up (`closed` is terminal, reopening = re-asking) |
 
-## Fait 4 — aucun dispositif ne peut le DIRE à l'agent
+## Fact 4 — no device can TELL the agent
 
-`Client.Do` ne rend qu'une `error` : `200` et `201` sont indiscernables pour la couche MCP.
-Exposer un `replayed` impose de rouvrir la signature du client HTTP partagé CLI+MCP, ou d'ajouter
-un champ à une DTO qui ressort dans `list_tasks`, `get` et `update_task` — c'est-à-dire de payer
-du budget de contexte à **chaque tour de chaque session**, indéfiniment.
+`Client.Do` yields nothing but an `error`: `200` and `201` are indistinguishable to the MCP layer.
+Exposing a `replayed` means reopening the signature of the HTTP client shared by CLI and MCP, or
+adding a field to a DTO that comes back out in `list_tasks`, `get` and `update_task` — that is to
+say paying context budget on **every turn of every session**, indefinitely.
 
-Sans ce signal, une déduplication rend un objet dont l'état a pu bouger : une issue déjà
-`answered`, une tâche déjà archivée, en réponse à ce que l'agent croit être une création.
-L'appel suivant fait alors 404 — `AnswerIssue` porte `AND i.state <> 'closed'`, `UpdateTask`,
-`ArchiveTask` et `CreateTaskNote` portent `AND archived_at IS NULL`.
+Without that signal, a deduplication yields an object whose state may have moved: an issue already
+`answered`, a task already archived, in answer to what the agent believes to be a creation. The
+next call then 404s — `AnswerIssue` carries `AND i.state <> 'closed'`, `UpdateTask`, `ArchiveTask`
+and `CreateTaskNote` carry `AND archived_at IS NULL`.
 
-## L'asymétrie qui tranche
+## The asymmetry that settles it
 
-| | Coût | Visible ? | Réparable ? |
+| | Cost | Visible? | Repairable? |
 | --- | --- | --- | --- |
-| **Faux négatif** (doublon non détecté) | un objet en trop, un tour de contexte chez le pair | oui | oui — `update_task(archive=true)`, `answer_issue(close=true)` |
-| **Faux positif** (création supprimée à tort) | une question jamais posée sur le chemin le plus cher du produit | **non** | **non** |
+| **False negative** (duplicate not detected) | one object too many, one turn of context at the peer's | yes | yes — `update_task(archive=true)`, `answer_issue(close=true)` |
+| **False positive** (creation wrongly suppressed) | a question never asked, on the most expensive path of the product | **no** | **no** |
 
-On garde le défaut bruyant et réparable plutôt que le défaut silencieux et définitif.
+We keep the loud, repairable flaw rather than the silent, permanent one.
 
-## Ce qui a été livré à la place
+## What was shipped instead
 
-1. Les deux tests d'annulation ci-dessus, qui **bornent** le problème au lieu de le supposer.
-2. La décision #23 de `docs/DESIGN-M3.md`, prescrite et jamais appliquée côté `task` : une
-   violation de `tasks_number_unique_per_project` remonte désormais `ErrCorrupted` → 500, et non
-   `ErrConflict` → 409. Un compteur corrompu répondait « conflit » à un agent qui n'avait rien
-   fait de mal et qui réessaierait indéfiniment. Prouvé par
-   `TestDuplicateNumberIsCorruptionNotConflict`, qui tombe si la discrimination est retirée.
+1. The two cancellation tests above, which **bound** the problem instead of assuming it.
+2. Decision #23 of `docs/DESIGN-M3.md`, prescribed and never applied on the `task` side: a
+   violation of `tasks_number_unique_per_project` now surfaces `ErrCorrupted` → 500, and not
+   `ErrConflict` → 409. A corrupted counter answered "conflict" to an agent that had done nothing
+   wrong and would retry indefinitely. Proven by `TestDuplicateNumberIsCorruptionNotConflict`,
+   which falls over if the discrimination is removed.
 
-## Ce qui reste ouvert, et relève d'un arbitrage humain
+## What stays open, and is a human call
 
-- **Si un client MCP réessayait mécaniquement** un appel d'outil dont la réponse s'est perdue, une
-  empreinte du contenu l'attraperait (les arguments seraient identiques octet pour octet). Aucun
-  client connu ne le fait aujourd'hui ; le jour où l'un le fait, cette note est à rouvrir.
-- **Violations de `CHECK` (`23514`)** : elles doublent toutes une validation applicative, donc en
-  atteindre une signifie que la validation a divergé du schéma — une panne serveur, pas un
-  conflit d'appelant. Les mapper en 500 est cohérent avec ce qui précède, mais c'est un
-  changement de comportement plus large que la décision #23 : hors périmètre ici, à trancher.
+- **If an MCP client did retry mechanically** a tool call whose response was lost, a content
+  fingerprint would catch it (the arguments would be identical byte for byte). No known client
+  does so today; the day one does, this note is to be reopened.
+- **`CHECK` violations (`23514`)**: they all duplicate an application-level validation, so
+  reaching one means the validation diverged from the schema — a server failure, not a caller
+  conflict. Mapping them to 500 is consistent with the above, but it is a behaviour change wider
+  than decision #23: out of scope here, to be settled.
