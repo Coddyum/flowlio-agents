@@ -5,11 +5,11 @@ package main
 // | Élément               | Résumé                                                       | Ligne |
 // |-----------------------|--------------------------------------------------------------|-------|
 // | runInit               | Prepares team, project and agent token in a single command     | 35    |
-// | announceTrustIsClosed | Warns that no trust is declared, on the 2nd project            | 132   |
-// | announceMCPConfig     | Writes the repo's MCP config and says what happened            | 185   |
-// | ensure                | Runs a creation, tolerating that it already exists             | 206   |
-// | splitFlags            | Separates flags from positional arguments, in any order        | 223   |
-// | printToken            | Prints a freshly issued token, with the warning it deserves    | 243   |
+// | announceTrustIsClosed | Warns that no trust is declared, on the 2nd project            | 143   |
+// | announceMCPConfig     | Writes the repo's MCP config and says what happened            | 196   |
+// | ensure                | Runs a creation, tolerating that it already exists             | 217   |
+// | splitFlags            | Separates flags from positional arguments, in any order        | 234   |
+// | printToken            | Prints a freshly issued token, with the warning it deserves    | 254   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -77,6 +77,17 @@ func runInit(ctx context.Context, args []string) error {
 		}
 		c = client.New(adopted.APIURL, adopted.Token)
 		fmt.Println("Instance ready. Credentials saved locally — nothing to copy from the logs.")
+	}
+
+	// A credentials file that outlived its instance is READABLE, so newClient succeeded and every
+	// request above would leave for a port nothing listens on. Probing here rather than reacting to
+	// the first creation keeps the recovery in one place, and costs one GET on the one command that
+	// is already the slowest — see reachable.go for why only this command may repoint.
+	if dead := unreachableAPI(ctx, c); dead != nil {
+		c, err = repointAtInstance(ctx, dead, execDocker, os.Stdin, os.Stdout, isInteractive(os.Stdin))
+		if err != nil {
+			return err
+		}
 	}
 
 	if err := ensure(func() error {

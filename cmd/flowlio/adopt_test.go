@@ -241,6 +241,18 @@ func TestIsInteractiveRejectsAPipe(t *testing.T) {
 	if isInteractive(f) {
 		t.Error("isInteractive said yes to a regular file — a redirected stdin would be prompted")
 	}
+
+	// /dev/null is a CHARACTER DEVICE, so the mode check alone let it through. `flowlio init
+	// < /dev/null` was therefore prompted, and askYesNo reads the immediate EOF as yes: a question
+	// guarding an overwrite got consent from nobody.
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	defer func() { _ = null.Close() }()
+	if isInteractive(null) {
+		t.Errorf("isInteractive said yes to %s — an EOF answer would count as consent", os.DevNull)
+	}
 }
 
 // TestCredentialsRoundTripThroughAdoption pins the JSON contract between the two sides. The API

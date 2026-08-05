@@ -4,14 +4,15 @@ package main
 //
 // | Élément            | Résumé                                                        | Ligne |
 // |--------------------|---------------------------------------------------------------|-------|
-// | dockerRunner       | Runs one docker subcommand — injected so this file is testable  | 82    |
-// | execDocker         | The real runner, backed by the docker binary on PATH            | 86    |
-// | adoptCredentials   | Copies the instance's credentials out of the container, silently| 110   |
-// | instanceIsRunning  | Answers whether the API container is up right now               | 147   |
-// | offerToStartStack  | Asks once, then brings the stack up with docker compose         | 162   |
-// | waitForCredentials | Polls until the fresh instance has written its credentials      | 193   |
-// | isInteractive      | Answers whether a human can be prompted on this input           | 217   |
-// | askYesNo           | Reads one yes/no answer, defaulting to yes on an empty line     | 231   |
+// | dockerRunner       | Runs one docker subcommand — injected so this file is testable  | 84    |
+// | execDocker         | The real runner, backed by the docker binary on PATH            | 88    |
+// | adoptCredentials   | Copies the instance's credentials out of the container, silently| 112   |
+// | instanceCredentials| Reads the instance's credentials without writing on the host    | 129   |
+// | instanceIsRunning  | Answers whether the API container is up right now               | 162   |
+// | offerToStartStack  | Asks once, then brings the stack up with docker compose         | 177   |
+// | waitForCredentials | Polls until the fresh instance has written its credentials      | 208   |
+// | isInteractive      | Answers whether a human can be prompted on this input           | 232   |
+// | askYesNo           | Reads one yes/no answer, defaulting to yes on an empty line     | 262   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -42,6 +43,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -108,6 +110,23 @@ func execDocker(ctx context.Context, args ...string) ([]byte, error) {
 // Returns errNoInstance when there is nothing to adopt from, so the caller can tell a missing
 // instance from a broken one.
 func adoptCredentials(ctx context.Context, run dockerRunner) (credentials.File, error) {
+	f, err := instanceCredentials(ctx, run)
+	if err != nil {
+		return credentials.File{}, err
+	}
+
+	if _, err := credentials.Save(f); err != nil {
+		return credentials.File{}, err
+	}
+	return f, nil
+}
+
+// instanceCredentials reads the running instance's credentials and WRITES NOTHING on the host.
+//
+// Split out of adoptCredentials because a local file that outlived its instance has to be compared
+// with the instance's before being overwritten: the comparison is the only thing that tells a
+// leftover apart from an address someone pointed elsewhere on purpose.
+func instanceCredentials(ctx context.Context, run dockerRunner) (credentials.File, error) {
 	if !instanceIsRunning(ctx, run) {
 		return credentials.File{}, errNoInstance
 	}
@@ -131,10 +150,6 @@ func adoptCredentials(ctx context.Context, run dockerRunner) (credentials.File, 
 	}
 	if f.APIURL == "" || f.Token == "" {
 		return credentials.File{}, fmt.Errorf("credentials of container %s are incomplete", apiContainer)
-	}
-
-	if _, err := credentials.Save(f); err != nil {
-		return credentials.File{}, err
 	}
 	return f, nil
 }
@@ -166,7 +181,7 @@ func offerToStartStack(ctx context.Context, run dockerRunner, in io.Reader, out 
 	// one, so this only works from a flowlio-agents checkout. Asking without saying so would get a
 	// yes from a user standing in their own repository, and hand them a compose error instead of an
 	// instance.
-	ok, err := askYesNo(in, out, "Start one here with `docker compose up -d` (needs this to be the flowlio-agents repository)?")
+	ok, err := askYesNo(in, out, "Start one here with `docker compose up -d` (needs this to be the flowlio-agents repository)?", true)
 	if err != nil {
 		return err
 	}
@@ -223,13 +238,33 @@ func isInteractive(r io.Reader) bool {
 	if err != nil {
 		return false
 	}
-	return info.Mode()&fs.ModeCharDevice != 0
+	if info.Mode()&fs.ModeCharDevice == 0 {
+		return false
+	}
+
+	// /dev/null IS a character device, and `flowlio init < /dev/null` is exactly how an agent runs a
+	// command it has no intention of answering. Counted as a terminal, it got prompted, and askYesNo
+	// reads the immediate EOF as an empty line — that is, as yes. A question guarding an overwrite
+	// was therefore answered by nobody. Observed on macOS while reproducing FLWL-69.
+	if null, statErr := os.Stat(os.DevNull); statErr == nil && os.SameFile(null, info) {
+		return false
+	}
+	return true
 }
 
-// askYesNo reads one answer. An empty line means yes: the question is only ever asked at a point
-// where continuing is what the user came for.
-func askYesNo(in io.Reader, out io.Writer, question string) (bool, error) {
-	_, _ = fmt.Fprintf(out, "%s [Y/n] ", question)
+// askYesNo reads one answer, and defaultYes decides what an empty line — or an immediate EOF —
+// means.
+//
+// THE DEFAULT IS PER QUESTION, not per CLI. Starting a stack is additive and it is what the user
+// came for, so a bare Enter is a yes there. Overwriting the credentials file is neither: it may be
+// pointing where someone put it, and a stdin that ends without a word is not consent. Ctrl-D is the
+// same keystroke in both cases, which is exactly why the caller has to say which risk it is taking.
+func askYesNo(in io.Reader, out io.Writer, question string, defaultYes bool) (bool, error) {
+	suffix := "[y/N]"
+	if defaultYes {
+		suffix = "[Y/n]"
+	}
+	_, _ = fmt.Fprintf(out, "%s %s ", question, suffix)
 
 	line, err := bufio.NewReader(in).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -237,7 +272,9 @@ func askYesNo(in io.Reader, out io.Writer, question string) (bool, error) {
 	}
 
 	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "", "y", "yes", "o", "oui":
+	case "":
+		return defaultYes, nil
+	case "y", "yes", "o", "oui":
 		return true, nil
 	default:
 		return false, nil
