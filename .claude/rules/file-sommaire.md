@@ -34,6 +34,10 @@ import (
 
 - Marqueur de début exact : `// SOMMAIRE (lire en premier, sauter directement au bon passage)`.
 - Marqueur de fin : ligne `// ====...` (longueur libre, ≥ quelques `=`).
+- **La ligne d'en-tête `| Élément | Résumé | Ligne |` reste en français**, même dans un fichier
+  neuf. `check-sommaire.sh` l'écarte du compte par `grep -vE '^// \| *Élément'` : traduite, elle
+  est comptée comme une déclaration et le hook bloque. Seules les **descriptions dans les cellules**
+  suivent la langue du dépôt.
 - Une ligne de tableau par déclaration top-level (func, méthode `Type.Method`, type).
 - Colonne "Ligne" = numéro de ligne **final** (après insertion du bloc, donc décalé).
 - Description = 1 phrase courte, écrite à partir de la compréhension du code, pas une extraction
