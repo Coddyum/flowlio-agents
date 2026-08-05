@@ -4,56 +4,56 @@ package main
 //
 // | Élément         | Résumé                                                       | Ligne |
 // |-----------------|--------------------------------------------------------------|-------|
-// | toolDef         | Définition d'un outil MCP telle qu'annoncée au client          | 50    |
-// | object          | Construit un schéma JSON d'objet                               | 57    |
-// | prop            | Construit une propriété de schéma JSON                         | 69    |
-// | enumProp        | Construit une propriété contrainte à un jeu de valeurs         | 78    |
-// | tools           | Les huit outils exposés, et rien de plus                        | 87    |
-// | toolsListResult | Réponse de tools/list                                          | 214   |
+// | toolDef         | An MCP tool as announced to the client                         | 50    |
+// | object          | Builds a JSON object schema                                    | 57    |
+// | prop            | Builds a JSON schema property                                  | 69    |
+// | enumProp        | Builds a property constrained to a set of values                | 78    |
+// | tools           | The eight exposed tools, and nothing more                       | 87    |
+// | toolsListResult | The tools/list response                                        | 212   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// La surface MCP est un BUDGET, pas une liste de souhaits : chaque outil est réinjecté dans le
-// contexte de l'agent à CHAQUE tour. Huit outils, des descriptions courtes, aucun paramètre
-// décoratif. Tout ajout ici se paie sur toutes les sessions, indéfiniment.
+// The MCP surface is a BUDGET, not a wish list: every tool is re-injected into the agent's context
+// on EVERY turn. Eight tools, short descriptions, no decorative parameter. Anything added here is
+// paid for by every session, forever.
 //
-// Ce que ces outils n'exposent volontairement pas :
-//   - le projet : il vient du token, jamais d'un paramètre. Il n'existe donc aucun appel MCP
-//     capable de désigner le backlog d'un autre projet.
-//   - les UUID : un agent travaille sur des clés lisibles (CORE-34).
-//   - la suppression : une tâche s'archive, l'historique d'un repo ne s'efface pas.
-//   - whoami : son contenu est constant sur la vie du token, donc il est injecté dans les
-//     instructions d'initialize. Zéro schéma, zéro tour, et l'information est dans le contexte
-//     de l'agent avant son premier message.
-//   - add_task_note : replié dans update_task en champ `note`. L'intention réelle est « passer
-//     en done ET dire pourquoi », donc un seul appel, une seule transaction. Un outil de plus
-//     aurait coûté son schéma à chaque tour pour ne rien ajouter.
+// What these tools deliberately do NOT expose:
+//   - the project: it comes from the token, never from a parameter. There is therefore no MCP call
+//     able to name another project's backlog.
+//   - UUIDs: an agent works on readable keys (CORE-34).
+//   - deletion: a task is archived, a repo's history is not erased.
+//   - whoami: its content is constant over the life of the token, so it is injected into the
+//     initialize instructions. Zero schema, zero turn, and the information is in the agent's
+//     context before its first message.
+//   - add_task_note: folded into update_task as a `note` field. The real intent is "move to done
+//     AND say why", so one call, one transaction. One more tool would have cost its schema on
+//     every turn to add nothing.
 //
-// Tout retour d'ÉCRITURE a la même forme, {ref, task} ou {ref, issue} : un agent lit la
-// référence au même endroit quel que soit l'outil qu'il vient d'appeler, au lieu de la deviner.
+// Every WRITE returns the same shape, {ref, task} or {ref, issue}: an agent reads the reference in
+// the same place whichever tool it just called, instead of guessing.
 //
-// `get` n'est pas typé (get_task / get_issue) parce que tâches et issues partagent le compteur du
-// projet : l'agent qui lit CORE-34 dans un commit ou une inbox ne sait PAS laquelle des deux
-// c'est. Deux outils typés échoueraient donc une fois sur deux.
+// `get` is not typed (get_task / get_issue) because tasks and issues share the project's counter:
+// the agent reading CORE-34 out of a commit or an inbox does NOT know which of the two it is. Two
+// typed tools would therefore fail half the time.
 
-// statuts et priorités reprennent exactement le vocabulaire du serveur. Les redire ici les rend
-// visibles dans le schéma, donc dans le contexte de l'agent : il n'a pas à deviner ni à échouer
-// une fois pour apprendre.
+// Statuses and priorities mirror the server's vocabulary exactly. Restating them here makes them
+// visible in the schema, hence in the agent's context: it has neither to guess nor to fail once in
+// order to learn.
 var (
 	taskStatuses   = []string{"todo", "in_progress", "blocked", "done"}
 	taskPriorities = []string{"low", "normal", "high", "urgent"}
 	issueStates    = []string{"open", "answered", "closed"}
 )
 
-// toolDef est la définition d'un outil telle qu'annoncée dans tools/list.
+// toolDef is a tool's definition as announced in tools/list.
 type toolDef struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"inputSchema"`
 }
 
-// object construit un schéma JSON d'objet. required liste les propriétés obligatoires.
+// object builds a JSON object schema. required lists the mandatory properties.
 func object(properties map[string]any, required ...string) map[string]any {
 	schema := map[string]any{
 		"type":       "object",
@@ -65,7 +65,7 @@ func object(properties map[string]any, required ...string) map[string]any {
 	return schema
 }
 
-// prop construit une propriété de schéma JSON.
+// prop builds a JSON schema property.
 func prop(kind, description string) map[string]any {
 	return map[string]any{
 		"type":        kind,
@@ -73,8 +73,8 @@ func prop(kind, description string) map[string]any {
 	}
 }
 
-// enumProp construit une propriété contrainte à un jeu de valeurs : l'agent lit les valeurs
-// admises dans le schéma plutôt que de les découvrir par une erreur.
+// enumProp builds a property constrained to a set of values: the agent reads the accepted values in
+// the schema rather than discovering them through an error.
 func enumProp(values []string, description string) map[string]any {
 	return map[string]any{
 		"type":        "string",
@@ -83,134 +83,132 @@ func enumProp(values []string, description string) map[string]any {
 	}
 }
 
-// tools est la surface exposée. Huit outils, arbitrés dans docs/DESIGN-M3.md.
+// tools is the exposed surface. Eight tools, settled in docs/DESIGN-M3.md.
 func tools() []toolDef {
 	return []toolDef{
 		{
 			Name: "list_tasks",
-			Description: "Backlog du projet courant, de la tâche la plus récente à la plus " +
-				"ancienne. La description n'est pas incluse : utiliser get pour la lire.",
+			Description: "The current project's backlog, newest task first. Descriptions are not " +
+				"included: read one with get.",
 			InputSchema: object(map[string]any{
-				"status": enumProp(taskStatuses, "Ne renvoyer que les tâches de ce statut."),
+				"status": enumProp(taskStatuses, "Only return tasks with this status."),
 				"limit": map[string]any{
 					"type":        "integer",
-					"description": "Nombre maximum de tâches (défaut 50, maximum 200).",
+					"description": "Maximum number of tasks (default 50, maximum 200).",
 					"minimum":     1,
 					"maximum":     200,
 				},
 				"archived": prop("boolean",
-					"Inclure les tâches archivées. Exclues par défaut."),
+					"Include archived tasks. Excluded by default."),
 			}),
 		},
 		{
 			Name: "get",
-			Description: "Le détail de ce que désigne une référence : une tâche avec son fil de " +
-				"notes, ou une issue avec son fil de messages. Le champ kind dit laquelle. " +
-				"C'est ce qu'on lit pour reprendre un sujet.",
+			Description: "What a reference points at: a task with its note thread, or an issue with " +
+				"its message thread. The kind field says which. This is what you read to pick a " +
+				"subject back up.",
 			InputSchema: object(map[string]any{
 				"ref": prop("string",
-					"Référence, par exemple CORE-34. Le numéro seul désigne le projet courant."),
+					"Reference, for example CORE-34. A bare number means the current project."),
 			}, "ref"),
 		},
 		{
 			Name: "create_task",
-			Description: "Ouvre une tâche dans le backlog du projet courant et renvoie sa clé. " +
-				"Le statut vaut todo et la priorité normal si on ne les précise pas.",
+			Description: "Opens a task in the current project's backlog and returns its key. " +
+				"Status defaults to todo and priority to normal.",
 			InputSchema: object(map[string]any{
 				"title": prop("string",
-					"Titre en une ligne, 200 caractères au plus."),
+					"One-line title, 200 characters at most."),
 				"body": prop("string",
-					"Description en markdown : le contexte complet nécessaire pour traiter la tâche."),
-				"status":   enumProp(taskStatuses, "Statut initial. Défaut : todo."),
-				"priority": enumProp(taskPriorities, "Priorité. Défaut : normal."),
+					"Markdown description: the full context needed to work the task."),
+				"status":   enumProp(taskStatuses, "Initial status. Default: todo."),
+				"priority": enumProp(taskPriorities, "Priority. Default: normal."),
 				"deadline": prop("string",
-					"Échéance au format RFC 3339, par exemple 2026-09-01T12:00:00Z."),
+					"Deadline in RFC 3339, for example 2026-09-01T12:00:00Z."),
 			}, "title"),
 		},
 		{
 			Name: "update_task",
-			Description: "Modifie une tâche du projet courant, et note au passage ce qui a été " +
-				"fait. Seuls les champs fournis changent ; les autres restent en l'état. " +
-				"ref + note seuls suffisent : c'est ainsi qu'on laisse une trace sans rien " +
-				"changer d'autre. Une tâche archivée n'est plus modifiable.",
+			Description: "Changes a task of the current project, and records what was done on the " +
+				"way. Only the fields you pass change; the others are left as they are. " +
+				"ref + note alone is enough: that is how you leave a trace without changing " +
+				"anything else. An archived task can no longer be changed.",
 			InputSchema: object(map[string]any{
 				"ref": prop("string",
-					"Référence de la tâche, par exemple CORE-34. Le numéro seul est accepté."),
-				"title":    prop("string", "Nouveau titre."),
-				"body":     prop("string", "Nouvelle description en markdown."),
-				"status":   enumProp(taskStatuses, "Nouveau statut."),
-				"priority": enumProp(taskPriorities, "Nouvelle priorité."),
-				"deadline": prop("string", "Nouvelle échéance au format RFC 3339."),
+					"Reference of the task, for example CORE-34. A bare number is accepted."),
+				"title":    prop("string", "New title."),
+				"body":     prop("string", "New markdown description."),
+				"status":   enumProp(taskStatuses, "New status."),
+				"priority": enumProp(taskPriorities, "New priority."),
+				"deadline": prop("string", "New deadline in RFC 3339."),
 				"clear_deadline": prop("boolean",
-					"Efface l'échéance. Nécessaire parce qu'un champ absent signifie déjà « ne change pas »."),
+					"Clears the deadline. Needed because an absent field already means 'leave unchanged'."),
 				"note": prop("string",
-					"Note de progression ajoutée au fil, en markdown. C'est la trace que relira "+
-						"la session suivante : y écrire ce qui a été fait et ce qui reste. "+
-						"Écrite avec le reste du changement, ou pas du tout. Seule avec ref, "+
-						"elle remonte la tâche en tête de ce qui est en cours."),
+					"Progress note appended to the thread, in markdown. This is the trace the next "+
+						"session will read: write what was done and what is left. Written with the "+
+						"rest of the change, or not at all. Alone with ref, it lifts the task to the "+
+						"top of what is in progress."),
 				"archive": prop("boolean",
-					"Sort la tâche du backlog actif. Elle reste lisible, avec ses notes. "+
-						"Écrit avec le statut et la note dans le même appel : « passe en done, "+
-						"voilà pourquoi, et archive » est une seule opération."),
+					"Takes the task out of the active backlog. It stays readable, with its notes. "+
+						"Written with the status and the note in the same call: 'move to done, here "+
+						"is why, and archive' is a single operation."),
 			}, "ref"),
 		},
 		{
 			Name: "create_issue",
-			Description: "Pose une question à un projet frère de la team et renvoie sa " +
-				"référence. À utiliser quand la réponse ne peut venir que de l'autre repo — " +
-				"pour son propre travail, ouvrir une tâche.",
+			Description: "Asks a sibling project of the team a question, and returns its reference. " +
+				"Use it when only the other repo can answer — for your own work, open a task.",
 			InputSchema: object(map[string]any{
 				"to_project": prop("string",
-					"Clé du projet destinataire, par exemple CORE."),
+					"Key of the receiving project, for example CORE."),
 				"title": prop("string",
-					"La question en une ligne, 200 caractères au plus."),
+					"The question in one line, 200 characters at most."),
 				"body": prop("string",
-					"Le contexte complet : ce qui est attendu, et ce qui a déjà été essayé."),
+					"The full context: what is expected, and what has already been tried."),
 			}, "to_project", "title", "body"),
 		},
 		{
 			Name: "list_issues",
-			Description: "Les questions échangées avec les projets frères : celles qui vous " +
-				"sont adressées et celles que vous avez posées. Les closes sont exclues " +
-				"par défaut.",
+			Description: "The questions exchanged with sibling projects: the ones addressed to you " +
+				"and the ones you asked. Closed ones are excluded by default.",
 			InputSchema: object(map[string]any{
 				"role": enumProp([]string{"incoming", "outgoing"},
-					"incoming : ce qu'on attend de vous. outgoing : ce que vous attendez. "+
-						"Omis : les deux."),
-				"state": enumProp(issueStates, "Ne renvoyer que les issues dans cet état."),
+					"incoming: what is expected of you. outgoing: what you are waiting for. "+
+						"Omitted: both."),
+				"state": enumProp(issueStates, "Only return issues in this state."),
 				"limit": map[string]any{
 					"type":        "integer",
-					"description": "Nombre maximum d'issues (défaut 20, maximum 100).",
+					"description": "Maximum number of issues (default 20, maximum 100).",
 					"minimum":     1,
 					"maximum":     100,
 				},
-				"closed": prop("boolean", "Inclure les issues closes. Exclues par défaut."),
+				"closed": prop("boolean", "Include closed issues. Excluded by default."),
 			}),
 		},
 		{
 			Name: "answer_issue",
-			Description: "Ajoute un message au fil d'une issue, et la clôt si close vaut vrai. " +
-				"C'est le seul moyen de répondre comme de fermer. Un message est obligatoire " +
-				"même pour clore : sans motif, le correspondant ne sait pas pourquoi.",
+			Description: "Appends a message to an issue's thread, and closes it if close is true. " +
+				"This is the only way to answer, and the only way to close. A message is required " +
+				"even to close: without a reason, the other side does not know why.",
 			InputSchema: object(map[string]any{
 				"ref": prop("string",
-					"Référence de l'issue, par exemple CORE-34."),
-				"body":  prop("string", "Le message, en markdown."),
-				"close": prop("boolean", "Clôt l'issue. La clôture est définitive."),
+					"Reference of the issue, for example CORE-34."),
+				"body":  prop("string", "The message, in markdown."),
+				"close": prop("boolean", "Closes the issue. Closing is final."),
 			}, "ref", "body"),
 		},
 		{
 			Name: "check_inbox",
-			Description: "Ce qui vous attend : les questions entrantes à traiter, vos questions " +
-				"qui ont reçu une réponse, et vos tâches en cours. Aucun paramètre. " +
-				"À appeler en début de session. L'état de référence reste list_issues et " +
-				"list_tasks : cet appel est un point de départ, pas un inventaire complet.",
+			Description: "What is waiting for you: incoming questions to handle, your questions that " +
+				"got an answer, and your tasks in progress. No parameters. Call it at the start of " +
+				"a session. The reference state stays list_issues and list_tasks: this call is a " +
+				"starting point, not a full inventory.",
 			InputSchema: object(map[string]any{}),
 		},
 	}
 }
 
-// toolsListResult est la réponse de tools/list.
+// toolsListResult is the tools/list response.
 func toolsListResult() map[string]any {
 	return map[string]any{"tools": tools()}
 }
