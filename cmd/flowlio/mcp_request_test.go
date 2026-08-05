@@ -355,3 +355,77 @@ func TestCreateTaskSendsEveryFieldItAccepts(t *testing.T) {
 		}
 	}
 }
+
+// refIssueReply et refTaskReply sont les deux formes que /api/ref rend, selon ce que la référence
+// désigne. Écrites en dur : ce fichier vérifie ce que la CLI ENVOIE, le retour doit seulement être
+// décodable.
+const refIssueReply = `{"kind":"issue","ref":"CORE-12","issue":{"ref":"CORE-12",` +
+	`"title":"panne de login","state":"open","role":"incoming","peer":"FRNT",` +
+	`"updated_at":"2026-08-02T10:00:00Z","messages":[],"messages_total":0}}`
+
+const refTaskReply = `{"kind":"task","ref":"CORE-34","task":{"number":34,"title":"x",` +
+	`"status":"todo","priority":"normal","created_at":"2026-08-02T10:00:00Z",` +
+	`"updated_at":"2026-08-02T10:00:00Z","notes":[],"notes_total":0}}`
+
+// LE COMPTE EST L'ASSERTION — c'est l'énoncé même de FLWL-16.
+//
+// get(ref) sur une issue faisait DEUX allers-retours : la route de tâche, son 404, puis la route
+// d'issue. Le coût portait exactement sur les issues ENTRANTES — celles dont la clé est la mienne,
+// c'est-à-dire précisément ce que check_inbox vient de rendre à l'agent, donc le chemin de lecture
+// le plus appelé du produit. Le choix entre les deux se fait désormais DANS l'API.
+//
+// MUTATION : rétablir dans get() la tentative sur /api/task puis la bascule sur /api/issue. Le
+// retour serait identique au champ près, et rec.only ferait rougir sur le compte, seul.
+func TestGetIssueMakesExactlyOneRequest(t *testing.T) {
+	srv, rec := newRecordingServer(t, refIssueReply)
+
+	value, err := srv.get(context.Background(), json.RawMessage(`{"ref":"CORE-12"}`))
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if _, ok := value.(getIssueResult); !ok {
+		t.Fatalf("get rend un %T, attendu getIssueResult", value)
+	}
+
+	req := rec.only(t)
+	if req.Method != http.MethodGet || req.Path != "/api/ref/CORE/12" {
+		t.Fatalf("requête = %s %s, attendu GET /api/ref/CORE/12", req.Method, req.Path)
+	}
+}
+
+// Le même compte sur une tâche. La branche tâche n'a JAMAIS coûté deux appels — ce test existe
+// pour qu'elle n'en coûte pas davantage maintenant que les deux passent par la même route.
+func TestGetTaskMakesExactlyOneRequest(t *testing.T) {
+	srv, rec := newRecordingServer(t, refTaskReply)
+
+	value, err := srv.get(context.Background(), json.RawMessage(`{"ref":"CORE-34"}`))
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if _, ok := value.(getTaskResult); !ok {
+		t.Fatalf("get rend un %T, attendu getTaskResult", value)
+	}
+
+	req := rec.only(t)
+	if req.Path != "/api/ref/CORE/34" {
+		t.Fatalf("chemin = %s, attendu /api/ref/CORE/34", req.Path)
+	}
+}
+
+// Un numéro NU part avec la clé de l'appelant, jamais nu : c'est elle que l'API compare au projet
+// du token pour décider si une tâche est seulement envisageable.
+//
+// MUTATION : composer le chemin sans la clé (`/api/ref/34`). La route ne correspondrait plus, et
+// la référence d'un agent qui écrit simplement « 34 » deviendrait introuvable.
+func TestGetSendsTheCallerKeyForABareNumber(t *testing.T) {
+	srv, rec := newRecordingServer(t, refTaskReply)
+
+	if _, err := srv.get(context.Background(), json.RawMessage(`{"ref":"34"}`)); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if req := rec.only(t); req.Path != "/api/ref/CORE/34" {
+		t.Fatalf("chemin = %s, attendu /api/ref/CORE/34 — la clé de l'appelant doit être "+
+			"substituée avant l'envoi", req.Path)
+	}
+}

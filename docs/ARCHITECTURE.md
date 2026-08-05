@@ -63,6 +63,7 @@ porte aucun token, donc il doit être tranché avant le middleware d'auth.
 | `issue`     | questions inter-projets + fil     | `/api/issue` : `POST/GET /`, `GET /{project}/{number}`, `POST /{project}/{number}/answer`                           | aucune                    |
 | `inbox`     | état actionnable du projet        | `/api/inbox` : `GET /`                                                                                              | aucune                    |
 | `overview`  | lecture team-scopée, supervision  | `/api/overview` : `GET /`, `GET /refs/{project}/{number}` — **lecture seule, aucune écriture**                       | aucune                    |
+| `ref`       | résolution d'une référence CORE-34 | `/api/ref` : `GET /{project}/{number}` — **lecture seule, ne possède aucune table**                                 | `task` et `issue`, par le `FeatureRegistry` |
 
 Portées `workspace` : les routes d'administration exigent un token `admin` (`AdminOnly`) ;
 `GET /projects` et `GET /whoami` acceptent tout token valide et restent scopés à sa team. Un
@@ -89,6 +90,17 @@ de cette surface. Un admin porteur d'une team y est enfermé — même garde que
 est écrit aux deux endroits parce qu'une défense qui vit dans un autre fichier n'est pas une
 défense.
 
+Portées `ref` : **token de portée `project` exigé**, comme toute surface qu'un agent emprunte. Un
+token admin est refusé plutôt que de désigner une cible : une référence se lit DEPUIS un projet, et
+un principal qui n'en a pas n'a rien d'où lire.
+
+Ce module ne possède aucune table et n'écrit rien. Il garde **une** query
+(`sql/queries/ref.sql`) pour le seul fait qu'aucun de ses deux pairs ne peut lui donner : la clé de
+son propre projet. C'est elle qui distingue `CORE-34` — la mienne, donc peut-être une tâche — de
+`FRNT-34`, celle d'un frère, donc nécessairement une issue. Sans cette garde, la query de tâche,
+scopée sur le projet du token, **trouverait** quelque chose : la tâche 34 de l'appelant, rendue
+sous une référence qui nomme quelqu'un d'autre.
+
 ## Services transverses (`internal/core`)
 
 | Paquet      | Rôle                                                                              |
@@ -99,8 +111,28 @@ défense.
 
 ## Interfaces inter-modules
 
-Aucune interface Go inter-module : aucune feature n'en importe une autre, aucune ne passe par
-`FeatureRegistry`.
+**Une seule composition existe, et c'est `ref`** (FLWL-16, tranchée le 2026-08-05). Le compteur
+d'un projet est partagé entre tâches et issues : un agent qui lit `CORE-34` ne sait pas laquelle
+des deux c'est. `ref` répond à la question en une requête HTTP, là où la couche MCP en faisait
+deux — sur le chemin que `check_inbox` alimente, donc le plus appelé du produit.
+
+| Interface | Déclarée dans | Implémentée par | Consommée par |
+| --- | --- | --- | --- |
+| `module.TaskRefResolver` | `internal/core/module/module.go` | `task` (`provider.go`) | `ref` |
+| `module.IssueRefResolver` | `internal/core/module/module.go` | `issue` (`provider.go`) | `ref` |
+
+Trois choix de forme, et chacun a une raison qui ne se devine pas :
+
+| Choix | Pourquoi |
+| --- | --- |
+| Les interfaces vivent dans `internal/core/module` | fournisseur et consommateur doivent nommer le **même** type pour que le type-assert du registre réussisse, et une feature n'importe pas une feature : ce paquet est le seul que les trois partagent déjà |
+| La charge est du JSON brut (`json.RawMessage`) | ce que rend un résolveur est la vue API de la feature propriétaire ; nommer `taskservice.TaskDetail` ici ferait entrer une feature dans le core. `encoding/json` recopie un `RawMessage` tel quel, donc le coût est nul |
+| Deux interfaces plutôt qu'une | leurs signatures se ressemblent ; une seule laisserait `ref` interroger le mauvais module et compiler, sur un chemin dont tout le métier est de distinguer une tâche d'une issue |
+
+`ref` est un **consommateur pur** : il ne s'enregistre sous aucune clé utile, et il ne doit pas
+— offrir la composition aux features qu'elle compose ouvrirait un cycle qui ne se verrait qu'à
+l'exécution. Il ne porte **aucune écriture**, pour la même raison : muter le domaine d'autrui
+depuis un module qui n'a pas de query pour porter le scope n'aurait aucun garde-fou.
 
 En revanche, **plusieurs features partagent des tables** — ce n'est pas un import, donc
 `check-cross-feature-imports.sh` ne le voit pas, et c'est pour cette raison que c'est écrit ici.
@@ -110,7 +142,7 @@ scopée dédiée est permis, y écrire ne l'est pas).
 
 | Table      | Propriétaire   | Autres écrivains / lecteurs                                              |
 | ---------- | -------------- | ------------------------------------------------------------------------ |
-| `projects` | `workspace`    | `task` et `issue` en **écriture** (`ClaimNextNumber`), `inbox` et `overview` en lecture |
+| `projects` | `workspace`    | `task` et `issue` en **écriture** (`ClaimNextNumber`), `inbox`, `overview` et `ref` en lecture |
 | `tasks`    | `task`         | `inbox` et `overview` en lecture (seau des tâches en cours)               |
 | `issues`   | `issue`        | `inbox` et `overview` en lecture (seaux entrants et sortants)             |
 | `events`   | `issue`        | `inbox` en lecture                                                        |
@@ -131,7 +163,7 @@ Depuis `overview`, « porter son scope » ne veut plus dire une seule chose. Le 
 | | Règle A — projet | Règle B — team |
 | --- | --- | --- |
 | Prédicat | `team_id = @team_id AND project_id = @project_id` | `team_id = @team_id` **seul** |
-| Où | `tasks.sql`, `issues.sql`, `inbox.sql`, `trust.sql`, et les queries de token projet de `tokens.sql` | `overview.sql` |
+| Où | `tasks.sql`, `issues.sql`, `inbox.sql`, `ref.sql`, `trust.sql`, et les queries de token projet de `tokens.sql` | `overview.sql` |
 | Sens du `team_id` | vient du principal (`Principal.TeamID`) | vient d'une **résolution serveur** du slug `?team=` (`OverviewTeamBySlug`), jamais d'un UUID client |
 | Écriture | autorisée | **interdite** — lecture seule, vérifié par `scripts/check-overview-scope.sh` dans `make lint` |
 | Gate | `requireProjectScope` | `AdminOnly` |
@@ -153,8 +185,8 @@ contexte comprend l'absence de `project_id` sans ouvrir un autre fichier.
 situations on est en train de reproduire. C'est précisément la raison de ce tableau.
 
 Ce que ça vaut, mesuré et non affirmé : `internal/feature/matrix_integration_test.go`
-(`TestScopeRouteMatrix`) monte les cinq modules sur leurs vrais stores et couvre trois principaux
-— projet, admin, aucun — contre les cinq préfixes de routes. Un `requireProjectScope` qui
+(`TestScopeRouteMatrix`) monte les six modules sur leurs vrais stores et couvre trois principaux
+— projet, admin, aucun — contre les six préfixes de routes. Un `requireProjectScope` qui
 accepterait `|| p.IsAdmin()`, ou un `AdminOnly` qui accepterait un scope projet, fait tomber une
 case.
 
@@ -164,10 +196,15 @@ de clé. Tant que c'est vrai, Postgres prend un `FOR NO KEY UPDATE`, compatible 
 symétriques (FRNT→CORE et CORE→FRNT) s'interbloquent. Détail dans
 [DESIGN-M3.md](DESIGN-M3.md).
 
-Rappel du pattern : le fournisseur s'enregistre (`registry.Register("b", api)`) dans son
-`NewModule`, le consommateur résout lazily (`registry.Get("b")`) et type-assert sur une interface
-qu'il déclare de son côté. Aucun import `internal/feature/<autre>` — vérifié par
-`scripts/check-cross-feature-imports.sh` (hook + `make lint`).
+Rappel du pattern, tel que `ref` l'exerce réellement : `main.go` enregistre chaque module sous sa
+clé, le consommateur résout **lazily** (`registry.Get("task")`) et type-assert sur l'interface
+déclarée dans `internal/core/module`. La résolution se fait au moment de la requête et **jamais
+dans `NewModule`** : tous les modules sont construits avant que le premier ne soit enregistré, donc
+un pair capturé à la construction serait toujours nil. Aucun import `internal/feature/<autre>` —
+vérifié par `scripts/check-cross-feature-imports.sh` (hook + `make lint`).
+
+Un pair absent du registre est une **panne de câblage**, jamais un « introuvable » : rendre 404
+ferait passer une instance mal montée pour un backlog vide.
 
 Toute nouvelle interface inter-module se documente ici **et** se valide avec l'humain.
 

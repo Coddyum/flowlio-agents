@@ -1,0 +1,21 @@
+-- SCOPE RULE OF THIS FILE: team_id AND project_id, on the single read it carries. Same rule as
+-- tasks.sql and issues.sql — the repository's first scope rule, the one that makes another
+-- project's row UNFINDABLE rather than merely forbidden.
+--
+-- This file holds ONE query, and it must stay that way. The `ref` feature owns no table: it
+-- resolves CORE-34 by composing task and issue through the FeatureRegistry, and the only fact it
+-- cannot get from either of them is its OWN project key — the one thing that tells an incoming
+-- reference apart from a sibling's. Anything else this feature ever needs belongs to the feature
+-- that owns the table, reached through the registry, never through a query added here.
+
+-- RefCallerProjectKey resolves the key of the project a token is scoped to.
+--
+-- Without it, `ref` cannot tell CORE-34 (mine, therefore possibly a task) from FRNT-34 (a
+-- sibling's, therefore necessarily an issue), and it would have to try a task lookup on every
+-- reference — returning MY task 34 for a reference that names someone else's project.
+--
+-- Scoped by team_id as every project read is, even though the identifier already comes from the
+-- token: the predicate is what proves the scope, never the provenance of the argument.
+-- Same shape and same reason as InboxProjectKey (inbox.sql).
+-- name: RefCallerProjectKey :one
+SELECT key FROM projects WHERE id = $1 AND team_id = $2;

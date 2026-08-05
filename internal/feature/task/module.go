@@ -5,10 +5,10 @@ package task
 // | Élément            | Résumé                                                    | Ligne |
 // |--------------------|-----------------------------------------------------------|-------|
 // | NewModule          | Câble store → service → handler et renvoie le module        | 34    |
-// | mod                | Module task, porteur du handler et du middleware d'auth     | 45    |
-// | mod.Key            | Renvoie la clé du module                                    | 51    |
-// | mod.Routes         | Déclare les routes, middleware lié une seule fois           | 62    |
-// | requireProjectScope| Refuse tout token qui n'est pas scopé à un projet           | 90    |
+// | mod                | Module task, porteur du handler et du middleware d'auth     | 50    |
+// | mod.Key            | Renvoie la clé du module                                    | 57    |
+// | mod.Routes         | Déclare les routes, middleware lié une seule fois           | 68    |
+// | requireProjectScope| Refuse tout token qui n'est pas scopé à un projet           | 96    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -37,13 +37,19 @@ func NewModule(cfg module.ModuleConfig) module.Module {
 
 	return &mod{
 		h:    handler.New(svc),
+		svc:  svc,
 		auth: cfg.Core.Auth(),
 	}
 }
 
-// mod porte le handler et le service d'auth partagé.
+// mod porte le handler, le service et le service d'auth partagé.
+//
+// Le service est retenu EN PLUS du handler parce que ce module a deux surfaces : HTTP, servie par
+// le handler, et le FeatureRegistry, servie par provider.go. La seconde ne passe pas par HTTP —
+// c'est tout son intérêt.
 type mod struct {
 	h    *handler.Handler
+	svc  service.Service
 	auth auth.Service
 }
 

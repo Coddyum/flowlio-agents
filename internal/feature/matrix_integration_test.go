@@ -5,7 +5,7 @@ package feature_test
 // CE QUE CE FICHIER GARDE ET QUE PERSONNE D'AUTRE NE GARDE. Chaque module vérifie SA portée dans
 // son propre `module_test.go`. Aucun de ces fichiers ne peut voir qu'une portée a été alignée sur
 // celle du voisin par copier-coller : un `overview` passé sous `Middleware` reste vert chez
-// `task`, et réciproquement. La matrice est la seule assertion qui oppose les cinq surfaces.
+// `task`, et réciproquement. La matrice est la seule assertion qui oppose toutes les surfaces.
 //
 // POURQUOI C'EST UN TEST D'INTÉGRATION. Les cases 401 et 403 n'atteignent jamais un store — elles
 // pourraient tenir sur des doubles. Les cases 200, non : elles traversent le handler, le service
@@ -46,6 +46,7 @@ import (
 	"strings"
 	"testing"
 
+	coreregistry "github.com/Coddyum/flowlio-agents/internal/core"
 	"github.com/Coddyum/flowlio-agents/internal/core/auth"
 	"github.com/Coddyum/flowlio-agents/internal/core/auth/authtest"
 	"github.com/Coddyum/flowlio-agents/internal/core/module"
@@ -53,6 +54,7 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/inbox"
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue"
 	"github.com/Coddyum/flowlio-agents/internal/feature/overview"
+	"github.com/Coddyum/flowlio-agents/internal/feature/ref"
 	"github.com/Coddyum/flowlio-agents/internal/feature/task"
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace"
 	"github.com/google/uuid"
@@ -100,7 +102,7 @@ type surface struct {
 	admin   expect
 }
 
-// matrix énumère les six surfaces représentatives des cinq modules.
+// matrix énumère les sept surfaces représentatives des six modules.
 //
 // `workspace` en porte DEUX parce que sa portée est mixte, et « partiel » n'est pas un statut :
 // `/projects` est ouvert à tout token authentifié, `/teams` est réservé à l'admin. Une seule
@@ -112,6 +114,10 @@ var matrix = []surface{
 	{issue.Key, "/", allowed, deniedByModule},
 	{inbox.Key, "/", allowed, deniedByModule},
 	{overview.Key, "/?team={team}", deniedByAuth, allowed},
+	// `ref` cite une référence CONCRÈTE, et la fixture pose la tâche CORE-1 pour elle. Une
+	// référence inexistante rendrait 404 : la case perdrait son contrôle positif, et une portée
+	// qui refuserait tout le monde la passerait encore.
+	{ref.Key, "/CORE/1", allowed, deniedByModule},
 }
 
 // fixture porte la team et le projet auxquels les tokens du test sont épinglés.
@@ -161,10 +167,20 @@ func newFixture(t *testing.T) (*sql.DB, fixture) {
 		t.Fatalf("création du projet: %v", err)
 	}
 
+	// Une tâche pour la case `ref` : elle résout une référence, donc il lui en faut une qui existe
+	// pour que son 200 prouve quelque chose. Les autres cases lisent des listes et ne la voient pas
+	// autrement que comme une ligne de plus.
+	if _, err := db.Exec(
+		"INSERT INTO tasks (team_id, project_id, number, title) VALUES ($1, $2, 1, $3)",
+		f.teamID, f.projectID, "tâche de matrice",
+	); err != nil {
+		t.Fatalf("création de la tâche CORE-1: %v", err)
+	}
+
 	return db, f
 }
 
-// routers monte les cinq modules avec leurs vrais stores, sur le service d'auth du token fourni.
+// routers monte les six modules avec leurs vrais stores, sur le service d'auth du token fourni.
 //
 // Le double `authtest.Store` ne connaît qu'un token : chaque principal a donc son propre jeu de
 // modules. C'est plus lent qu'un montage unique, et c'est ce qui garantit qu'un cas ne peut pas
@@ -172,7 +188,13 @@ func newFixture(t *testing.T) (*sql.DB, fixture) {
 func routers(t *testing.T, db *sql.DB, tok authtest.Token) map[string]http.Handler {
 	t.Helper()
 
-	cfg := module.ModuleConfig{DB: database.New(db), RawDB: db, Core: core{svc: tok.Auth}}
+	registry := coreregistry.NewRegistry()
+	cfg := module.ModuleConfig{
+		DB:       database.New(db),
+		RawDB:    db,
+		Core:     core{svc: tok.Auth},
+		Registry: registry,
+	}
 	mounted := map[string]http.Handler{}
 	for _, m := range []module.Module{
 		workspace.NewModule(cfg),
@@ -180,7 +202,11 @@ func routers(t *testing.T, db *sql.DB, tok authtest.Token) map[string]http.Handl
 		issue.NewModule(cfg),
 		inbox.NewModule(cfg),
 		overview.NewModule(cfg),
+		ref.NewModule(cfg),
 	} {
+		// Le registre est rempli COMME EN PRODUCTION : `ref` compose task et issue par lui, et un
+		// montage qui l'oublierait ferait répondre 500 à sa case au lieu de prouver sa portée.
+		registry.Register(m.Key(), m)
 		mounted[m.Key()] = m.Routes()
 	}
 	return mounted
