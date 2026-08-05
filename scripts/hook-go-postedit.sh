@@ -7,12 +7,22 @@
 
 set -uo pipefail
 
+cd "$(dirname "$0")/.."
+
 payload="$(cat)"
 
 # Extraire le chemin du fichier depuis le payload du hook (tool_input.file_path).
 file="$(printf '%s' "$payload" | sed -nE 's/.*"file_path"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n1)"
 
 [[ -n "$file" && "$file" == *.go ]] || exit 0
+
+# An edit outside this repository is not ours to judge. Without this the hook fires on sibling
+# repositories whenever the session's working directory is elsewhere: it then runs `go build`
+# on THIS module and demands a sommaire on THEIR file. Observed live on 2026-08-05, blocking an
+# edit to a flowlio-core file from a session rooted here.
+repo_root="$(pwd)"
+rel="${file#"$repo_root"/}"
+[[ "$rel" != /* ]] || exit 0
 
 fail=0
 
