@@ -1,19 +1,19 @@
 package store_test
 
-// GARANTIES 5 À 16 DU TABLEAU DE docs/DESIGN-TUI.md § « Garanties de sécurité ».
+// GUARANTEES 5 TO 16 OF THE TABLE IN docs/DESIGN-TUI.md § "Garanties de sécurité".
 //
-// `make check` NE PROUVE RIEN DE CE FICHIER : sans FLOWLIO_TEST_DATABASE_URL, tout est ignoré.
-// La recette de ce module est `make test-integration`.
+// `make check` PROVES NOTHING OF THIS FILE: without FLOWLIO_TEST_DATABASE_URL, everything is
+// skipped. The recipe for this module is `make test-integration`.
 //
-// LA FIXTURE PORTE DEUX TEAMS AVEC DES CLÉS HOMONYMES. Les deux ont un `CORE` et un `WEB`. Un
-// scope qui ne porterait que sur `key` — le défaut le plus naturel à écrire — passerait tous les
-// tests d'une fixture à une seule team, et échouerait ici. C'est la seule raison d'être de cette
-// forme, et il ne faut pas la simplifier.
+// THE FIXTURE CARRIES TWO TEAMS WITH HOMONYMOUS KEYS. Both have a `CORE` and a `WEB`. A scope
+// bearing on `key` alone — the most natural flaw to write — would pass every test of a
+// single-team fixture, and would fail here. That is the sole reason for this shape, and it must
+// not be simplified.
 //
-// Les insertions sont en SQL DIRECT et non par les features `task` et `issue` : un test qui
-// passerait par elles prouverait la cohérence de leurs propres règles, et surtout ne pourrait pas
-// fabriquer les états illégaux que la moitié de ces tests existe pour refuser — un message dont
-// l'auteur appartient à une autre team, par exemple.
+// The inserts are DIRECT SQL and not made through the `task` and `issue` features: a test going
+// through them would prove the consistency of their own rules, and above all could not fabricate
+// the illegal states half of these tests exist to reject — a message whose author belongs to
+// another team, for instance.
 
 import (
 	"context"
@@ -30,15 +30,15 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// team porte une team de test et les projets qu'on lui a créés, indexés par clé.
+// team carries a test team and the projects created in it, indexed by key.
 type team struct {
 	id       uuid.UUID
 	slug     string
 	projects map[string]uuid.UUID
 }
 
-// fixture porte les deux teams. B est la VOISINE : rien de ce qu'elle contient ne doit jamais
-// apparaître dans une lecture de A.
+// fixture carries the two teams. B is the NEIGHBOUR: nothing it contains must ever show up in a
+// read of A.
 type fixture struct {
 	db *sql.DB
 	a  team
@@ -50,35 +50,35 @@ func newStore(t *testing.T) (overviewstore.Store, *sql.DB) {
 
 	dsn := os.Getenv("FLOWLIO_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("FLOWLIO_TEST_DATABASE_URL non renseigné — test d'intégration ignoré")
+		t.Skip("FLOWLIO_TEST_DATABASE_URL not set — integration test skipped")
 	}
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		t.Fatalf("ouverture de la base: %v", err)
+		t.Fatalf("opening the database: %v", err)
 	}
 	if err := db.Ping(); err != nil {
-		t.Fatalf("base injoignable: %v", err)
+		t.Fatalf("database unreachable: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
 	return overviewstore.New(database.New(db)), db
 }
 
-// newTeam crée une team jetable et ses projets. La suppression de la team emporte tout le reste
-// en cascade.
+// newTeam creates a throwaway team and its projects. Deleting the team takes everything else with
+// it, by cascade.
 func newTeam(t *testing.T, db *sql.DB, keys ...string) team {
 	t.Helper()
 
 	tm := team{slug: "test-" + strings.ToLower(uuid.NewString()[:8]), projects: map[string]uuid.UUID{}}
 	if err := db.QueryRow(
-		"INSERT INTO teams (slug, name) VALUES ($1, $2) RETURNING id", tm.slug, "Team de test",
+		"INSERT INTO teams (slug, name) VALUES ($1, $2) RETURNING id", tm.slug, "Test team",
 	).Scan(&tm.id); err != nil {
-		t.Fatalf("création de la team: %v", err)
+		t.Fatalf("creating the team: %v", err)
 	}
 	t.Cleanup(func() {
 		if _, err := db.Exec("DELETE FROM teams WHERE id = $1", tm.id); err != nil {
-			t.Errorf("nettoyage de la team %s: %v", tm.id, err)
+			t.Errorf("cleaning up team %s: %v", tm.id, err)
 		}
 	})
 
@@ -86,16 +86,16 @@ func newTeam(t *testing.T, db *sql.DB, keys ...string) team {
 		var id uuid.UUID
 		if err := db.QueryRow(
 			"INSERT INTO projects (team_id, key, name) VALUES ($1, $2, $3) RETURNING id",
-			tm.id, key, "Projet "+key,
+			tm.id, key, "Project "+key,
 		).Scan(&id); err != nil {
-			t.Fatalf("création du projet %s: %v", key, err)
+			t.Fatalf("creating project %s: %v", key, err)
 		}
 		tm.projects[key] = id
 	}
 	return tm
 }
 
-// newFixture crée les deux teams avec des clés HOMONYMES, plus un DOCS inactif côté A.
+// newFixture creates the two teams with HOMONYMOUS keys, plus an idle DOCS on A's side.
 func newFixture(t *testing.T, db *sql.DB) fixture {
 	t.Helper()
 	return fixture{
@@ -105,8 +105,8 @@ func newFixture(t *testing.T, db *sql.DB) fixture {
 	}
 }
 
-// openIssue insère une issue. state et updatedAt sont fournis : le vieillissement d'une file est
-// exactement ce que cette surface rend, donc il doit être contrôlé par le test.
+// openIssue inserts an issue. state and updatedAt are supplied: the ageing of a queue is exactly
+// what this surface yields, so it must be controlled by the test.
 func openIssue(t *testing.T, db *sql.DB, tm team, dest, author string, number int64, title, state string, updatedAt time.Time) uuid.UUID {
 	t.Helper()
 
@@ -116,14 +116,14 @@ func openIssue(t *testing.T, db *sql.DB, tm team, dest, author string, number in
 		 VALUES ($1, $2, $3, $4, $5, $6::issue_state, $7) RETURNING id`,
 		tm.id, tm.projects[dest], tm.projects[author], number, title, state, updatedAt,
 	).Scan(&id); err != nil {
-		t.Fatalf("création de l'issue %s-%d: %v", dest, number, err)
+		t.Fatalf("creating issue %s-%d: %v", dest, number, err)
 	}
 	return id
 }
 
-// addMessage insère un message dans un fil. authorProjectID est passé NU, sans contrôle de team :
-// c'est précisément l'état illégal que la garantie 14 doit refuser à la lecture, et la FK simple
-// d'issue_messages permet de l'écrire.
+// addMessage inserts a message into a thread. authorProjectID is passed BARE, with no team check:
+// that is precisely the illegal state guarantee 14 must reject at read time, and the simple FK of
+// issue_messages makes it writable.
 func addMessage(t *testing.T, db *sql.DB, issueID, authorProjectID uuid.UUID, body string, createdAt time.Time) {
 	t.Helper()
 
@@ -132,12 +132,12 @@ func addMessage(t *testing.T, db *sql.DB, issueID, authorProjectID uuid.UUID, bo
 		 VALUES ($1, $2, $3, $4)`,
 		issueID, authorProjectID, body, createdAt,
 	); err != nil {
-		t.Fatalf("création du message: %v", err)
+		t.Fatalf("creating the message: %v", err)
 	}
 }
 
-// addTask insère une tâche. updatedAt pilote la dormance : le seuil vit dans le service, donc un
-// test qui veut une tâche « morte » la fabrique par sa date, pas par un réglage.
+// addTask inserts a task. updatedAt drives dormancy: the threshold lives in the service, so a
+// test that wants a "dead" task fabricates it through its date, not through a setting.
 func addTask(t *testing.T, db *sql.DB, tm team, key string, number int64, title, status string, updatedAt time.Time) uuid.UUID {
 	t.Helper()
 
@@ -147,12 +147,12 @@ func addTask(t *testing.T, db *sql.DB, tm team, key string, number int64, title,
 		 VALUES ($1, $2, $3, $4, $5::task_status, $6) RETURNING id`,
 		tm.id, tm.projects[key], number, title, status, updatedAt,
 	).Scan(&id); err != nil {
-		t.Fatalf("création de la tâche %s-%d: %v", key, number, err)
+		t.Fatalf("creating task %s-%d: %v", key, number, err)
 	}
 	return id
 }
 
-// addNote insère une note de progression sur une tâche.
+// addNote inserts a progress note on a task.
 func addNote(t *testing.T, db *sql.DB, taskID uuid.UUID, body string, createdAt time.Time) {
 	t.Helper()
 
@@ -160,17 +160,18 @@ func addNote(t *testing.T, db *sql.DB, taskID uuid.UUID, body string, createdAt 
 		"INSERT INTO task_notes (task_id, body_md, created_at) VALUES ($1, $2, $3)",
 		taskID, body, createdAt,
 	); err != nil {
-		t.Fatalf("création de la note: %v", err)
+		t.Fatalf("creating the note: %v", err)
 	}
 }
 
-// addToken insère un token de projet et son dernier usage. lastUsed nul ⇒ un token qui n'a jamais
-// servi, c'est-à-dire le cas nominal du premier jour.
+// addToken inserts a project token and its last use. A nil lastUsed ⇒ a token that never served,
+// that is to say the nominal case of the first day.
 func addToken(t *testing.T, db *sql.DB, tm team, key string, lastUsed *time.Time) {
 	t.Helper()
 
-	// Un token admin ne porte NI team NI projet — `tokens_scope_shape` depuis la migration
-	// 000006. Une clé vide fabrique donc l'admin global, le seul que l'amorçage crée réellement.
+	// An admin token carries NEITHER team NOR project — `tokens_scope_shape` since migration
+	// 000006. An empty key therefore fabricates the global admin, the only one bootstrap really
+	// creates.
 	teamID, projectID, scope := any(tm.id), any(tm.projects[key]), "project"
 	if key == "" {
 		teamID, projectID, scope = nil, nil, "admin"
@@ -179,17 +180,17 @@ func addToken(t *testing.T, db *sql.DB, tm team, key string, lastUsed *time.Time
 	prefix := strings.ToLower(uuid.NewString()[:8]) + "abcd"
 	if _, err := db.Exec(
 		`INSERT INTO tokens (team_id, project_id, name, prefix, secret_hash, scope, last_used_at)
-		 VALUES ($1, $2, 'agent', $3, 'hash-de-test', $4::token_scope, $5)`,
+		 VALUES ($1, $2, 'agent', $3, 'test-hash', $4::token_scope, $5)`,
 		teamID, projectID, prefix, scope, lastUsed,
 	); err != nil {
-		t.Fatalf("création du token: %v", err)
+		t.Fatalf("creating the token: %v", err)
 	}
 }
 
-// refs rend l'ensemble des références d'une file d'issues, pour comparer des ENSEMBLES EXACTS.
+// refs yields the set of references of an issue queue, to compare EXACT SETS.
 //
-// « ne contient rien de la voisine » passerait aussi sur un résultat vide, c'est-à-dire sur une
-// query cassée. Comparer l'ensemble exact refuse les deux erreurs d'un coup.
+// "contains nothing of the neighbour" would also pass on an empty result, that is to say on a
+// broken query. Comparing the exact set rejects both mistakes at once.
 func refs(debts []overviewstore.IssueDebt) map[string]bool {
 	out := make(map[string]bool, len(debts))
 	for _, d := range debts {
@@ -198,7 +199,7 @@ func refs(debts []overviewstore.IssueDebt) map[string]bool {
 	return out
 }
 
-// taskRefs rend l'ensemble des références d'une file de tâches.
+// taskRefs yields the set of references of a task queue.
 func taskRefs(debts []overviewstore.TaskDebt) map[string]bool {
 	out := make(map[string]bool, len(debts))
 	for _, d := range debts {
@@ -207,7 +208,7 @@ func taskRefs(debts []overviewstore.TaskDebt) map[string]bool {
 	return out
 }
 
-// assertSet compare un ensemble obtenu à l'ensemble attendu, et nomme les deux écarts.
+// assertSet compares an obtained set to the expected one, and names both gaps.
 func assertSet(t *testing.T, got map[string]bool, want ...string) {
 	t.Helper()
 
@@ -215,12 +216,12 @@ func assertSet(t *testing.T, got map[string]bool, want ...string) {
 	for _, w := range want {
 		wanted[w] = true
 		if !got[w] {
-			t.Errorf("%s absent de la file — la lecture ne voit plus tout ce qu'elle doit voir", w)
+			t.Errorf("%s missing from the queue — the read no longer sees everything it must", w)
 		}
 	}
 	for g := range got {
 		if !wanted[g] {
-			t.Errorf("%s présent dans la file — une ligne d'une autre team a fuité", g)
+			t.Errorf("%s present in the queue — a row of another team leaked", g)
 		}
 	}
 }

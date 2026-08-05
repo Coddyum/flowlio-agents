@@ -4,28 +4,28 @@ package overview
 //
 // | Élément    | Résumé                                                            | Ligne |
 // |------------|-------------------------------------------------------------------|-------|
-// | NewModule  | Câble store → service → handler et renvoie le module                | 47    |
-// | mod        | Module overview, porteur du handler et du middleware d'auth         | 58    |
-// | mod.Key    | Renvoie la clé du module                                            | 64    |
-// | mod.Routes | Déclare les deux routes, toutes deux derrière AdminOnly             | 78    |
+// | NewModule  | Wires store → service → handler and returns the module              | 47    |
+// | mod        | Overview module, carrying the handler and the auth middleware       | 58    |
+// | mod.Key    | Returns the module key                                              | 64    |
+// | mod.Routes | Declares the two routes, both of them behind AdminOnly              | 77    |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// CINQUIÈME MODULE, ET NON UNE EXTENSION D'INBOX. `inbox` scope par `project_id`, `overview` par
-// `team_id` SEUL. Les voisiner dans un même store est la configuration exacte où le copier-coller
-// fuit : deux queries adjacentes, deux règles de scope différentes, une revue qui lit vite.
+// FIFTH MODULE, AND NOT AN EXTENSION OF INBOX. `inbox` scopes by `project_id`, `overview` by
+// `team_id` ALONE. Sitting them side by side in one store is the exact setup where copy-paste
+// leaks: two adjacent queries, two different scoping rules, one review that reads fast.
 //
-// CE MODULE NE LIT QUE, ET NE POSSÈDE RIEN. Il lit `teams`, `projects`, `tokens`, `issues`,
-// `issue_messages`, `tasks` et `task_notes` — sept tables dont six appartiennent à d'autres
-// domaines. Ce n'est pas un import inter-feature : la décision M3 #26 autorise une feature à LIRE
-// la table d'un autre domaine par une query scopée dédiée, et interdit d'y ÉCRIRE. Ici rien
-// n'écrit, jamais : zéro import Go vers une autre feature, et `check-overview-scope.sh` refuse
-// tout INSERT/UPDATE/DELETE dans `sql/queries/overview.sql`.
+// THIS MODULE ONLY READS, AND OWNS NOTHING. It reads `teams`, `projects`, `tokens`, `issues`,
+// `issue_messages`, `tasks` and `task_notes` — seven tables, six of which belong to other
+// domains. This is not an inter-feature import: decision M3 #26 lets a feature READ another
+// domain's table through a dedicated scoped query, and forbids WRITING to it. Here nothing
+// writes, ever: zero Go import towards another feature, and `check-overview-scope.sh` rejects any
+// INSERT/UPDATE/DELETE in `sql/queries/overview.sql`.
 //
-// AUCUNE DE CES ROUTES N'EST EXPOSÉE EN MCP, et il ne faut pas l'y exposer. Un agent qui lit
-// l'état de sa team entière détruit la promesse d'isolation du produit — en lecture, sans qu'un
-// seul test de tenancy ne tombe.
+// NONE OF THESE ROUTES IS EXPOSED OVER MCP, and none must be. An agent reading the state of its
+// whole team destroys the product's isolation promise — through reads, without a single tenancy
+// test falling over.
 
 import (
 	"net/http"
@@ -37,13 +37,13 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/overview/store"
 )
 
-// Key identifie le module dans le FeatureRegistry et sert de préfixe à ses routes.
+// Key identifies the module in the FeatureRegistry and prefixes its routes.
 const Key = "overview"
 
-// NewModule câble la feature : store → service → handler.
+// NewModule wires the feature: store → service → handler.
 //
-// Le store ne reçoit PAS RawDB : cette surface est en lecture seule, elle n'ouvre jamais de
-// transaction et n'a aucune atomicité à garantir.
+// The store does NOT receive RawDB: this surface is read-only, it never opens a transaction and
+// has no atomicity to guarantee.
 func NewModule(cfg module.ModuleConfig) module.Module {
 	st := store.New(cfg.DB)
 	svc := service.New(st)
@@ -54,27 +54,26 @@ func NewModule(cfg module.ModuleConfig) module.Module {
 	}
 }
 
-// mod porte le handler et le service d'auth partagé.
+// mod carries the handler and the shared auth service.
 type mod struct {
 	h    *handler.Handler
 	auth auth.Service
 }
 
-// Key renvoie la clé du module.
+// Key returns the module key.
 func (m *mod) Key() string {
 	return Key
 }
 
-// Routes déclare les deux routes de la feature. Le middleware est lié ICI, une seule fois, et
-// c'est `AdminOnly` — jamais `Middleware`.
+// Routes declares the feature's two routes. The middleware is bound HERE, once, and it is
+// `AdminOnly` — never `Middleware`.
 //
-// LA DIFFÉRENCE N'EST PAS COSMÉTIQUE. Sous `auth.Middleware`, un token de projet atteindrait ces
-// routes et lirait le fil d'une conversation entre deux repos frères dont il n'est ni l'auteur ni
-// le destinataire. Les huit tests d'isolation existants resteraient VERTS : ils vérifient que les
-// queries de `task` et `issue` sont scopées, pas qu'aucune autre route ne contourne ce scope.
+// THE DIFFERENCE IS NOT COSMETIC. Under `auth.Middleware`, a project token would reach these
+// routes and read the thread of a conversation between two sibling repos it is neither the author
+// nor the recipient of. The eight existing isolation tests would stay GREEN: they check that the
+// `task` and `issue` queries are scoped, not that no other route bypasses that scope.
 //
-// Il n'y a pas de gate mixte, et il ne faut pas en introduire : les deux routes sont admin, ou
-// aucune ne l'est.
+// There is no mixed gate, and none must be introduced: both routes are admin, or neither is.
 func (m *mod) Routes() http.Handler {
 	r := http.NewServeMux()
 

@@ -4,11 +4,11 @@ package handler
 //
 // | Élément            | Résumé                                                    | Ligne |
 // |--------------------|-----------------------------------------------------------|-------|
-// | Handler            | Adaptateur HTTP de la feature inbox                         | 28    |
-// | New                | Crée le handler inbox                                       | 33    |
-// | Handler.Check      | Renvoie l'état actionnable du projet du token               | 41    |
-// | Handler.writeJSON  | Sérialise la réponse avant d'engager le statut               | 68    |
-// | errorBody          | Forme unique des réponses d'erreur                          | 92    |
+// | Handler            | HTTP adapter of the inbox feature                           | 28    |
+// | New                | Creates the inbox handler                                   | 33    |
+// | Handler.Check      | Returns the actionable state of the token's project         | 41    |
+// | Handler.writeJSON  | Serialises the response before committing the status        | 68    |
+// | errorBody          | Single shape of every error response                        | 92    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -24,24 +24,24 @@ import (
 	"github.com/google/uuid"
 )
 
-// Handler traduit HTTP ↔ service.
+// Handler translates HTTP ↔ service.
 type Handler struct {
 	svc service.Service
 }
 
-// New crée le handler inbox.
+// New creates the inbox handler.
 func New(svc service.Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-// Check renvoie l'état actionnable du projet du token.
+// Check returns the actionable state of the token's project.
 //
-// Aucun paramètre n'est lu : ni corps, ni query string, ni chemin. Tout vient du Principal.
-// C'est l'appel le plus simple de l'API, et c'est voulu — c'est le premier qu'un agent fait.
+// No parameter is read: no body, no query string, no path. Everything comes from the Principal.
+// It is the simplest call of the API, and that is deliberate — it is the first one an agent makes.
 func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 	p, ok := auth.FromContext(r.Context())
 	if !ok || p.Scope != auth.ScopeProject || p.TeamID == uuid.Nil || p.ProjectID == uuid.Nil {
-		log.Printf("inbox handler: route sans token de projet: %s %s", r.Method, r.URL.Path)
+		log.Printf("inbox handler: route without a project token: %s %s", r.Method, r.URL.Path)
 		h.writeJSON(w, http.StatusForbidden, errorBody{Error: "forbidden"})
 		return
 	}
@@ -63,8 +63,8 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, inbox)
 }
 
-// writeJSON sérialise la réponse AVANT d'engager le code de statut : l'ordre inverse
-// transformerait tout échec de sérialisation en succès à corps vide.
+// writeJSON serialises the response BEFORE committing the status code: the reverse order would
+// turn every serialisation failure into a success with an empty body.
 func (h *Handler) writeJSON(w http.ResponseWriter, code int, v any) {
 	if v == nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -88,7 +88,7 @@ func (h *Handler) writeJSON(w http.ResponseWriter, code int, v any) {
 	}
 }
 
-// errorBody est la forme unique des réponses d'erreur.
+// errorBody is the single shape of every error response.
 type errorBody struct {
 	Error string `json:"error"`
 }

@@ -4,8 +4,8 @@ package store
 //
 // | Élément        | Résumé                                                           | Ligne |
 // |----------------|------------------------------------------------------------------|-------|
-// | store.Projects | Rend une ligne de compteurs par repo, sans jamais en omettre un   | 23    |
-// | store.LastSeen | Rend le pouls des repos dont un token a déjà servi                | 46    |
+// | store.Projects | Yields one counter row per repo, never omitting a single one      | 23    |
+// | store.LastSeen | Yields the pulse of the repos whose token has already served      | 46    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -17,9 +17,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// Projects rend une ligne par repo de la team, TOUJOURS, y compris pour un repo qui n'a rien en
-// vol. Aucune borne n'est appliquée ici et il ne faut jamais en ajouter : la liste des projets
-// est la carte du superviseur.
+// Projects yields one row per repo of the team, ALWAYS, including for a repo with nothing in
+// flight. No bound is applied here and none must ever be added: the list of projects is the
+// supervisor's map.
 func (s *store) Projects(ctx context.Context, teamID uuid.UUID) ([]ProjectCounters, error) {
 	rows, err := s.q.OverviewProjects(ctx, teamID)
 	if err != nil {
@@ -40,9 +40,9 @@ func (s *store) Projects(ctx context.Context, teamID uuid.UUID) ([]ProjectCounte
 	return out, nil
 }
 
-// LastSeen rend le pouls des repos dont au moins un token a déjà servi. Un repo absent du
-// résultat n'a pas de pouls : c'est au service de fusionner par clé, pas à la query de fabriquer
-// un horodatage nul qui se lirait comme une date.
+// LastSeen yields the pulse of the repos at least one token of which has already served. A repo
+// missing from the result has no pulse: merging by key is the service's job, not the query's job
+// to fabricate a zero timestamp that would read like a date.
 func (s *store) LastSeen(ctx context.Context, teamID uuid.UUID) ([]ProjectPulse, error) {
 	rows, err := s.q.OverviewLastSeen(ctx, teamID)
 	if err != nil {

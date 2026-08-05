@@ -1,18 +1,18 @@
 package overview
 
-// GARANTIES 1 ET 20 DU TABLEAU DE docs/DESIGN-TUI.md § « Garanties de sécurité ».
+// GUARANTEES 1 AND 20 OF THE TABLE IN docs/DESIGN-TUI.md § "Garanties de sécurité".
 //
-// Ce que ce fichier verrouille : la TABLE DE ROUTES elle-même — que les deux routes soient
-// derrière `AdminOnly`, et qu'aucune d'elles n'accepte autre chose qu'un GET.
+// What this file locks down: the ROUTE TABLE itself — that both routes sit behind `AdminOnly`,
+// and that neither accepts anything other than a GET.
 //
-// IL PART DE Routes() ET DE RIEN D'AUTRE. Un test de handler qui recâblerait les routes à la main
-// prouverait la portée de sa propre table, pas celle du module — la leçon a déjà été payée dans
-// `workspace/module_test.go`, où une route passée de `admin` à `authed` laissait toute la suite
-// verte.
+// IT STARTS FROM Routes() AND FROM NOTHING ELSE. A handler test rewiring the routes by hand would
+// prove the scope of its own table, not the module's — the lesson was already paid for in
+// `workspace/module_test.go`, where a route moved from `admin` to `authed` left the whole suite
+// green.
 //
-// `mod` est construit directement plutôt que par NewModule : NewModule câblerait le vrai service
-// sur un store à `*database.Queries` nul, et la première route qui atteint le handler
-// déréférencerait nil. Ce qui est sous test ici est la table, pas le câblage des dépendances.
+// `mod` is built directly rather than through NewModule: NewModule would wire the real service on
+// a store with a nil `*database.Queries`, and the first route reaching the handler would
+// dereference nil. What is under test here is the table, not the wiring of the dependencies.
 
 import (
 	"context"
@@ -28,12 +28,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// stubService rend une réponse vide sur les trois méthodes du contrat.
+// stubService returns an empty response on the three methods of the contract.
 //
-// L'interface embarquée est nulle : toute méthode ajoutée demain et non redéfinie ici panique si
-// une route l'appelle. C'est délibéré — une route qui laisserait passer un principal qu'elle
-// devrait refuser ne rendrait pas un statut inattendu, elle exploserait, ce qui est plus dur à
-// ignorer qu'un code de statut.
+// The embedded interface is nil: any method added tomorrow and not redefined here panics if a
+// route calls it. That is deliberate — a route letting through a principal it should reject would
+// not return an unexpected status, it would blow up, which is harder to ignore than a status code.
 type stubService struct {
 	service.Service
 }
@@ -50,24 +49,24 @@ func (stubService) RefDetail(context.Context, uuid.UUID, string, int64) (service
 	return service.RefDetail{}, nil
 }
 
-// route décrit une entrée de la table de routes. Les deux sont admin : il n'y a pas de gate mixte
-// sur cette surface, et ce fichier existe en partie pour qu'il n'y en ait jamais.
+// route describes one entry of the route table. Both are admin: there is no mixed gate on this
+// surface, and this file exists in part so that there never is one.
 type route struct {
 	method string
 	path   string
 }
 
-// routes énumère les DEUX routes de Routes(), à la main.
+// routes enumerates the TWO routes of Routes(), by hand.
 //
-// Écrite à la main et non dérivée du mux : `http.ServeMux` n'expose pas ses patterns, et dériver
-// la liste de l'objet sous test lui ferait dire ce que le code fait plutôt que ce qu'il doit
-// faire. Le compte est vérifié contre la source de module.go, plus bas.
+// Written by hand and not derived from the mux: `http.ServeMux` does not expose its patterns, and
+// deriving the list from the object under test would make it say what the code does rather than
+// what it must do. The count is checked against the source of module.go, further down.
 var routes = []route{
 	{http.MethodGet, "/?team=acme"},
 	{http.MethodGet, "/refs/CORE/41?team=acme"},
 }
 
-// serve joue une requête sur les VRAIES routes, avec le token fourni.
+// serve plays one request on the REAL routes, with the given token.
 func serve(t *testing.T, tok authtest.Token, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -79,27 +78,27 @@ func serve(t *testing.T, tok authtest.Token, method, path string) *httptest.Resp
 	return rec
 }
 
-// GARANTIE 1 — un token de projet n'atteint AUCUNE route d'overview.
+// GUARANTEE 1 — a project token reaches NO overview route.
 //
-// C'est la garantie qui justifie l'existence d'un module séparé. Sous `auth.Middleware`, l'agent
-// DOCS lirait le fil FRNT↔CORE, et les huit tests d'isolation de `task` et `issue` resteraient
-// verts : ils prouvent que LEURS queries sont scopées, pas qu'aucune autre route ne contourne ce
-// scope.
+// It is the guarantee that justifies the existence of a separate module. Under `auth.Middleware`,
+// the DOCS agent would read the FRNT↔CORE thread, and the eight isolation tests of `task` and
+// `issue` would stay green: they prove THEIR queries are scoped, not that no other route bypasses
+// that scope.
 //
-// MUTATION : dans module.go, remplacer `admin := m.auth.AdminOnly` par `m.auth.Middleware`.
+// MUTATION: in module.go, replace `admin := m.auth.AdminOnly` with `m.auth.Middleware`.
 //
-// LE CODE DE STATUT SEUL NE TUE PAS CETTE MUTATION, et c'est la première chose qu'a montrée le
-// test en la jouant : `handler.principal` refuse AUSSI un principal non admin, donc sous
-// `Middleware` la requête rendait encore 403 — par la seconde défense, une couche plus loin. Un
-// test qui n'aurait regardé que le code aurait été VERT sur la mutation qu'il existe pour tuer.
+// THE STATUS CODE ALONE DOES NOT KILL THIS MUTATION, and that is the first thing the test showed
+// when playing it: `handler.principal` ALSO rejects a non-admin principal, so under `Middleware`
+// the request still returned 403 — through the second defence, one layer further. A test that had
+// only looked at the code would have been GREEN on the very mutation it exists to kill.
 //
-// D'où l'assertion sur le corps EXACT : `auth.deny` écrit `Forbidden` (StatusText) et pose
-// `WWW-Authenticate`, le handler écrit `forbidden` et ne pose rien. C'est ce qui distingue « le
-// middleware a refusé » de « le middleware a laissé passer et le handler a rattrapé ». La seconde
-// défense reste en place — elle est ce qui protège le jour où quelqu'un monte une de ces routes
-// sous `Middleware` — mais elle ne masque plus la régression.
+// Hence the assertion on the EXACT body: `auth.deny` writes `Forbidden` (StatusText) and sets
+// `WWW-Authenticate`, the handler writes `forbidden` and sets nothing. That is what tells "the
+// middleware rejected" apart from "the middleware let through and the handler caught it". The
+// second defence stays in place — it is what protects the day somebody mounts one of these routes
+// under `Middleware` — but it no longer masks the regression.
 func TestOverviewRefusesProjectToken(t *testing.T) {
-	const refusDuMiddleware = `{"error":"Forbidden"}`
+	const middlewareRefusal = `{"error":"Forbidden"}`
 
 	for _, r := range routes {
 		t.Run(r.method+" "+r.path, func(t *testing.T) {
@@ -108,25 +107,25 @@ func TestOverviewRefusesProjectToken(t *testing.T) {
 			rec := serve(t, tok, r.method, r.path)
 
 			if rec.Code != http.StatusForbidden {
-				t.Errorf("code = %d avec un token de projet, attendu %d — cette route est "+
-					"ouverte aux agents", rec.Code, http.StatusForbidden)
+				t.Errorf("code = %d with a project token, expected %d — this route is open "+
+					"to agents", rec.Code, http.StatusForbidden)
 			}
-			if got := rec.Body.String(); got != refusDuMiddleware {
-				t.Errorf("corps = %s, attendu %s — le refus ne vient plus d'AdminOnly mais "+
-					"d'une couche plus profonde : la route a changé de middleware",
-					got, refusDuMiddleware)
+			if got := rec.Body.String(); got != middlewareRefusal {
+				t.Errorf("body = %s, expected %s — the refusal no longer comes from AdminOnly "+
+					"but from a deeper layer: the route changed middleware",
+					got, middlewareRefusal)
 			}
 			if rec.Header().Get("WWW-Authenticate") != "Bearer" {
-				t.Error("WWW-Authenticate absent — ce refus n'est pas celui du middleware d'auth")
+				t.Error("WWW-Authenticate missing — this refusal is not the auth middleware's")
 			}
 		})
 	}
 }
 
-// CONTRE-ÉPREUVE de la garantie 1 : un token admin passe.
+// COUNTER-PROOF of guarantee 1: an admin token gets through.
 //
-// Sans elle, un middleware qui refuserait TOUT LE MONDE — ou une route qui n'existerait pas —
-// ferait passer le test précédent pour correct.
+// Without it, a middleware rejecting EVERYBODY — or a route that would not exist — would make the
+// previous test look correct.
 func TestOverviewAcceptsAdminToken(t *testing.T) {
 	for _, r := range routes {
 		t.Run(r.method+" "+r.path, func(t *testing.T) {
@@ -135,16 +134,16 @@ func TestOverviewAcceptsAdminToken(t *testing.T) {
 			rec := serve(t, tok, r.method, r.path)
 
 			if rec.Code != http.StatusOK {
-				t.Errorf("code = %d avec un token admin, attendu %d — la route ne répond plus",
+				t.Errorf("code = %d with an admin token, expected %d — the route no longer answers",
 					rec.Code, http.StatusOK)
 			}
 		})
 	}
 }
 
-// Sans token du tout, les deux routes rendent 401 et non 403 : « je ne sais pas qui tu es » et
-// « je sais qui tu es et ce n'est pas assez » sont deux réponses différentes, et c'est le
-// middleware qui les distingue.
+// With no token at all, both routes return 401 and not 403: "I do not know who you are" and "I
+// know who you are and it is not enough" are two different answers, and it is the middleware that
+// tells them apart.
 func TestOverviewRefusesAnonymous(t *testing.T) {
 	for _, r := range routes {
 		t.Run(r.method+" "+r.path, func(t *testing.T) {
@@ -155,66 +154,66 @@ func TestOverviewRefusesAnonymous(t *testing.T) {
 			m.Routes().ServeHTTP(rec, httptest.NewRequest(r.method, r.path, nil))
 
 			if rec.Code != http.StatusUnauthorized {
-				t.Errorf("code = %d sans token, attendu %d", rec.Code, http.StatusUnauthorized)
+				t.Errorf("code = %d without a token, expected %d", rec.Code, http.StatusUnauthorized)
 			}
 		})
 	}
 }
 
-// GARANTIE 20 — aucune écriture par cette surface.
+// GUARANTEE 20 — no write through this surface.
 //
-// Le second volet de la garantie est dans `make lint` : check-overview-scope.sh refuse tout
-// INSERT/UPDATE/DELETE dans sql/queries/overview.sql. Celui-ci ferme l'autre bout : même une
-// query d'écriture ajoutée par erreur n'aurait aucune route pour l'atteindre.
+// The second half of the guarantee is in `make lint`: check-overview-scope.sh rejects any
+// INSERT/UPDATE/DELETE in sql/queries/overview.sql. This one closes the other end: even a write
+// query added by mistake would have no route to reach it.
 //
-// MUTATION : monter une route d'écriture dans Routes().
+// MUTATION: mount a write route in Routes().
 func TestOverviewExposesOnlyGET(t *testing.T) {
-	écritures := []string{http.MethodPost, http.MethodPatch, http.MethodPut, http.MethodDelete}
+	writes := []string{http.MethodPost, http.MethodPatch, http.MethodPut, http.MethodDelete}
 
 	for _, r := range routes {
-		for _, method := range écritures {
+		for _, method := range writes {
 			t.Run(method+" "+r.path, func(t *testing.T) {
 				tok := authtest.Admin(t, uuid.Nil)
 
 				rec := serve(t, tok, method, r.path)
 
 				if rec.Code != http.StatusMethodNotAllowed {
-					t.Errorf("code = %d pour %s, attendu %d — une route d'écriture existe sur "+
-						"cette surface", rec.Code, method, http.StatusMethodNotAllowed)
+					t.Errorf("code = %d for %s, expected %d — a write route exists on this "+
+						"surface", rec.Code, method, http.StatusMethodNotAllowed)
 				}
 			})
 		}
 	}
 }
 
-// La table du test couvre TOUTES les routes de Routes(), et le compte vient de la SOURCE de
+// The test's table covers ALL the routes of Routes(), and the count comes from the SOURCE of
 // module.go.
 //
-// Comparer `len(routes)` à une constante écrite dans le même fichier ne garderait rien : une
-// troisième route ajoutée à Routes() laisserait la suite verte. ServeMux n'expose pas ses
-// patterns, donc compter les `r.Handle(` du fichier est le seul lien mécanique possible entre la
-// table du test et la table réelle.
+// Comparing `len(routes)` to a constant written in the same file would guard nothing: a third
+// route added to Routes() would leave the suite green. ServeMux does not expose its patterns, so
+// counting the `r.Handle(` of the file is the only mechanical link possible between the test's
+// table and the real one.
 //
-// MUTATION : ajouter une route à Routes() sans l'ajouter à `routes` → ce test rouge.
-func TestLaTableDeRoutesEstComplete(t *testing.T) {
+// MUTATION: add a route to Routes() without adding it to `routes` → this test goes red.
+func TestRouteTableIsComplete(t *testing.T) {
 	source, err := os.ReadFile("module.go")
 	if err != nil {
-		t.Fatalf("lecture de module.go: %v", err)
+		t.Fatalf("reading module.go: %v", err)
 	}
-	declarees := strings.Count(string(source), "r.Handle(")
+	declared := strings.Count(string(source), "r.Handle(")
 
-	if declarees == 0 {
-		t.Fatal("aucun r.Handle( trouvé dans module.go — le compteur ne mesure plus rien")
+	if declared == 0 {
+		t.Fatal("no r.Handle( found in module.go — the counter no longer measures anything")
 	}
-	if len(routes) != declarees {
-		t.Errorf("Routes() déclare %d routes, la table du test en porte %d — une route a été "+
-			"ajoutée ou retirée sans que ce fichier suive", declarees, len(routes))
+	if len(routes) != declared {
+		t.Errorf("Routes() declares %d routes, the test's table carries %d — a route was added "+
+			"or removed without this file following", declared, len(routes))
 	}
 
 	for _, r := range routes {
 		rec := serve(t, authtest.Admin(t, uuid.Nil), r.method, r.path)
 		if rec.Code == http.StatusNotFound {
-			t.Errorf("%s %s : 404 — ce chemin n'existe plus dans Routes()", r.method, r.path)
+			t.Errorf("%s %s: 404 — this path no longer exists in Routes()", r.method, r.path)
 		}
 	}
 }

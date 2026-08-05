@@ -4,25 +4,25 @@ package service
 //
 // | Élément             | Résumé                                                    | Ligne |
 // |---------------------|-----------------------------------------------------------|-------|
-// | service.TeamBySlug  | Résout un slug en identité de team                          | 43    |
-// | service.TeamState   | Assemble les repos, leur pouls et la file de dettes         | 64    |
-// | mergePulse          | Rattache à chaque repo le dernier appel de ses tokens        | 121   |
-// | classifyIssues      | Classe chaque issue en vol en answer ou collect              | 158   |
-// | classifyTasks       | Classe chaque tâche en ask ou resume, ou l'omet              | 184   |
-// | ref                 | Compose la référence lisible d'une ligne                     | 211   |
+// | service.TeamBySlug  | Resolves a slug into a team identity                        | 43    |
+// | service.TeamState   | Assembles the repos, their pulse and the debt queue         | 64    |
+// | mergePulse          | Attaches to each repo the last call of its tokens            | 121   |
+// | classifyIssues      | Classifies each issue in flight as answer or collect         | 158   |
+// | classifyTasks       | Classifies each task as ask or resume, or omits it           | 184   |
+// | ref                 | Composes the readable reference of a row                     | 211   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// L'ÉCRAN RÉPOND À UNE SEULE QUESTION : QUI DOIT QUOI, ET DEPUIS COMBIEN DE TEMPS.
+// THE SCREEN ANSWERS ONE QUESTION: WHO OWES WHAT, AND FOR HOW LONG.
 //
-// La classification est faite ICI et pas chez le client. Un client qui rejouerait « bloqué sans
-// question ouverte ⇒ ask » serait un second endroit où la règle vit, donc le premier à diverger.
+// The classification is done HERE and not at the client. A client replaying "blocked with no open
+// question ⇒ ask" would be a second place where the rule lives, hence the first to diverge.
 //
-// TROIS REQUÊTES INDÉPENDANTES, PAS UNE JOINTURE. Compteurs, pouls et dettes viennent de quatre
-// lectures distinctes qui ne partagent qu'un `team_id`. C'est délibéré : une jointure ferait
-// disparaître le repo qui n'a rien en vol, et c'est la pire panne possible sur cet écran parce
-// qu'elle est silencieuse.
+// THREE INDEPENDENT QUERIES, NOT ONE JOIN. Counters, pulse and debts come from four distinct
+// reads that share nothing but a `team_id`. That is deliberate: a join would make the repo with
+// nothing in flight disappear, and that is the worst possible failure on this screen because it
+// is silent.
 
 import (
 	"context"
@@ -35,14 +35,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// TeamBySlug résout un slug en identité de team.
+// TeamBySlug resolves a slug into a team identity.
 //
-// C'est le SEUL endroit du module où un identifiant fourni par le client entre. Il ne produit
-// qu'un uuid interne, jamais rendu au dehors : le handler s'en sert pour scoper les appels
-// suivants et le jette.
+// It is the ONLY place in the module where a client-supplied identifier comes in. It produces
+// nothing but an internal uuid, never handed outside: the handler uses it to scope the following
+// calls and throws it away.
 func (s *service) TeamBySlug(ctx context.Context, slug string) (Team, error) {
 	if slug == "" {
-		return Team{}, errors.Join(ErrInvalidInput, errors.New("team manquante"))
+		return Team{}, errors.Join(ErrInvalidInput, errors.New("missing team"))
 	}
 
 	team, err := s.store.TeamBySlug(ctx, slug)
@@ -56,11 +56,11 @@ func (s *service) TeamBySlug(ctx context.Context, slug string) (Team, error) {
 	return Team{ID: team.ID, Slug: team.Slug, Name: team.Name}, nil
 }
 
-// TeamState assemble l'écran d'ensemble d'une team.
+// TeamState assembles a team's overview screen.
 //
-// L'horloge est prise UNE fois, au début : `generated_at`, le seuil de dormance et l'âge de
-// chaque ligne se réfèrent tous au même instant. Deux appels à time.Now() dans la même réponse
-// suffiraient à rendre une tâche dormante de trois secondes selon le champ qu'on lit.
+// The clock is taken ONCE, at the start: `generated_at`, the dormancy threshold and every row's
+// age all refer to the same instant. Two calls to time.Now() in the same response would be enough
+// to make a task dormant by three seconds depending on which field is read.
 func (s *service) TeamState(ctx context.Context, teamID uuid.UUID) (TeamState, error) {
 	if err := requireTeam(teamID); err != nil {
 		return TeamState{}, err
@@ -85,9 +85,9 @@ func (s *service) TeamState(ctx context.Context, teamID uuid.UUID) (TeamState, e
 		return TeamState{}, err
 	}
 
-	// hidden compte d'abord ce que les DEUX bornes SQL ont retenu. Les lignes omises par la
-	// classification ne s'y ajoutent pas : une tâche bloquée qui a déjà posé sa question n'est
-	// pas une dette cachée, elle est déjà représentée par la ligne `answer` de son destinataire.
+	// hidden counts first what the TWO SQL bounds held back. The rows omitted by the
+	// classification do not add to it: a blocked task that already asked its question is not a
+	// hidden debt, it is already represented by its recipient's `answer` row.
 	hidden := int(issueTotal) - len(issues) + int(taskTotal) - len(tasks)
 
 	debts := append(classifyIssues(issues), classifyTasks(tasks)...)
@@ -98,8 +98,8 @@ func (s *service) TeamState(ctx context.Context, teamID uuid.UUID) (TeamState, e
 		return debts[i].Since.Before(debts[j].Since)
 	})
 
-	// Seconde coupe : les deux files sont bornées séparément en SQL, leur somme ne l'est pas.
-	// Ce qui tombe ici est caché au même titre que ce que le LIMIT a retenu, donc compté pareil.
+	// Second cut: the two queues are bounded separately in SQL, their sum is not. What falls
+	// here is hidden just as much as what the LIMIT held back, so it is counted the same.
 	if len(debts) > maxDebts {
 		hidden += len(debts) - maxDebts
 		debts = debts[:maxDebts]
@@ -113,11 +113,11 @@ func (s *service) TeamState(ctx context.Context, teamID uuid.UUID) (TeamState, e
 	}, nil
 }
 
-// mergePulse rattache à chaque repo le dernier appel authentifié de ses tokens.
+// mergePulse attaches to each repo the last authenticated call of its tokens.
 //
-// La fusion se fait par CLÉ et non par index : les deux lectures ne rendent pas le même nombre de
-// lignes, et un repo dont aucun token n'a jamais servi n'apparaît pas du tout dans le pouls. Son
-// horodatage reste alors absent, ce qui est l'information juste.
+// The merge is done by KEY and not by index: the two reads do not yield the same number of rows,
+// and a repo no token of which has ever served does not appear in the pulse at all. Its timestamp
+// then stays absent, which is the accurate piece of information.
 func mergePulse(counters []store.ProjectCounters, pulses []store.ProjectPulse) []ProjectLine {
 	seen := make(map[string]time.Time, len(pulses))
 	for _, p := range pulses {
@@ -142,19 +142,19 @@ func mergePulse(counters []store.ProjectCounters, pulses []store.ProjectPulse) [
 	return out
 }
 
-// classifyIssues classe chaque issue en vol.
+// classifyIssues classifies each issue in flight.
 //
-// Le débiteur change de camp selon l'état, et c'est tout l'intérêt de l'écran :
+// The debtor changes sides depending on the state, and that is the whole point of the screen:
 //
-//	open     → le DESTINATAIRE doit une réponse       (kind answer)
-//	answered → l'ÉMETTEUR doit aller la chercher      (kind collect)
+//	open     → the RECIPIENT owes an answer            (kind answer)
+//	answered → the SENDER must go and fetch it         (kind collect)
 //
-// La référence, elle, ne bouge pas : c'est toujours celle du destinataire, parce que c'est celle
-// qu'on retape pour ouvrir le fil.
+// The reference itself does not move: it is always the recipient's, because that is the one
+// retyped to open the thread.
 //
-// Tout autre état est ignoré silencieusement — la query exclut déjà `closed`, et un état inconnu
-// est un état ajouté par une migration future, qu'il vaut mieux ne pas rendre du tout que rendre
-// avec un kind inventé.
+// Any other state is ignored silently — the query already excludes `closed`, and an unknown state
+// is a state added by a future migration, better not rendered at all than rendered with a made-up
+// kind.
 func classifyIssues(issues []store.IssueDebt) []Debt {
 	out := make([]Debt, 0, len(issues))
 	for _, i := range issues {
@@ -173,14 +173,14 @@ func classifyIssues(issues []store.IssueDebt) []Debt {
 	return out
 }
 
-// classifyTasks classe chaque tâche rendue par la query, ou l'omet.
+// classifyTasks classifies each task yielded by the query, or omits it.
 //
-//	blocked + aucune question ouverte → ask     : le seul cul-de-sac que rien d'autre ne montre
-//	blocked + une question ouverte    → OMISE   : déjà représentée par la ligne answer du voisin
-//	in_progress                       → resume  : la query ne l'a rendue que si elle est dormante
+//	blocked + no open question → ask     : the only dead end nothing else shows
+//	blocked + an open question → OMITTED : already represented by the neighbour's answer row
+//	in_progress                → resume  : the query only yielded it if it is dormant
 //
-// Aucun seuil n'est réévalué ici : la query a déjà appliqué `last_move < @stale_before`. Le
-// refaire en Go serait un second endroit où le seuil vit.
+// No threshold is re-evaluated here: the query already applied `last_move < @stale_before`. Doing
+// it again in Go would be a second place where the threshold lives.
 func classifyTasks(tasks []store.TaskDebt) []Debt {
 	out := make([]Debt, 0, len(tasks))
 	for _, t := range tasks {
@@ -206,8 +206,8 @@ func classifyTasks(tasks []store.TaskDebt) []Debt {
 	return out
 }
 
-// ref compose la référence lisible d'une ligne — `CORE-41`. C'est la seule désignation qu'un
-// humain manipule sur cette surface, et la seule que le détail accepte en retour.
+// ref composes the readable reference of a row — `CORE-41`. It is the only designation a human
+// handles on this surface, and the only one the detail accepts back.
 func ref(projectKey string, number int64) string {
 	return fmt.Sprintf("%s-%d", projectKey, number)
 }

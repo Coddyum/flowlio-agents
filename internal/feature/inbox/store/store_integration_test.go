@@ -13,7 +13,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// fixture porte une team, deux projets qui se parlent et le token du projet observé.
+// fixture carries a team, two projects that talk to each other and the observed project's token.
 type fixture struct {
 	db      *sql.DB
 	teamID  uuid.UUID
@@ -27,62 +27,62 @@ func newStore(t *testing.T) (inboxstore.Store, *sql.DB) {
 
 	dsn := os.Getenv("FLOWLIO_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("FLOWLIO_TEST_DATABASE_URL non renseigné — test d'intégration ignoré")
+		t.Skip("FLOWLIO_TEST_DATABASE_URL not set — integration test skipped")
 	}
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		t.Fatalf("ouverture de la base: %v", err)
+		t.Fatalf("opening the database: %v", err)
 	}
 	if err := db.Ping(); err != nil {
-		t.Fatalf("base injoignable: %v", err)
+		t.Fatalf("database unreachable: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
 	return inboxstore.New(database.New(db)), db
 }
 
-// newFixture crée une team, les projets WEB et CORE, et un token de projet pour CORE : c'est le
-// point de vue depuis lequel l'inbox est observée.
+// newFixture creates a team, the WEB and CORE projects, and a project token for CORE: that is the
+// point of view the inbox is observed from.
 func newFixture(t *testing.T, db *sql.DB) fixture {
 	t.Helper()
 
 	f := fixture{db: db}
 	slug := "test-" + strings.ToLower(uuid.NewString()[:8])
 	if err := db.QueryRow(
-		"INSERT INTO teams (slug, name) VALUES ($1, $2) RETURNING id", slug, "Team de test",
+		"INSERT INTO teams (slug, name) VALUES ($1, $2) RETURNING id", slug, "Test team",
 	).Scan(&f.teamID); err != nil {
-		t.Fatalf("création de la team: %v", err)
+		t.Fatalf("creating the team: %v", err)
 	}
 	t.Cleanup(func() {
 		if _, err := db.Exec("DELETE FROM teams WHERE id = $1", f.teamID); err != nil {
-			t.Errorf("nettoyage de la team %s: %v", f.teamID, err)
+			t.Errorf("cleaning up team %s: %v", f.teamID, err)
 		}
 	})
 
 	for key, dest := range map[string]*uuid.UUID{"WEB": &f.web, "CORE": &f.core} {
 		if err := db.QueryRow(
 			"INSERT INTO projects (team_id, key, name) VALUES ($1, $2, $3) RETURNING id",
-			f.teamID, key, "Projet "+key,
+			f.teamID, key, "Project "+key,
 		).Scan(dest); err != nil {
-			t.Fatalf("création du projet %s: %v", key, err)
+			t.Fatalf("creating project %s: %v", key, err)
 		}
 	}
 
 	prefix := strings.ToLower(uuid.NewString()[:8]) + "abcd"
 	if err := db.QueryRow(
 		`INSERT INTO tokens (team_id, project_id, name, prefix, secret_hash, scope)
-		 VALUES ($1, $2, 'agent', $3, 'hash-de-test', 'project') RETURNING id`,
+		 VALUES ($1, $2, 'agent', $3, 'test-hash', 'project') RETURNING id`,
 		f.teamID, f.core, prefix,
 	).Scan(&f.tokenID); err != nil {
-		t.Fatalf("création du token: %v", err)
+		t.Fatalf("creating the token: %v", err)
 	}
 
 	return f
 }
 
-// openIssue insère une issue et son événement par SQL direct : la feature inbox ne doit dépendre
-// d'aucune autre feature, pas même dans ses tests.
+// openIssue inserts an issue and its event through direct SQL: the inbox feature must depend on
+// no other feature, not even in its tests.
 func openIssue(t *testing.T, f fixture, from, to uuid.UUID, title, state, body string) uuid.UUID {
 	t.Helper()
 
@@ -90,7 +90,7 @@ func openIssue(t *testing.T, f fixture, from, to uuid.UUID, title, state, body s
 	if err := f.db.QueryRow(
 		"UPDATE projects SET next_number = next_number + 1 WHERE id = $1 RETURNING next_number - 1", to,
 	).Scan(&number); err != nil {
-		t.Fatalf("réservation du numéro: %v", err)
+		t.Fatalf("reserving the number: %v", err)
 	}
 
 	var issueID uuid.UUID
@@ -103,14 +103,14 @@ func openIssue(t *testing.T, f fixture, from, to uuid.UUID, title, state, body s
 		 VALUES ($1, $2, $3, $4, $5, $6, `+closedAt+`) RETURNING id`,
 		f.teamID, to, from, number, title, state,
 	).Scan(&issueID); err != nil {
-		t.Fatalf("création de l'issue %q: %v", title, err)
+		t.Fatalf("creating issue %q: %v", title, err)
 	}
 
 	if _, err := f.db.Exec(
 		"INSERT INTO issue_messages (issue_id, author_project_id, body_md) VALUES ($1, $2, $3)",
 		issueID, from, body,
 	); err != nil {
-		t.Fatalf("premier message: %v", err)
+		t.Fatalf("first message: %v", err)
 	}
 
 	if _, err := f.db.Exec(
@@ -118,7 +118,7 @@ func openIssue(t *testing.T, f fixture, from, to uuid.UUID, title, state, body s
 		 VALUES ($1, $2, $3, 'issue.opened', 'issue', $4)`,
 		f.teamID, to, from, issueID,
 	); err != nil {
-		t.Fatalf("événement: %v", err)
+		t.Fatalf("event: %v", err)
 	}
 
 	return issueID
@@ -133,7 +133,8 @@ func scopeOf(f fixture) inboxstore.Scope {
 	}
 }
 
-// L'inbox renvoie l'ÉTAT, pas un flux. Chaque seau est dérivé de issues.state / tasks.status.
+// The inbox returns the STATE, not a stream. Every bucket is derived from issues.state /
+// tasks.status.
 func TestInboxBucketsReflectState(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -145,39 +146,39 @@ func TestInboxBucketsReflectState(t *testing.T) {
 		t.Fatalf("ProjectKey: %v", err)
 	}
 	if key != "CORE" {
-		t.Errorf("clé = %q, attendu CORE", key)
+		t.Errorf("key = %q, expected CORE", key)
 	}
 
-	openIssue(t, f, f.web, f.core, "WEB attend CORE", "open", "peux-tu regarder ?")
-	openIssue(t, f, f.core, f.web, "CORE a eu sa réponse", "answered", "voilà la réponse")
-	openIssue(t, f, f.web, f.core, "déjà réglée", "closed", "réglé")
+	openIssue(t, f, f.web, f.core, "WEB is waiting on CORE", "open", "could you have a look?")
+	openIssue(t, f, f.core, f.web, "CORE got its answer", "answered", "here is the answer")
+	openIssue(t, f, f.web, f.core, "already settled", "closed", "settled")
 
 	cursor, err := st.Cursor(ctx, sc)
 	if err != nil {
 		t.Fatalf("Cursor: %v", err)
 	}
 	if cursor.LastEventID != 0 {
-		t.Errorf("curseur d'un token neuf = %d, attendu 0", cursor.LastEventID)
+		t.Errorf("cursor of a brand-new token = %d, expected 0", cursor.LastEventID)
 	}
 	if cursor.HeadEventID == 0 {
-		t.Fatal("tête du journal à 0 alors que des événements ont été écrits")
+		t.Fatal("head of the journal at 0 although events were written")
 	}
 
 	incoming, err := st.IncomingOpen(ctx, sc, cursor.LastEventID)
 	if err != nil {
 		t.Fatalf("IncomingOpen: %v", err)
 	}
-	if len(incoming) != 1 || incoming[0].Title != "WEB attend CORE" {
-		t.Fatalf("%d issues entrantes ouvertes, attendu la seule question de WEB", len(incoming))
+	if len(incoming) != 1 || incoming[0].Title != "WEB is waiting on CORE" {
+		t.Fatalf("%d open incoming issues, expected the single question from WEB", len(incoming))
 	}
 	if incoming[0].PeerKey != "WEB" {
-		t.Errorf("pair = %q, attendu WEB", incoming[0].PeerKey)
+		t.Errorf("peer = %q, expected WEB", incoming[0].PeerKey)
 	}
-	if incoming[0].Excerpt != "peux-tu regarder ?" {
-		t.Errorf("extrait = %q, attendu le dernier message", incoming[0].Excerpt)
+	if incoming[0].Excerpt != "could you have a look?" {
+		t.Errorf("excerpt = %q, expected the last message", incoming[0].Excerpt)
 	}
 	if !incoming[0].New {
-		t.Error("l'issue doit être marquée nouvelle : le curseur d'un token neuf est à 0")
+		t.Error("the issue must be flagged new: the cursor of a brand-new token is at 0")
 	}
 
 	answered, err := st.OutgoingAnswered(ctx, sc, cursor.LastEventID)
@@ -185,19 +186,19 @@ func TestInboxBucketsReflectState(t *testing.T) {
 		t.Fatalf("OutgoingAnswered: %v", err)
 	}
 	if len(answered) != 1 || answered[0].PeerKey != "WEB" {
-		t.Fatalf("%d issues sortantes répondues, attendu 1 chez WEB", len(answered))
+		t.Fatalf("%d answered outgoing issues, expected 1 at WEB", len(answered))
 	}
 }
 
-// Le curseur ne pilote QUE le drapeau « nouveau ». Après l'avoir avancé, les mêmes lignes
-// reviennent : l'état n'a pas changé, donc il reste à traiter.
+// The cursor ONLY drives the "new" flag. After moving it forward, the same lines come back: the
+// state has not changed, so it is still to be dealt with.
 func TestCursorOnlyDrivesTheNewFlag(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
 	f := newFixture(t, db)
 	sc := scopeOf(f)
 
-	openIssue(t, f, f.web, f.core, "question en attente", "open", "?")
+	openIssue(t, f, f.web, f.core, "question pending", "open", "?")
 
 	cursor, err := st.Cursor(ctx, sc)
 	if err != nil {
@@ -212,7 +213,7 @@ func TestCursorOnlyDrivesTheNewFlag(t *testing.T) {
 		t.Fatalf("Cursor: %v", err)
 	}
 	if after.LastEventID != cursor.HeadEventID {
-		t.Errorf("curseur = %d après avancement, attendu %d", after.LastEventID, cursor.HeadEventID)
+		t.Errorf("cursor = %d after moving forward, expected %d", after.LastEventID, cursor.HeadEventID)
 	}
 
 	incoming, err := st.IncomingOpen(ctx, sc, after.LastEventID)
@@ -220,28 +221,28 @@ func TestCursorOnlyDrivesTheNewFlag(t *testing.T) {
 		t.Fatalf("IncomingOpen: %v", err)
 	}
 	if len(incoming) != 1 {
-		t.Fatalf("%d issues après avancement du curseur, attendu 1 : "+
-			"une question sans réponse reste à traiter", len(incoming))
+		t.Fatalf("%d issues after moving the cursor forward, expected 1: "+
+			"an unanswered question is still to be dealt with", len(incoming))
 	}
 	if incoming[0].New {
-		t.Error("l'issue ne doit plus être marquée nouvelle après avancement du curseur")
+		t.Error("the issue must no longer be flagged new after the cursor moved forward")
 	}
 
-	// Le curseur ne recule jamais, même si un appel concurrent présente une position ancienne.
+	// The cursor never goes backwards, even if a concurrent call presents an older position.
 	if err := st.Advance(ctx, f.tokenID, 0); err != nil {
-		t.Fatalf("Advance (position ancienne): %v", err)
+		t.Fatalf("Advance (older position): %v", err)
 	}
 	back, err := st.Cursor(ctx, sc)
 	if err != nil {
 		t.Fatalf("Cursor: %v", err)
 	}
 	if back.LastEventID != cursor.HeadEventID {
-		t.Errorf("curseur = %d, attendu %d : il ne doit jamais reculer",
+		t.Errorf("cursor = %d, expected %d: it must never go backwards",
 			back.LastEventID, cursor.HeadEventID)
 	}
 }
 
-// L'inbox d'un projet ne montre jamais l'activité d'un projet tiers, même dans la même team.
+// A project's inbox never shows the activity of a third-party project, even within the same team.
 func TestInboxIsScopedToItsProject(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -249,13 +250,13 @@ func TestInboxIsScopedToItsProject(t *testing.T) {
 
 	var spy uuid.UUID
 	if err := db.QueryRow(
-		"INSERT INTO projects (team_id, key, name) VALUES ($1, 'SPY', 'Projet SPY') RETURNING id",
+		"INSERT INTO projects (team_id, key, name) VALUES ($1, 'SPY', 'Project SPY') RETURNING id",
 		f.teamID,
 	).Scan(&spy); err != nil {
-		t.Fatalf("création du projet SPY: %v", err)
+		t.Fatalf("creating project SPY: %v", err)
 	}
 
-	openIssue(t, f, f.web, f.core, "entre WEB et CORE", "open", "privé")
+	openIssue(t, f, f.web, f.core, "between WEB and CORE", "open", "private")
 
 	spyScope := inboxstore.Scope{TokenID: f.tokenID, TeamID: f.teamID, ProjectID: spy, Limit: 11}
 
@@ -264,7 +265,7 @@ func TestInboxIsScopedToItsProject(t *testing.T) {
 		t.Fatalf("IncomingOpen: %v", err)
 	}
 	if len(incoming) != 0 {
-		t.Errorf("SPY voit %d issues entrantes, attendu 0", len(incoming))
+		t.Errorf("SPY sees %d incoming issues, expected 0", len(incoming))
 	}
 
 	answered, err := st.OutgoingAnswered(ctx, spyScope, 0)
@@ -272,7 +273,7 @@ func TestInboxIsScopedToItsProject(t *testing.T) {
 		t.Fatalf("OutgoingAnswered: %v", err)
 	}
 	if len(answered) != 0 {
-		t.Errorf("SPY voit %d issues répondues, attendu 0", len(answered))
+		t.Errorf("SPY sees %d answered issues, expected 0", len(answered))
 	}
 
 	tasks, err := st.InProgressTasks(ctx, spyScope)
@@ -280,12 +281,12 @@ func TestInboxIsScopedToItsProject(t *testing.T) {
 		t.Fatalf("InProgressTasks: %v", err)
 	}
 	if len(tasks) != 0 {
-		t.Errorf("SPY voit %d tâches, attendu 0", len(tasks))
+		t.Errorf("SPY sees %d tasks, expected 0", len(tasks))
 	}
 }
 
-// Une tâche en cours signale une session interrompue : c'est ce qu'un agent doit reprendre en
-// premier. Les tâches archivées ou terminées n'y figurent pas.
+// A task in progress signals an interrupted session: that is what an agent must pick up first.
+// Archived or finished tasks do not show up there.
 func TestInProgressTasksOnly(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -298,7 +299,7 @@ func TestInProgressTasksOnly(t *testing.T) {
 			"UPDATE projects SET next_number = next_number + 1 WHERE id = $1 RETURNING next_number - 1",
 			f.core,
 		).Scan(&number); err != nil {
-			t.Fatalf("réservation du numéro: %v", err)
+			t.Fatalf("reserving the number: %v", err)
 		}
 		archivedAt := "NULL"
 		if archived {
@@ -309,20 +310,20 @@ func TestInProgressTasksOnly(t *testing.T) {
 			 VALUES ($1, $2, $3, $4, $5, `+archivedAt+`)`,
 			f.teamID, f.core, number, title, status,
 		); err != nil {
-			t.Fatalf("création de la tâche %q: %v", title, err)
+			t.Fatalf("creating task %q: %v", title, err)
 		}
 	}
 
-	insert("en cours", "in_progress", false)
-	insert("à faire", "todo", false)
-	insert("terminée", "done", false)
-	insert("en cours mais archivée", "in_progress", true)
+	insert("in progress", "in_progress", false)
+	insert("to do", "todo", false)
+	insert("finished", "done", false)
+	insert("in progress but archived", "in_progress", true)
 
 	tasks, err := st.InProgressTasks(ctx, scopeOf(f))
 	if err != nil {
 		t.Fatalf("InProgressTasks: %v", err)
 	}
-	if len(tasks) != 1 || tasks[0].Title != "en cours" {
-		t.Fatalf("%d tâches, attendu la seule tâche en cours non archivée", len(tasks))
+	if len(tasks) != 1 || tasks[0].Title != "in progress" {
+		t.Fatalf("%d tasks, expected the single non-archived task in progress", len(tasks))
 	}
 }

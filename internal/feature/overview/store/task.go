@@ -4,8 +4,8 @@ package store
 //
 // | Élément          | Résumé                                                         | Ligne |
 // |------------------|----------------------------------------------------------------|-------|
-// | store.TaskByRef  | Rend une tâche active de la team, sans le token de son repo     | 26    |
-// | store.TaskNotes  | Rend les N dernières notes, dans l'ordre de lecture             | 59    |
+// | store.TaskByRef  | Yields an active task of the team, without its repo's token     | 26    |
+// | store.TaskNotes  | Yields the last N notes, in reading order                       | 59    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -20,9 +20,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// TaskByRef rend la tâche désignée par la clé de son projet et son numéro. Une tâche archivée est
-// introuvable par cette voie : elle n'appelle plus d'action, et l'ouvrir depuis l'aperçu n'aurait
-// pas de sens.
+// TaskByRef yields the task designated by its project key and its number. An archived task cannot
+// be found this way: it calls for no action any more, and opening it from the overview would make
+// no sense.
 func (s *store) TaskByRef(ctx context.Context, teamID uuid.UUID, projectKey string, number int64) (Task, error) {
 	row, err := s.q.OverviewTaskByRef(ctx, database.OverviewTaskByRefParams{
 		TeamID:     teamID,
@@ -54,8 +54,8 @@ func (s *store) TaskByRef(ctx context.Context, teamID uuid.UUID, projectKey stri
 	return task, nil
 }
 
-// TaskNotes rend les N notes les plus récentes, dans l'ordre de lecture, et le total avant la
-// borne. teamID borne la lecture par la tâche : task_notes n'a pas de colonne team_id.
+// TaskNotes yields the N most recent notes, in reading order, and the total before the bound.
+// teamID bounds the read through the task: task_notes has no team_id column.
 func (s *store) TaskNotes(ctx context.Context, teamID, taskID uuid.UUID, limit int32) ([]Note, int64, error) {
 	rows, err := s.q.OverviewTaskNotes(ctx, database.OverviewTaskNotesParams{
 		TeamID:  teamID,

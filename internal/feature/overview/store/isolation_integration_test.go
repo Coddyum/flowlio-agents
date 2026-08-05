@@ -1,11 +1,11 @@
 package store_test
 
-// Les garanties d'ISOLATION, une par test, chacune avec la mutation qui doit la faire tomber.
-// Fixture, helpers et assertions d'ensemble : store_integration_test.go.
+// The ISOLATION guarantees, one per test, each with the mutation that must make it fall over.
+// Fixture, helpers and set assertions: store_integration_test.go.
 //
-// UNE GARANTIE SANS MUTATION QUI LA TUE EST UNE INTENTION, PAS UNE GARANTIE. Chaque mutation
-// écrite en commentaire ici a été JOUÉE, et le test correspondant est passé au rouge. Celles qui
-// ne sont pas tuables sont dites telles, avec leur raison — c'est la leçon que FLWL-21 a coûtée.
+// A GUARANTEE WITH NO MUTATION THAT KILLS IT IS AN INTENTION, NOT A GUARANTEE. Every mutation
+// written as a comment here was PLAYED, and the matching test went red. The ones that are not
+// killable are said to be so, with their reason — that is the lesson FLWL-21 cost.
 
 import (
 	"errors"
@@ -17,25 +17,25 @@ import (
 	"github.com/google/uuid"
 )
 
-// jadis est une base de temps fixe et ancienne : une file d'attente se lit par âge, donc les
-// dates du test ne doivent dépendre ni de l'horloge de la machine ni de l'ordre d'exécution.
-var jadis = time.Date(2026, 1, 2, 15, 4, 5, 0, time.UTC)
+// longAgo is a fixed, old time base: a queue is read by age, so the test's dates must depend
+// neither on the machine's clock nor on the order of execution.
+var longAgo = time.Date(2026, 1, 2, 15, 4, 5, 0, time.UTC)
 
-// GARANTIE 5 — aucune issue d'une autre team dans la file.
+// GUARANTEE 5 — no issue of another team in the queue.
 //
-// L'assertion porte sur l'ENSEMBLE EXACT. « ne contient rien de B » passerait aussi sur un
-// résultat vide, c'est-à-dire sur une query qui ne rend plus rien du tout.
+// The assertion bears on the EXACT SET. "contains nothing of B" would also pass on an empty
+// result, that is to say on a query that no longer yields anything at all.
 //
-// MUTATION JOUÉE : retirer `i.team_id = @team_id` d'OverviewIssueDebts → la file de A porte les
-// issues de B, ce test rouge.
+// MUTATION PLAYED: remove `i.team_id = @team_id` from OverviewIssueDebts → A's queue carries B's
+// issues, this test goes red.
 func TestOverviewNeverCrossesTeams(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	openIssue(t, db, f.a, "CORE", "WEB", 1, "A demande à CORE", "open", jadis)
-	openIssue(t, db, f.a, "WEB", "CORE", 2, "A demande à WEB", "answered", jadis)
-	openIssue(t, db, f.b, "CORE", "WEB", 3, "B demande à CORE", "open", jadis)
-	openIssue(t, db, f.b, "WEB", "CORE", 4, "B demande à WEB", "open", jadis)
+	openIssue(t, db, f.a, "CORE", "WEB", 1, "A asks CORE", "open", longAgo)
+	openIssue(t, db, f.a, "WEB", "CORE", 2, "A asks WEB", "answered", longAgo)
+	openIssue(t, db, f.b, "CORE", "WEB", 3, "B asks CORE", "open", longAgo)
+	openIssue(t, db, f.b, "WEB", "CORE", 4, "B asks WEB", "open", longAgo)
 
 	debts, total, err := st.IssueDebts(ctx, f.a.id, 50)
 	if err != nil {
@@ -44,28 +44,28 @@ func TestOverviewNeverCrossesTeams(t *testing.T) {
 
 	assertSet(t, refs(debts), "CORE-1", "WEB-2")
 	if total != 2 {
-		t.Errorf("total = %d, attendu 2 — le compte annoncé déborde de la team", total)
+		t.Errorf("total = %d, expected 2 — the announced count overflows the team", total)
 	}
 }
 
-// GARANTIE 6 — contrôle positif de la 5 : la file voit TOUTE la dette de sa team.
+// GUARANTEE 6 — positive control of 5: the queue sees ALL the debt of its team.
 //
-// Sans lui, une query qui ne rendrait jamais rien passerait le test d'isolation avec les
-// honneurs. Les deux états en vol sont représentés, `closed` ne l'est pas.
+// Without it, a query that would never yield anything would pass the isolation test with
+// honours. Both in-flight states are represented, `closed` is not.
 //
-// MUTATION JOUÉE : remplacer le paramètre de team par uuid.Nil → zéro ligne, ce test rouge.
+// MUTATION PLAYED: replace the team parameter with uuid.Nil → zero rows, this test goes red.
 func TestOverviewSeesEveryDebtOfItsTeam(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	openIssue(t, db, f.a, "CORE", "WEB", 1, "en attente de réponse", "open", jadis)
-	openIssue(t, db, f.a, "WEB", "CORE", 2, "répondue, pas consommée", "answered", jadis)
+	openIssue(t, db, f.a, "CORE", "WEB", 1, "waiting for an answer", "open", longAgo)
+	openIssue(t, db, f.a, "WEB", "CORE", 2, "answered, not consumed", "answered", longAgo)
 	if _, err := db.Exec(
 		`INSERT INTO issues (team_id, project_id, author_project_id, number, title, state, closed_at)
-		 VALUES ($1, $2, $3, 3, 'close', 'closed', now())`,
+		 VALUES ($1, $2, $3, 3, 'closed one', 'closed', now())`,
 		f.a.id, f.a.projects["CORE"], f.a.projects["DOCS"],
 	); err != nil {
-		t.Fatalf("création de l'issue close: %v", err)
+		t.Fatalf("creating the closed issue: %v", err)
 	}
 
 	debts, _, err := st.IssueDebts(ctx, f.a.id, 50)
@@ -76,26 +76,26 @@ func TestOverviewSeesEveryDebtOfItsTeam(t *testing.T) {
 	assertSet(t, refs(debts), "CORE-1", "WEB-2")
 }
 
-// GARANTIE 7 — la jointure vers projects ne traverse pas la team.
+// GUARANTEE 7 — the join towards projects does not cross the team.
 //
-// Les deux teams ont un `CORE` : un scope qui ne porterait que sur la CLÉ passerait tous les
-// autres tests et échouerait ici. C'est la seule raison d'être de la fixture homonyme.
+// Both teams have a `CORE`: a scope bearing on the KEY alone would pass every other test and
+// would fail here. That is the sole reason for the homonymous fixture.
 //
-// MUTATION DÉCLARÉE NON TUABLE, ET IL VAUT MIEUX LE DIRE QUE D'ÉCRIRE UN TEST QUI MENT : retirer
-// `AND p.team_id = i.team_id` du join ne change rien d'observable, parce que la FK composite
-// `issues_project_fk (project_id, team_id) → projects(id, team_id)` rend la clause
-// mathématiquement redondante — aucun jeu de données insérable ne la met en défaut. La clause
-// reste écrite (défense en profondeur si la résolution du projet change un jour) mais le contrôle
-// réel est la FK, et c'est elle qu'on teste, en garantie 8.
+// MUTATION DECLARED NOT KILLABLE, AND SAYING SO IS BETTER THAN WRITING A TEST THAT LIES: removing
+// `AND p.team_id = i.team_id` from the join changes nothing observable, because the composite FK
+// `issues_project_fk (project_id, team_id) → projects(id, team_id)` makes the clause
+// mathematically redundant — no insertable dataset puts it at fault. The clause stays written
+// (defence in depth if the project resolution ever changes) but the real control is the FK, and
+// that is what is tested, in guarantee 8.
 //
-// Ce test-ci garde ce qui EST observable : la file de A ne porte que des lignes de A, alors même
-// que les clés de projet sont indiscernables entre les deux teams.
+// This test keeps what IS observable: A's queue carries nothing but A's rows, even though the
+// project keys are indistinguishable between the two teams.
 func TestOverviewJoinIsTeamScoped(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	openIssue(t, db, f.a, "CORE", "WEB", 1, "chez A", "open", jadis)
-	openIssue(t, db, f.b, "CORE", "WEB", 2, "chez B, même clé de projet", "open", jadis)
+	openIssue(t, db, f.a, "CORE", "WEB", 1, "at A", "open", longAgo)
+	openIssue(t, db, f.b, "CORE", "WEB", 2, "at B, same project key", "open", longAgo)
 
 	debts, _, err := st.IssueDebts(ctx, f.a.id, 50)
 	if err != nil {
@@ -105,48 +105,49 @@ func TestOverviewJoinIsTeamScoped(t *testing.T) {
 	assertSet(t, refs(debts), "CORE-1")
 }
 
-// GARANTIE 8 — la FK composite est le contrôle RÉEL sur issues.
+// GUARANTEE 8 — the composite FK is the REAL control on issues.
 //
-// C'est elle qui rend inobservable la mutation de la garantie 7, donc c'est elle qu'il faut
-// tester : une issue de la team A ne peut pas désigner un projet de la team B, la base le refuse.
+// It is what makes the mutation of guarantee 7 unobservable, so it is what must be tested: an
+// issue of team A cannot designate a project of team B, the database rejects it.
 //
-// MUTATION : supprimer `issues_project_fk` de la migration → l'insertion passe, ce test rouge.
+// MUTATION: drop `issues_project_fk` from the migration → the insert goes through, this test goes
+// red.
 func TestIssueCannotReferenceForeignProject(t *testing.T) {
 	_, db := newStore(t)
 	f := newFixture(t, db)
 
 	_, err := db.Exec(
 		`INSERT INTO issues (team_id, project_id, author_project_id, number, title)
-		 VALUES ($1, $2, $3, 1, 'issue de A pointant un projet de B')`,
+		 VALUES ($1, $2, $3, 1, 'issue of A pointing at a project of B')`,
 		f.a.id, f.b.projects["CORE"], f.a.projects["WEB"],
 	)
 	if err == nil {
-		t.Fatal("insertion acceptée : une issue peut désigner le projet d'une autre team — la " +
-			"FK composite ne tient plus, et la clause de team des joins devient load-bearing")
+		t.Fatal("insert accepted: an issue can designate another team's project — the composite " +
+			"FK no longer holds, and the team clause of the joins becomes load-bearing")
 	}
 }
 
-// GARANTIE 9 — les compteurs ignorent les autres teams.
+// GUARANTEE 9 — the counters ignore the other teams.
 //
-// Dix issues de plus chez la voisine, et pas un compteur de A qui bouge. Les sous-requêtes
-// scalaires sont corrélées sur `p.team_id`, la ligne déjà matchée, et non sur le paramètre.
+// Ten more issues at the neighbour's, and not one counter of A moves. The scalar subqueries are
+// correlated on `p.team_id`, the row already matched, and not on the parameter.
 //
-// LA MUTATION ANNONCÉE PAR LA NOTE NE TUE PAS CE TEST, et c'est la note qui a tort. Elle disait :
-// « retirer `i.team_id = p.team_id` d'une sous-requête scalaire ». Jouée, elle laisse la suite
-// VERTE — la sous-requête est corrélée sur `p.id`, un UUID unique dans toute l'installation, et
-// la FK composite interdit qu'une issue de B porte le project_id d'un projet de A. Le prédicat de
-// team y est donc mathématiquement redondant, exactement comme dans les joins de la garantie 7.
+// THE MUTATION ANNOUNCED BY THE NOTE DOES NOT KILL THIS TEST, and it is the note that is wrong.
+// It said: "remove `i.team_id = p.team_id` from a scalar subquery". Played, it leaves the suite
+// GREEN — the subquery is correlated on `p.id`, a UUID unique across the whole installation, and
+// the composite FK forbids an issue of B from carrying the project_id of a project of A. The team
+// predicate is therefore mathematically redundant there, exactly as in the joins of guarantee 7.
 //
-// MUTATION QUI LA TUE VRAIMENT, JOUÉE : retirer `p.team_id = @team_id` du WHERE d'OverviewProjects
-// → l'écran de A porte les repos de B, ce test rouge (et celui de la garantie 11 avec lui). C'est
-// ce prédicat-là, et lui seul, qui scope les compteurs.
+// THE MUTATION THAT REALLY KILLS IT, PLAYED: remove `p.team_id = @team_id` from the WHERE of
+// OverviewProjects → A's screen carries B's repos, this test goes red (and guarantee 11's with
+// it). That predicate, and it alone, is what scopes the counters.
 func TestOverviewCountersAreTeamScoped(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	openIssue(t, db, f.a, "CORE", "WEB", 1, "la seule dette de A", "open", jadis)
+	openIssue(t, db, f.a, "CORE", "WEB", 1, "A's only debt", "open", longAgo)
 	for n := int64(10); n < 20; n++ {
-		openIssue(t, db, f.b, "CORE", "WEB", n, "dette de la voisine", "open", jadis)
+		openIssue(t, db, f.b, "CORE", "WEB", n, "the neighbour's debt", "open", longAgo)
 	}
 
 	counters, err := st.Projects(ctx, f.a.id)
@@ -160,51 +161,51 @@ func TestOverviewCountersAreTeamScoped(t *testing.T) {
 			want = 1
 		}
 		if c.OwesAnswer != want {
-			t.Errorf("%s.owes_answer = %d, attendu %d — les compteurs débordent de la team",
+			t.Errorf("%s.owes_answer = %d, expected %d — the counters overflow the team",
 				c.Key, c.OwesAnswer, want)
 		}
 	}
 }
 
-// GARANTIE 10 — un repo sans rien en vol reste affiché.
+// GUARANTEE 10 — a repo with nothing in flight stays on screen.
 //
-// C'est la pire panne possible sur cet écran, parce qu'elle est silencieuse : un superviseur ne
-// peut pas chercher ce qu'il ne voit pas. La propriété est structurelle — sous-requêtes scalaires
-// et non join — et ce test la garde.
+// It is the worst possible failure on this screen, because it is silent: a supervisor cannot look
+// for what they cannot see. The property is structural — scalar subqueries and not a join — and
+// this test guards it.
 //
-// MUTATION JOUÉE : remplacer une sous-requête scalaire par `JOIN issues i ON i.project_id = p.id`
-// → DOCS disparaît, ce test rouge.
+// MUTATION PLAYED: replace a scalar subquery with `JOIN issues i ON i.project_id = p.id` → DOCS
+// disappears, this test goes red.
 func TestOverviewKeepsIdleProjects(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	openIssue(t, db, f.a, "CORE", "WEB", 1, "seule activité de la team", "open", jadis)
+	openIssue(t, db, f.a, "CORE", "WEB", 1, "the team's only activity", "open", longAgo)
 
 	counters, err := st.Projects(ctx, f.a.id)
 	if err != nil {
 		t.Fatalf("Projects: %v", err)
 	}
 
-	vus := map[string]overviewstore.ProjectCounters{}
+	seen := map[string]overviewstore.ProjectCounters{}
 	for _, c := range counters {
-		vus[c.Key] = c
+		seen[c.Key] = c
 	}
 
-	docs, ok := vus["DOCS"]
+	docs, ok := seen["DOCS"]
 	if !ok {
-		t.Fatal("DOCS absent de l'écran — un repo sans rien en vol a disparu, et le superviseur " +
-			"ne peut pas chercher ce qu'il ne voit pas")
+		t.Fatal("DOCS missing from the screen — a repo with nothing in flight disappeared, and " +
+			"the supervisor cannot look for what they cannot see")
 	}
 	if docs.OwesAnswer+docs.AwaitingAnswer+docs.AnsweredUnread+docs.TasksRunning+docs.TasksBlocked != 0 {
-		t.Errorf("DOCS n'est pas à zéro: %+v", docs)
+		t.Errorf("DOCS is not at zero: %+v", docs)
 	}
 }
 
-// GARANTIE 11 — la liste des projets n'est JAMAIS tronquée.
+// GUARANTEE 11 — the list of projects is NEVER truncated.
 //
-// Quarante repos et cent dettes : les dettes se bornent, les projets non.
+// Forty repos and a hundred debts: the debts get bounded, the projects do not.
 //
-// MUTATION : appliquer la borne à OverviewProjects → moins de 40 lignes, ce test rouge.
+// MUTATION: apply the bound to OverviewProjects → fewer than 40 rows, this test goes red.
 func TestOverviewNeverTruncatesProjects(t *testing.T) {
 	st, db := newStore(t)
 
@@ -217,7 +218,7 @@ func TestOverviewNeverTruncatesProjects(t *testing.T) {
 	for n := int64(1); n <= 100; n++ {
 		dest := keys[n%40]
 		author := keys[(n+1)%40]
-		openIssue(t, db, tm, dest, author, n, "dette", "open", jadis)
+		openIssue(t, db, tm, dest, author, n, "debt", "open", longAgo)
 	}
 
 	counters, err := st.Projects(ctx, tm.id)
@@ -226,67 +227,68 @@ func TestOverviewNeverTruncatesProjects(t *testing.T) {
 	}
 
 	if len(counters) != 40 {
-		t.Errorf("projects[] = %d lignes, attendu 40 — la liste des repos est tronquée", len(counters))
+		t.Errorf("projects[] = %d rows, expected 40 — the list of repos is truncated", len(counters))
 	}
 }
 
-// GARANTIE 12 — le fil d'une autre team est introuvable.
+// GUARANTEE 12 — another team's thread cannot be found.
 //
-// Le refus est un ErrNotFound, indiscernable d'une référence qui n'existe pas.
+// The refusal is an ErrNotFound, indistinguishable from a reference that does not exist.
 //
-// MUTATION JOUÉE : retirer `i.team_id = @team_id` d'OverviewIssueByRef → le fil de B s'ouvre
-// depuis A, ce test rouge.
+// MUTATION PLAYED: remove `i.team_id = @team_id` from OverviewIssueByRef → B's thread opens from
+// A, this test goes red.
 func TestOverviewThreadCannotCrossTeams(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	openIssue(t, db, f.b, "CORE", "WEB", 7, "le fil de la voisine", "open", jadis)
+	openIssue(t, db, f.b, "CORE", "WEB", 7, "the neighbour's thread", "open", longAgo)
 
 	_, err := st.IssueByRef(ctx, f.a.id, "CORE", 7)
 	if !errors.Is(err, overviewstore.ErrNotFound) {
-		t.Fatalf("err = %v, attendu ErrNotFound — le fil d'une autre team est lisible", err)
+		t.Fatalf("err = %v, expected ErrNotFound — another team's thread is readable", err)
 	}
 }
 
-// GARANTIE 13 — contrôle positif de la 12 : l'overview lit un fil dont il n'est NI l'auteur NI le
-// destinataire.
+// GUARANTEE 13 — positive control of 12: the overview reads a thread it is NEITHER the author NOR
+// the recipient of.
 //
-// C'est la capacité nouvelle de cette surface, et sans ce test, la garantie 12 passerait sur une
-// query qui ne rend jamais rien. C'est aussi exactement ce qui rend ces routes interdites à un
-// token de projet.
+// It is the new capability of this surface, and without this test guarantee 12 would pass on a
+// query that never yields anything. It is also exactly what makes these routes forbidden to a
+// project token.
 //
-// MUTATION : ajouter `AND (i.project_id = @caller OR i.author_project_id = @caller)` à
-// OverviewIssueByRef, comme dans GetIssueByRef → ce test rouge.
+// MUTATION: add `AND (i.project_id = @caller OR i.author_project_id = @caller)` to
+// OverviewIssueByRef, as in GetIssueByRef → this test goes red.
 func TestOverviewThreadIsVisibleToNeitherParticipant(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	openIssue(t, db, f.a, "CORE", "WEB", 41, "Le contrat /v1/sessions a-t-il changé ?", "open", jadis)
+	openIssue(t, db, f.a, "CORE", "WEB", 41, "Has the /v1/sessions contract changed?", "open", longAgo)
 
 	issue, err := st.IssueByRef(ctx, f.a.id, "CORE", 41)
 	if err != nil {
 		t.Fatalf("IssueByRef: %v", err)
 	}
 	if issue.ProjectKey != "CORE" || issue.AuthorProjectKey != "WEB" {
-		t.Errorf("fil lu = %s←%s, attendu CORE←WEB", issue.ProjectKey, issue.AuthorProjectKey)
+		t.Errorf("thread read = %s←%s, expected CORE←WEB", issue.ProjectKey, issue.AuthorProjectKey)
 	}
 }
 
-// GARANTIE 14 — LA CLAUSE LOAD-BEARING. Les messages ne fuient pas par leur auteur.
+// GUARANTEE 14 — THE LOAD-BEARING CLAUSE. Messages do not leak through their author.
 //
-// issue_messages n'a pas de team_id et sa FK vers projects est SIMPLE : rien au niveau du schéma
-// n'empêche `author_project_id` de pointer un projet d'une autre team. C'est la SEULE occurrence
-// du dépôt où retirer une clause de join est observable, donc la seule qui se teste vraiment.
+// issue_messages has no team_id and its FK towards projects is SIMPLE: nothing at the schema
+// level stops `author_project_id` from pointing at a project of another team. It is the ONLY
+// occurrence in the repo where removing a join clause is observable, hence the only one that can
+// really be tested.
 //
-// MUTATION JOUÉE : retirer `AND ap.team_id = i.team_id` d'OverviewIssueMessages → le message
-// étranger remonte, ce test rouge.
+// MUTATION PLAYED: remove `AND ap.team_id = i.team_id` from OverviewIssueMessages → the foreign
+// message comes up, this test goes red.
 func TestOverviewMessagesRejectForeignAuthor(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	issueID := openIssue(t, db, f.a, "CORE", "WEB", 1, "fil de A", "open", jadis)
-	addMessage(t, db, issueID, f.a.projects["WEB"], "message légitime", jadis)
-	addMessage(t, db, issueID, f.b.projects["WEB"], "message d'un projet d'une autre team", jadis.Add(time.Minute))
+	issueID := openIssue(t, db, f.a, "CORE", "WEB", 1, "A's thread", "open", longAgo)
+	addMessage(t, db, issueID, f.a.projects["WEB"], "legitimate message", longAgo)
+	addMessage(t, db, issueID, f.b.projects["WEB"], "message from a project of another team", longAgo.Add(time.Minute))
 
 	messages, total, err := st.IssueMessages(ctx, f.a.id, issueID, 200)
 	if err != nil {
@@ -294,50 +296,50 @@ func TestOverviewMessagesRejectForeignAuthor(t *testing.T) {
 	}
 
 	if len(messages) != 1 || total != 1 {
-		t.Fatalf("%d message(s) rendu(s), total %d, attendu 1 et 1 — un message dont l'auteur "+
-			"appartient à une autre team a fuité", len(messages), total)
+		t.Fatalf("%d message(s) rendered, total %d, expected 1 and 1 — a message whose author "+
+			"belongs to another team leaked", len(messages), total)
 	}
-	if messages[0].BodyMd != "message légitime" {
-		t.Errorf("message rendu = %q, attendu le légitime", messages[0].BodyMd)
+	if messages[0].BodyMd != "legitimate message" {
+		t.Errorf("message rendered = %q, expected the legitimate one", messages[0].BodyMd)
 	}
 }
 
-// GARANTIE 15 — le backlog d'une autre team est introuvable.
+// GUARANTEE 15 — another team's backlog cannot be found.
 //
-// MUTATION JOUÉE : retirer `t.team_id = @team_id` d'OverviewTaskDebts → les tâches de B
-// remontent, ce test rouge.
+// MUTATION PLAYED: remove `t.team_id = @team_id` from OverviewTaskDebts → B's tasks come up, this
+// test goes red.
 func TestOverviewTaskDebtsCannotCrossTeams(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	addTask(t, db, f.a, "CORE", 1, "bloquée chez A", "blocked", jadis)
-	addTask(t, db, f.b, "CORE", 2, "bloquée chez B", "blocked", jadis)
-	addTask(t, db, f.b, "WEB", 3, "bloquée chez B aussi", "blocked", jadis)
+	addTask(t, db, f.a, "CORE", 1, "blocked at A", "blocked", longAgo)
+	addTask(t, db, f.b, "CORE", 2, "blocked at B", "blocked", longAgo)
+	addTask(t, db, f.b, "WEB", 3, "blocked at B too", "blocked", longAgo)
 
-	debts, total, err := st.TaskDebts(ctx, f.a.id, jadis.Add(time.Hour), 50)
+	debts, total, err := st.TaskDebts(ctx, f.a.id, longAgo.Add(time.Hour), 50)
 	if err != nil {
 		t.Fatalf("TaskDebts: %v", err)
 	}
 
 	assertSet(t, taskRefs(debts), "CORE-1")
 	if total != 1 {
-		t.Errorf("total = %d, attendu 1", total)
+		t.Errorf("total = %d, expected 1", total)
 	}
 }
 
-// GARANTIE 16 — le total annoncé compte ce que la borne cache.
+// GUARANTEE 16 — the announced total counts what the bound hides.
 //
-// C'est le défaut le plus probable du lot : sans lui, une liste tronquée ment, et l'écran est
-// faux d'une manière silencieuse et crédible. Le `count(*) OVER ()` compte AVANT le LIMIT, dans
-// la même query, donc sur le même instantané.
+// It is the most likely flaw of the lot: without it a truncated list lies, and the screen is
+// wrong in a silent, credible way. The `count(*) OVER ()` counts BEFORE the LIMIT, in the same
+// query, hence over the same snapshot.
 //
-// MUTATION JOUÉE : supprimer `count(*) OVER ()` et rendre 0 → total = 0, ce test rouge.
+// MUTATION PLAYED: drop `count(*) OVER ()` and yield 0 → total = 0, this test goes red.
 func TestOverviewTruncatedCountsWhatIsHidden(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
 	for n := int64(1); n <= 60; n++ {
-		openIssue(t, db, f.a, "CORE", "WEB", n, "dette", "open", jadis.Add(time.Duration(n)*time.Second))
+		openIssue(t, db, f.a, "CORE", "WEB", n, "debt", "open", longAgo.Add(time.Duration(n)*time.Second))
 	}
 
 	debts, total, err := st.IssueDebts(ctx, f.a.id, 50)
@@ -346,24 +348,24 @@ func TestOverviewTruncatedCountsWhatIsHidden(t *testing.T) {
 	}
 
 	if len(debts) != 50 {
-		t.Errorf("%d lignes rendues, attendu 50 — la borne ne s'applique plus", len(debts))
+		t.Errorf("%d rows rendered, expected 50 — the bound no longer applies", len(debts))
 	}
 	if total != 60 {
-		t.Errorf("total = %d, attendu 60 — le nombre de dettes cachées est faux, et l'écran "+
-			"ment sans le dire", total)
+		t.Errorf("total = %d, expected 60 — the number of hidden debts is wrong, and the screen "+
+			"lies without saying so", total)
 	}
 }
 
-// La file rend la dette la PLUS VIEILLE d'abord — l'inverse de ListIssues, et c'est délibéré : un
-// agent veut ce qui est frais, un superviseur veut ce qui pourrit.
+// The queue yields the OLDEST debt first — the reverse of ListIssues, and that is deliberate: an
+// agent wants what is fresh, a supervisor wants what is rotting.
 //
-// MUTATION : passer l'ORDER BY d'OverviewIssueDebts en DESC → ce test rouge.
+// MUTATION: switch the ORDER BY of OverviewIssueDebts to DESC → this test goes red.
 func TestOverviewOldestDebtComesFirst(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	openIssue(t, db, f.a, "CORE", "WEB", 1, "récente", "open", jadis.Add(72*time.Hour))
-	openIssue(t, db, f.a, "WEB", "CORE", 2, "la plus vieille", "open", jadis)
+	openIssue(t, db, f.a, "CORE", "WEB", 1, "recent", "open", longAgo.Add(72*time.Hour))
+	openIssue(t, db, f.a, "WEB", "CORE", 2, "the oldest", "open", longAgo)
 
 	debts, _, err := st.IssueDebts(ctx, f.a.id, 50)
 	if err != nil {
@@ -371,24 +373,24 @@ func TestOverviewOldestDebtComesFirst(t *testing.T) {
 	}
 
 	if len(debts) != 2 || debts[0].Number != 2 {
-		t.Fatalf("première ligne = %+v, attendu WEB-2 — la file ne remonte plus ce qui pourrit", debts)
+		t.Fatalf("first row = %+v, expected WEB-2 — the queue no longer brings up what is rotting", debts)
 	}
 }
 
-// Le pouls d'un repo est le dernier appel d'un de SES tokens. Un repo dont aucun token n'a servi
-// n'a pas de ligne du tout — et non une date nulle, qui se lirait comme une date.
+// A repo's pulse is the last call of one of ITS tokens. A repo no token of which has served has
+// no row at all — and not a zero date, which would read like a date.
 //
-// Le trafic de l'admin ne compte pas : un token admin ne porte ni team ni projet depuis la
-// migration 000006, et le JOIN sur project_id l'exclut de toute façon. L'humain n'est pas un
-// agent, et son propre trafic ne doit pas faire paraître un repo vivant.
+// The admin's traffic does not count: an admin token carries neither team nor project since
+// migration 000006, and the JOIN on project_id excludes it anyway. The human is not an agent, and
+// their own traffic must not make a repo look alive.
 func TestOverviewPulseIgnoresAdminAndSilentProjects(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	vu := jadis.Add(3 * time.Hour)
-	addToken(t, db, f.a, "CORE", &vu)
+	seenAt := longAgo.Add(3 * time.Hour)
+	addToken(t, db, f.a, "CORE", &seenAt)
 	addToken(t, db, f.a, "WEB", nil)
-	addToken(t, db, f.a, "", &vu)
+	addToken(t, db, f.a, "", &seenAt)
 
 	pulses, err := st.LastSeen(ctx, f.a.id)
 	if err != nil {
@@ -396,60 +398,60 @@ func TestOverviewPulseIgnoresAdminAndSilentProjects(t *testing.T) {
 	}
 
 	if len(pulses) != 1 {
-		t.Fatalf("%d pouls rendus, attendu 1 (CORE seul) : %+v", len(pulses), pulses)
+		t.Fatalf("%d pulses rendered, expected 1 (CORE alone): %+v", len(pulses), pulses)
 	}
-	if pulses[0].Key != "CORE" || !pulses[0].LastSeen.Equal(vu) {
-		t.Errorf("pouls = %+v, attendu CORE à %s", pulses[0], vu)
+	if pulses[0].Key != "CORE" || !pulses[0].LastSeen.Equal(seenAt) {
+		t.Errorf("pulse = %+v, expected CORE at %s", pulses[0], seenAt)
 	}
 }
 
-// `last_move` n'est PAS `updated_at` : c'est le plus récent des deux entre la tâche et sa
-// dernière note.
+// `last_move` is NOT `updated_at`: it is the most recent of the two between the task and its last
+// note.
 //
-// CreateTaskNote n'écrit pas `tasks.updated_at` (sql/queries/tasks.sql). Sans le `max()` sur les
-// notes, un agent qui documente activement sa progression serait signalé « session morte » — le
-// faux positif le plus coûteux de cet écran, parce qu'il pousse un humain à interrompre le seul
-// agent qui travaille correctement.
+// CreateTaskNote does not write `tasks.updated_at` (sql/queries/tasks.sql). Without the `max()`
+// over the notes, an agent actively documenting its progress would be reported as a "dead
+// session" — the costliest false positive of this screen, because it pushes a human to interrupt
+// the one agent that is working correctly.
 //
-// MUTATION : remplacer `greatest(t.updated_at, coalesce(max(note), t.updated_at))` par
-// `t.updated_at` → la tâche documentée réapparaît dans les dettes, ce test rouge.
+// MUTATION: replace `greatest(t.updated_at, coalesce(max(note), t.updated_at))` with
+// `t.updated_at` → the documented task reappears in the debts, this test goes red.
 func TestOverviewLastMoveCountsNotes(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	addTask(t, db, f.a, "CORE", 1, "abandonnée pour de bon", "in_progress", jadis)
-	documentée := addTask(t, db, f.a, "CORE", 2, "avance, et le dit", "in_progress", jadis)
-	addNote(t, db, documentée, "j'ai isolé la cause, je corrige", jadis.Add(30*time.Hour))
+	addTask(t, db, f.a, "CORE", 1, "abandoned for good", "in_progress", longAgo)
+	documented := addTask(t, db, f.a, "CORE", 2, "moving on, and saying so", "in_progress", longAgo)
+	addNote(t, db, documented, "I isolated the cause, I am fixing it", longAgo.Add(30*time.Hour))
 
-	debts, _, err := st.TaskDebts(ctx, f.a.id, jadis.Add(24*time.Hour), 50)
+	debts, _, err := st.TaskDebts(ctx, f.a.id, longAgo.Add(24*time.Hour), 50)
 	if err != nil {
 		t.Fatalf("TaskDebts: %v", err)
 	}
 
 	assertSet(t, taskRefs(debts), "CORE-1")
 
-	notes, total, err := st.TaskNotes(ctx, f.a.id, documentée, 50)
+	notes, total, err := st.TaskNotes(ctx, f.a.id, documented, 50)
 	if err != nil {
 		t.Fatalf("TaskNotes: %v", err)
 	}
 	if len(notes) != 1 || total != 1 {
-		t.Fatalf("%d note(s), total %d, attendu 1 et 1", len(notes), total)
+		t.Fatalf("%d note(s), total %d, expected 1 and 1", len(notes), total)
 	}
 }
 
-// La lecture d'un scope vide ne rend rien. C'est la contre-épreuve de la défense en profondeur du
-// service : même si un uuid.Nil atteignait le store, il ne matcherait aucune ligne.
+// Reading an empty scope yields nothing. It is the counter-proof of the service's defence in
+// depth: even if a uuid.Nil reached the store, it would match no row.
 func TestOverviewNilTeamReadsNothing(t *testing.T) {
 	st, db := newStore(t)
 	f := newFixture(t, db)
 
-	openIssue(t, db, f.a, "CORE", "WEB", 1, "dette de A", "open", jadis)
+	openIssue(t, db, f.a, "CORE", "WEB", 1, "A's debt", "open", longAgo)
 
 	debts, total, err := st.IssueDebts(ctx, uuid.Nil, 50)
 	if err != nil {
 		t.Fatalf("IssueDebts: %v", err)
 	}
 	if len(debts) != 0 || total != 0 {
-		t.Errorf("%d ligne(s) pour un scope nul, attendu 0", len(debts))
+		t.Errorf("%d row(s) for a nil scope, expected 0", len(debts))
 	}
 }

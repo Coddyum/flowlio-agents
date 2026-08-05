@@ -4,15 +4,15 @@ package store
 //
 // | Élément          | Résumé                                                         | Ligne |
 // |------------------|----------------------------------------------------------------|-------|
-// | store.IssueDebts | Rend les issues en vol de la team, la plus vieille d'abord      | 28    |
-// | store.TaskDebts  | Rend les tâches bloquées ou dormantes, la plus vieille d'abord  | 59    |
+// | store.IssueDebts | Yields the team's issues in flight, the oldest one first        | 28    |
+// | store.TaskDebts  | Yields blocked or dormant tasks, the oldest one first           | 59    |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// LES DEUX MÉTHODES RENDENT LE TOTAL AVANT LA BORNE. Le total vient de `count(*) OVER ()`, donc
-// d'un comptage fait par la même query, sur le même instantané : un second aller-retour pourrait
-// compter un état différent de celui qu'il annonce.
+// BOTH METHODS YIELD THE TOTAL BEFORE THE BOUND. The total comes from `count(*) OVER ()`, so from
+// a count done by the same query, over the same snapshot: a second round trip could count a state
+// different from the one it announces.
 
 import (
 	"context"
@@ -23,8 +23,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// IssueDebts rend les issues en vol de la team, la PLUS VIEILLE d'abord, et le total avant la
-// borne. Zéro ligne rend un total de zéro : le total n'existe que porté par une ligne.
+// IssueDebts yields the team's issues in flight, the OLDEST one first, and the total before the
+// bound. Zero rows yields a total of zero: the total only exists as carried by a row.
 func (s *store) IssueDebts(ctx context.Context, teamID uuid.UUID, limit int32) ([]IssueDebt, int64, error) {
 	rows, err := s.q.OverviewIssueDebts(ctx, database.OverviewIssueDebtsParams{
 		TeamID:  teamID,
@@ -50,12 +50,12 @@ func (s *store) IssueDebts(ctx context.Context, teamID uuid.UUID, limit int32) (
 	return out, total, nil
 }
 
-// TaskDebts rend les tâches sur lesquelles un humain peut agir : toutes les bloquées, et les
-// tâches en cours dont le dernier mouvement précède staleBefore.
+// TaskDebts yields the tasks a human can act on: every blocked one, and the tasks in progress
+// whose last move precedes staleBefore.
 //
-// staleBefore est calculé par le service, jamais ici : l'horloge appartient au service, le scope
-// à la query. C'est ce qui rend le test d'intégration déterministe et le seuil réglable sans
-// migration.
+// staleBefore is computed by the service, never here: the clock belongs to the service, the scope
+// to the query. That is what makes the integration test deterministic and the threshold tunable
+// without a migration.
 func (s *store) TaskDebts(ctx context.Context, teamID uuid.UUID, staleBefore time.Time, limit int32) ([]TaskDebt, int64, error) {
 	rows, err := s.q.OverviewTaskDebts(ctx, database.OverviewTaskDebtsParams{
 		TeamID:      teamID,

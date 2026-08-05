@@ -4,11 +4,11 @@ package inbox
 //
 // | Élément             | Résumé                                                   | Ligne |
 // |---------------------|----------------------------------------------------------|-------|
-// | NewModule           | Câble store → service → handler et renvoie le module       | 33    |
-// | mod                 | Module inbox, porteur du handler et du middleware d'auth   | 44    |
-// | mod.Key             | Renvoie la clé du module                                   | 50    |
-// | mod.Routes          | Déclare la route unique, middleware lié une seule fois     | 58    |
-// | requireProjectScope | Refuse tout token qui n'est pas scopé à un projet          | 67    |
+// | NewModule           | Wires store → service → handler and returns the module     | 33    |
+// | mod                 | Inbox module, carrying the handler and the auth middleware | 44    |
+// | mod.Key             | Returns the module key                                     | 50    |
+// | mod.Routes          | Declares the single route, middleware bound once           | 58    |
+// | requireProjectScope | Rejects any token that is not scoped to a project          | 67    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -23,13 +23,13 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/inbox/store"
 )
 
-// Key identifie le module dans le FeatureRegistry et sert de préfixe à ses routes.
+// Key identifies the module in the FeatureRegistry and prefixes its routes.
 const Key = "inbox"
 
-// NewModule câble la feature : store → service → handler.
+// NewModule wires the feature: store → service → handler.
 //
-// Le store ne reçoit PAS RawDB : l'inbox lit un état, elle n'ouvre jamais de transaction. Sa
-// justesse ne dépend d'aucune atomicité — voir docs/DESIGN-M3.md.
+// The store does NOT receive RawDB: the inbox reads a state, it never opens a transaction. Its
+// correctness rests on no atomicity at all — see docs/DESIGN-M3.md.
 func NewModule(cfg module.ModuleConfig) module.Module {
 	st := store.New(cfg.DB)
 	svc := service.New(st)
@@ -40,21 +40,21 @@ func NewModule(cfg module.ModuleConfig) module.Module {
 	}
 }
 
-// mod porte le handler et le service d'auth partagé.
+// mod carries the handler and the shared auth service.
 type mod struct {
 	h    *handler.Handler
 	auth auth.Service
 }
 
-// Key renvoie la clé du module.
+// Key returns the module key.
 func (m *mod) Key() string {
 	return Key
 }
 
-// Routes déclare la route unique de la feature. Le middleware est lié ICI, une seule fois.
+// Routes declares the feature's single route. The middleware is bound HERE, once.
 //
-// Une seule route, sans aucun paramètre : « qu'est-ce qui m'attend ». Le scope vient
-// entièrement du token, y compris le curseur de lecture, qui est par token et non par projet.
+// One route, with no parameter at all: "what is waiting for me". The scope comes entirely from
+// the token, including the read cursor, which is per token and not per project.
 func (m *mod) Routes() http.Handler {
 	r := http.NewServeMux()
 
@@ -63,7 +63,7 @@ func (m *mod) Routes() http.Handler {
 	return r
 }
 
-// requireProjectScope refuse tout principal qui n'est pas scopé à un projet.
+// requireProjectScope rejects any principal that is not scoped to a project.
 func requireProjectScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.FromContext(r.Context())

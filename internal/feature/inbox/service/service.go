@@ -4,35 +4,34 @@ package service
 //
 // | Élément    | Résumé                                                             | Ligne |
 // |------------|--------------------------------------------------------------------|-------|
-// | Service    | Contrat consommé par le handler inbox                                | 54    |
-// | service    | Implémentation, dépendante de l'interface store                      | 63    |
-// | New        | Crée le service inbox                                                | 68    |
-// | CheckInput | Scope de l'appel, entièrement issu du token                          | 74    |
-// | IssueLine  | Une issue actionnable telle qu'exposée                               | 82    |
-// | TaskLine   | Une tâche en cours telle qu'exposée                                  | 94    |
-// | UnblockedLine | Une tâche que plus aucune dépendance interne ne bloque            | 105   |
-// | More       | Ce qui n'a pas tenu dans les seaux                                   | 115   |
-// | Inbox      | L'état actionnable du projet, en quatre seaux                        | 131   |
+// | Service    | Contract consumed by the inbox handler                               | 53    |
+// | service    | Implementation, depending on the store interface                     | 62    |
+// | New        | Creates the inbox service                                            | 67    |
+// | CheckInput | Scope of the call, entirely taken from the token                     | 73    |
+// | IssueLine  | One actionable issue as it is exposed                                | 81    |
+// | TaskLine   | One task in progress as it is exposed                                | 92    |
+// | UnblockedLine | One task no internal dependency blocks any more                   | 103   |
+// | More       | What did not fit in the buckets                                      | 113   |
+// | Inbox      | The actionable state of the project, in four buckets                 | 129   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// CONTRAT UNIQUEMENT — l'implémentation est dans check.go.
+// CONTRACT ONLY — the implementation lives in check.go.
 //
-// POURQUOI UN ÉTAT ET NON UN FLUX — décision structurante de docs/DESIGN-M3.md.
+// WHY A STATE AND NOT A STREAM — structuring decision of docs/DESIGN-M3.md.
 //
-// check_inbox ne renvoie PAS les événements survenus depuis le dernier appel. Il renvoie ce
-// qu'il y a à faire MAINTENANT, recalculé à chaque appel depuis issues.state et tasks.status.
+// check_inbox does NOT return the events that happened since the last call. It returns what there
+// is to do NOW, recomputed on every call from issues.state and tasks.status.
 //
-// Conséquence : aucune notification ne peut être perdue. Un flux devrait garantir une livraison
-// exactement-une-fois — un identifiant de séquence est attribué à l'insertion et non au commit,
-// donc une transaction lente peut committer un numéro déjà dépassé par un lecteur, et l'issue
-// correspondante deviendrait invisible pour toujours. Ici ce défaut coûte au pire un drapeau
-// « nouveau » manquant.
+// Consequence: no notification can be lost. A stream would have to guarantee exactly-once
+// delivery — a sequence identifier is assigned on insert and not on commit, so a slow transaction
+// can commit a number a reader has already passed, and the matching issue would become invisible
+// forever. Here that flaw costs at worst a missing "new" flag.
 //
-// Deux appels successifs renvoient donc la même chose s'il ne s'est rien passé. C'est une
-// propriété, pas un défaut : un agent dont le contexte vient d'être compacté doit retrouver son
-// travail en cours, pas conclure « rien à faire » parce qu'un autre appel l'avait déjà lu.
+// Two successive calls therefore return the same thing if nothing happened. That is a property,
+// not a flaw: an agent whose context was just compacted must find its work in progress again, not
+// conclude "nothing to do" because another call had already read it.
 
 import (
 	"context"
@@ -43,42 +42,42 @@ import (
 	"github.com/google/uuid"
 )
 
-// Erreurs domaine, traduites en codes HTTP par le handler.
+// Domain errors, translated into HTTP codes by the handler.
 var (
 	ErrInvalidInput = errors.New("inbox: invalid input")
 	ErrNotFound     = errors.New("inbox: not found")
 )
 
-// Service répond à la seule question qu'un agent pose en début de session : qu'est-ce qui
-// m'attend ?
+// Service answers the only question an agent asks when a session starts: what is waiting for
+// me?
 type Service interface {
-	// Check renvoie l'état actionnable du projet et avance le curseur du token.
+	// Check returns the actionable state of the project and moves the token cursor forward.
 	//
-	// L'avancement du curseur ne conditionne aucune ligne : il ne fait que retirer le drapeau
-	// « nouveau » au prochain appel.
+	// Moving the cursor forward gates no line: it only removes the "new" flag on the next
+	// call.
 	Check(ctx context.Context, in CheckInput) (Inbox, error)
 }
 
-// service dépend de l'interface store, jamais de sqlc.
+// service depends on the store interface, never on sqlc.
 type service struct {
 	store store.Store
 }
 
-// New crée le service inbox.
+// New creates the inbox service.
 func New(st store.Store) Service {
 	return &service{store: st}
 }
 
-// CheckInput porte le scope de l'appel. Tous ses champs viennent du token : cet appel n'a
-// littéralement aucun paramètre d'entrée côté agent.
+// CheckInput carries the scope of the call. Every field comes from the token: this call literally
+// has no input parameter on the agent side.
 type CheckInput struct {
 	TokenID   uuid.UUID `json:"-"`
 	TeamID    uuid.UUID `json:"-"`
 	ProjectID uuid.UUID `json:"-"`
 }
 
-// IssueLine est une issue actionnable. Ref porte toujours la clé du projet DESTINATAIRE : c'est
-// celle qu'il faudra réutiliser pour répondre.
+// IssueLine is one actionable issue. Ref always carries the key of the RECIPIENT project: that is
+// the one to reuse when answering.
 type IssueLine struct {
 	Ref       string    `json:"ref"`
 	Title     string    `json:"title"`
@@ -89,19 +88,18 @@ type IssueLine struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// TaskLine est une tâche en cours. Pas de drapeau « nouveau » : c'est le travail de l'agent
-// lui-même.
+// TaskLine is one task in progress. No "new" flag: this is the agent's own work.
 type TaskLine struct {
 	Ref      string `json:"ref"`
 	Title    string `json:"title"`
 	Priority string `json:"priority"`
 }
 
-// UnblockedLine est une tâche dont plus aucune dépendance interne ne bloque l'avancement.
+// UnblockedLine is one task whose progress no internal dependency blocks any more.
 //
-// Status distingue les deux issues du déblocage, et c'est l'information utile du seau : `todo` dit
-// « reprends-la », `blocked` dit « ton obstacle est levé, mais tu l'avais bloquée toi-même pour
-// autre chose et personne n'a décidé à ta place ».
+// Status tells the two outcomes of the unblocking apart, and it is the useful piece of the
+// bucket: `todo` says "pick it up again", `blocked` says "your obstacle is lifted, but you had
+// blocked it yourself for something else and nobody decided in your place".
 type UnblockedLine struct {
 	Ref      string `json:"ref"`
 	Title    string `json:"title"`
@@ -110,8 +108,8 @@ type UnblockedLine struct {
 	New      bool   `json:"new"`
 }
 
-// More compte ce qui n'a pas tenu dans les seaux, pour qu'un agent sache qu'il ne voit pas tout
-// et aille chercher le reste avec list_issues ou list_tasks.
+// More counts what did not fit in the buckets, so an agent knows it is not seeing everything and
+// goes for the rest with list_issues or list_tasks.
 type More struct {
 	NeedsAnswer int `json:"needs_answer,omitempty"`
 	Answered    int `json:"answered,omitempty"`
@@ -119,15 +117,15 @@ type More struct {
 	Unblocked   int `json:"unblocked,omitempty"`
 }
 
-// Inbox est l'état actionnable du projet, en quatre seaux :
-//   - NeedsAnswer : quelqu'un est bloqué sur moi ;
-//   - Answered    : j'étais bloqué sur un AUTRE repo, je ne le suis plus ;
-//   - InProgress  : mon propre travail interrompu ;
-//   - Unblocked   : j'étais bloqué par une autre tâche de CE repo, je ne le suis plus.
+// Inbox is the actionable state of the project, in four buckets:
+//   - NeedsAnswer: somebody is blocked on me;
+//   - Answered   : I was blocked on ANOTHER repo, I no longer am;
+//   - InProgress : my own interrupted work;
+//   - Unblocked  : I was blocked by another task of THIS repo, I no longer am.
 //
-// Les deux formes de déblocage sont des seaux distincts et doivent le rester : l'une se règle en
-// répondant à un pair (answer_issue), l'autre en reprenant son propre travail. Les confondre
-// obligerait l'agent à relire chaque ligne pour savoir laquelle des deux il regarde.
+// The two forms of unblocking are distinct buckets and must stay so: one is settled by answering
+// a peer (answer_issue), the other by picking your own work up again. Merging them would force
+// the agent to re-read every line to know which of the two it is looking at.
 type Inbox struct {
 	Project     string          `json:"project"`
 	NeedsAnswer []IssueLine     `json:"needs_answer"`

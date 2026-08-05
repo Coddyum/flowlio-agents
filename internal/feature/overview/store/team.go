@@ -7,12 +7,11 @@ import (
 	"fmt"
 )
 
-// TeamBySlug résout le scope de tout le module.
+// TeamBySlug resolves the scope of the whole module.
 //
-// C'est le seul point d'entrée d'un identifiant fourni par le client, et il n'accepte qu'un slug :
-// aucun UUID ne traverse jamais cette surface, ni en entrée ni en sortie. Un slug inconnu rend
-// ErrNotFound, que le handler traduit en 404 — le même 404 qu'une team qui existe mais n'est pas
-// la sienne.
+// It is the only entry point for a client-supplied identifier, and it accepts nothing but a slug:
+// no UUID ever crosses this surface, neither in nor out. An unknown slug yields ErrNotFound, which
+// the handler translates into a 404 — the same 404 as a team that exists but is not the caller's.
 func (s *store) TeamBySlug(ctx context.Context, slug string) (Team, error) {
 	row, err := s.q.OverviewTeamBySlug(ctx, slug)
 	if err != nil {

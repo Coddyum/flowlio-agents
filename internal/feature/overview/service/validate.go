@@ -4,21 +4,20 @@ package service
 //
 // | Élément      | Résumé                                                          | Ligne |
 // |--------------|-----------------------------------------------------------------|-------|
-// | requireTeam  | Refuse un scope vide avant tout accès au store                    | 56    |
-// | requireRef   | Refuse une référence malformée avant tout accès au store          | 68    |
-// | isProjectKey | Dit si une chaîne a la forme d'une clé de projet                  | 82    |
+// | requireTeam  | Rejects an empty scope before any access to the store             | 53    |
+// | requireRef   | Rejects a malformed reference before any access to the store      | 65    |
+// | isProjectKey | Says whether a string has the shape of a project key              | 79    |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// LES BORNES SONT DES CONSTANTES DE SERVICE, JAMAIS DES PARAMÈTRES. Un `?limit=` rendrait la
-// charge de la requête dépendante de l'appelant sur une surface qui lit une team entière ; et
-// `truncated` deviendrait un nombre que le client s'est infligé lui-même, donc une information
-// sans valeur.
+// THE BOUNDS ARE SERVICE CONSTANTS, NEVER PARAMETERS. A `?limit=` would make the cost of the
+// request depend on the caller on a surface that reads a whole team; and `truncated` would become
+// a number the client inflicted on itself, hence a piece of information with no value.
 //
-// `projects[]` n'est jamais borné, quelle que soit la constante : un repo qui disparaît de
-// l'écran du superviseur est le seul défaut irrécupérable de cette surface — il ne peut pas
-// chercher ce qu'il ne voit pas.
+// `projects[]` is never bounded, whatever the constant: a repo disappearing from the supervisor's
+// screen is the one unrecoverable flaw of this surface — they cannot look for what they cannot
+// see.
 
 import (
 	"errors"
@@ -28,57 +27,55 @@ import (
 	"github.com/google/uuid"
 )
 
-// maxDebts borne la file de dettes. Cinquante lignes tiennent dans un écran de terminal déroulé
-// une fois ; au-delà, ce n'est plus une file d'attente, c'est un rapport.
+// maxDebts bounds the debt queue. Fifty lines fit in a terminal screen scrolled once; past that
+// it is no longer a queue, it is a report.
 const maxDebts = 50
 
-// maxMessages borne un fil d'issue. Deux cents messages sur une seule question n'est pas un cas
-// nominal : c'est le signe que la conversation aurait dû devenir une tâche.
+// maxMessages bounds an issue thread. Two hundred messages on a single question is not a nominal
+// case: it is the sign the conversation should have become a task.
 const maxMessages = 200
 
-// maxNotes borne les notes d'une tâche. Cinquante notes, c'est déjà plusieurs jours de travail
-// documenté.
+// maxNotes bounds a task's notes. Fifty notes is already several days of documented work.
 const maxNotes = 50
 
-// staleAfter est l'âge au-delà duquel une tâche `in_progress` est réputée dormante.
+// staleAfter is the age past which an `in_progress` task is deemed dormant.
 //
-// Vingt-quatre heures et pas moins : un agent peut être relancé le lendemain matin sans que la
-// session soit morte. Le seuil vit ICI et non dans la query — l'horloge appartient au service, le
-// scope à la query, et le test d'intégration devient déterministe.
+// Twenty-four hours and not less: an agent can be restarted the next morning without the session
+// being dead. The threshold lives HERE and not in the query — the clock belongs to the service,
+// the scope to the query, and the integration test becomes deterministic.
 const staleAfter = 24 * time.Hour
 
-// requireTeam refuse un scope vide AVANT tout accès au store.
+// requireTeam rejects an empty scope BEFORE any access to the store.
 //
-// Défense en profondeur : le handler résout déjà la team, et un uuid.Nil ne matcherait aucune
-// ligne. Mais un scope qui vaut « zéro » ne doit pas atteindre une couche dont toutes les queries
-// tiennent leur sûreté de ce paramètre — le jour où une query change, ce garde est la seule chose
-// qui reste.
+// Defence in depth: the handler already resolves the team, and a uuid.Nil would match no row. But
+// a scope worth "zero" must not reach a layer every query of which draws its safety from that
+// parameter — the day a query changes, this guard is the only thing left.
 func requireTeam(teamID uuid.UUID) error {
 	if teamID == uuid.Nil {
-		return errors.Join(ErrInvalidInput, errors.New("team manquante"))
+		return errors.Join(ErrInvalidInput, errors.New("missing team"))
 	}
 	return nil
 }
 
-// requireRef refuse une référence malformée : clé hors forme, ou numéro non strictement positif.
-// Les numéros commencent à 1 dans tout le produit ; 0 et les négatifs sont des URL bricolées.
+// requireRef rejects a malformed reference: out-of-shape key, or a number that is not strictly
+// positive. Numbers start at 1 across the whole product; 0 and negatives are hand-made URLs.
 //
-// Le refus est un ErrInvalidInput et non un ErrNotFound, et ce n'est pas un oracle : la forme
-// d'une clé ne dit rien de ce qui existe dans la team.
+// The refusal is an ErrInvalidInput and not an ErrNotFound, and that is no oracle: the shape of a
+// key says nothing about what exists in the team.
 func requireRef(projectKey string, number int64) error {
 	if !isProjectKey(projectKey) {
-		return errors.Join(ErrInvalidInput, fmt.Errorf("clé de projet invalide: %q", projectKey))
+		return errors.Join(ErrInvalidInput, fmt.Errorf("invalid project key: %q", projectKey))
 	}
 	if number <= 0 {
-		return errors.Join(ErrInvalidInput, fmt.Errorf("numéro invalide: %d", number))
+		return errors.Join(ErrInvalidInput, fmt.Errorf("invalid number: %d", number))
 	}
 	return nil
 }
 
-// isProjectKey dit si une chaîne a la forme d'une clé de projet : 2 à 8 caractères, majuscules
-// ASCII et chiffres — exactement ce que le workspace accepte à la création. Écrit à la main
-// plutôt qu'en expression régulière : un regexp compilé demanderait un var de paquet, et cette
-// boucle est plus courte que la ligne qui l'aurait déclaré.
+// isProjectKey says whether a string has the shape of a project key: 2 to 8 characters, ASCII
+// uppercase and digits — exactly what the workspace accepts at creation. Written by hand rather
+// than as a regular expression: a compiled regexp would require a package-level var, and this
+// loop is shorter than the line that would have declared it.
 func isProjectKey(s string) bool {
 	if len(s) < 2 || len(s) > 8 {
 		return false

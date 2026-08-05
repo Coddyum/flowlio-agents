@@ -4,34 +4,33 @@ package store
 //
 // | Élément         | Résumé                                                          | Ligne |
 // |-----------------|-----------------------------------------------------------------|-------|
-// | Team            | Identité d'une team, telle que le slug la résout                  | 55    |
-// | ProjectCounters | Les cinq compteurs d'un repo                                      | 64    |
-// | ProjectPulse    | Dernier appel authentifié d'un token du repo                      | 76    |
-// | IssueDebt       | Une issue en vol, sans corps ni extrait                           | 87    |
-// | TaskDebt        | Une tâche sur laquelle un humain peut agir                        | 102   |
-// | Issue           | Le fil d'une issue, vu par un tiers                               | 116   |
-// | Message         | Un message du fil, désigné par la clé de son auteur               | 128   |
-// | Task            | Une tâche désignée par sa référence                               | 136   |
-// | Note            | Une note de progression                                           | 150   |
-// | Store           | Contrat de lecture team-scopée, sans aucune écriture              | 161   |
-// | store           | Implémentation adossée aux queries générées par sqlc              | 177   |
-// | New             | Crée le store overview                                            | 182   |
+// | Team            | Identity of a team, as the slug resolves it                       | 54    |
+// | ProjectCounters | The five counters of a repo                                       | 63    |
+// | ProjectPulse    | Last authenticated call of a token of the repo                    | 75    |
+// | IssueDebt       | One issue in flight, with no body and no excerpt                  | 86    |
+// | TaskDebt        | One task a human can act on                                       | 101   |
+// | Issue           | The thread of an issue, seen by a third party                     | 115   |
+// | Message         | One message of the thread, designated by its author's key         | 127   |
+// | Task            | One task designated by its reference                              | 135   |
+// | Note            | One progress note                                                 | 149   |
+// | Store           | Team-scoped read contract, with no write at all                   | 160   |
+// | store           | Implementation backed by the sqlc-generated queries               | 176   |
+// | New             | Creates the overview store                                        | 181   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// CONTRAT UNIQUEMENT — l'implémentation est dans team.go, projects.go, debts.go, thread.go et
+// CONTRACT ONLY — the implementation lives in team.go, projects.go, debts.go, thread.go and
 // task.go.
 //
-// Pas de Transactor, et il n'y en aura pas : cette surface est en LECTURE SEULE. Aucune de ses
-// méthodes n'écrit une ligne, aucune ne peut donc avoir besoin d'atomicité. La règle est gardée
-// par scripts/check-overview-scope.sh, qui refuse tout INSERT/UPDATE/DELETE dans
-// sql/queries/overview.sql.
+// No Transactor, and there will not be one: this surface is READ-ONLY. None of its methods writes
+// a row, none can therefore need atomicity. The rule is guarded by scripts/check-overview-scope.sh,
+// which rejects any INSERT/UPDATE/DELETE in sql/queries/overview.sql.
 //
-// L'INVARIANT DE SIGNATURE EST LE VRAI GARDE-FOU. Le slug de team ne descend jamais sous le
-// handler : toutes les méthodes prennent un `teamID uuid.UUID` non-nullable en premier paramètre,
-// à la seule exception de TeamBySlug, qui est celle qui le PRODUIT. Un appelant ne peut donc pas
-// oublier un scope — il ne peut même pas l'exprimer.
+// THE SIGNATURE INVARIANT IS THE REAL GUARDRAIL. The team slug never goes below the handler:
+// every method takes a non-nullable `teamID uuid.UUID` as its first parameter, with the single
+// exception of TeamBySlug, which is the one that PRODUCES it. A caller therefore cannot forget a
+// scope — it cannot even express one.
 
 import (
 	"context"
@@ -42,25 +41,25 @@ import (
 	"github.com/google/uuid"
 )
 
-// ErrNotFound signale une ligne introuvable dans le scope demandé — team inconnue, ou référence
-// qui n'appartient pas à la team résolue.
+// ErrNotFound signals a row that cannot be found in the requested scope — unknown team, or a
+// reference that does not belong to the resolved team.
 //
-// UN SEUL SENTINEL POUR LES DEUX CAS, délibérément : « cette team existe mais pas pour toi » et
-// « cette team n'existe pas » doivent être indiscernables du dehors, sinon un balayage de slugs
-// énumère les teams de l'installation.
+// ONE SENTINEL FOR BOTH CASES, deliberately: "this team exists but not for you" and "this team
+// does not exist" must be indistinguishable from the outside, otherwise a sweep of slugs
+// enumerates the installation's teams.
 var ErrNotFound = errors.New("overview store: not found")
 
-// Team est l'identité d'une team, et rien de plus. Elle ne grossira pas : cette forme est le
-// produit de la seule query du fichier qui n'est pas scopée par team_id.
+// Team is the identity of a team, and nothing more. It will not grow: this shape is the product
+// of the one query of the file that is not scoped by team_id.
 type Team struct {
 	ID   uuid.UUID
 	Slug string
 	Name string
 }
 
-// ProjectCounters porte les cinq compteurs d'un repo. Une ligne existe TOUJOURS, y compris pour
-// un repo qui n'a rien en vol : un repo qui disparaît de l'écran du superviseur est le seul
-// défaut irrécupérable de cette surface, il ne peut pas chercher ce qu'il ne voit pas.
+// ProjectCounters carries the five counters of a repo. A row ALWAYS exists, including for a repo
+// with nothing in flight: a repo disappearing from the supervisor's screen is the one
+// unrecoverable flaw of this surface, they cannot look for what they cannot see.
 type ProjectCounters struct {
 	Key            string
 	OwesAnswer     int64
@@ -70,20 +69,20 @@ type ProjectCounters struct {
 	TasksBlocked   int64
 }
 
-// ProjectPulse est le dernier appel authentifié d'un token du repo. Un repo dont aucun token n'a
-// jamais servi n'a pas de ligne du tout : il n'a pas de pouls, ce qui n'est pas la même chose
-// qu'un pouls à zéro.
+// ProjectPulse is the last authenticated call of a token of the repo. A repo no token of which
+// has ever served has no row at all: it has no pulse, which is not the same thing as a pulse at
+// zero.
 type ProjectPulse struct {
 	Key      string
 	LastSeen time.Time
 }
 
-// IssueDebt est une issue en vol. Ni corps ni extrait : cinquante extraits ne se lisent pas en
-// trois secondes, et le détail est à un appel de là.
+// IssueDebt is one issue in flight. No body and no excerpt: fifty excerpts do not read in three
+// seconds, and the detail is one call away.
 //
-// ProjectKey est le DESTINATAIRE, AuthorProjectKey l'émetteur. C'est le couple qui décide du
-// débiteur : sur une issue `open` c'est le destinataire qui doit une réponse, sur une issue
-// `answered` c'est l'émetteur qui doit aller la chercher.
+// ProjectKey is the RECIPIENT, AuthorProjectKey the sender. That pair decides who the debtor is:
+// on an `open` issue the recipient owes an answer, on an `answered` issue the sender is the one
+// who must go and fetch it.
 type IssueDebt struct {
 	Number           int64
 	State            string
@@ -93,12 +92,12 @@ type IssueDebt struct {
 	UpdatedAt        time.Time
 }
 
-// TaskDebt est une tâche sur laquelle un humain peut agir.
+// TaskDebt is one task a human can act on.
 //
-// LastMove n'est pas updated_at : c'est le plus récent de updated_at et de la dernière note, sans
-// quoi un agent qui documente activement sa progression serait signalé « session morte ».
-// HasOpenQuestion distingue « bloqué et il a demandé » de « bloqué et il n'a rien demandé » — le
-// second est le seul cul-de-sac que rien d'autre dans le produit ne rend visible.
+// LastMove is not updated_at: it is the most recent of updated_at and of the last note, without
+// which an agent actively documenting its progress would be reported as a "dead session".
+// HasOpenQuestion tells "blocked and it asked" apart from "blocked and it asked nothing" — the
+// second is the only dead end nothing else in the product makes visible.
 type TaskDebt struct {
 	Number          int64
 	Status          string
@@ -110,9 +109,9 @@ type TaskDebt struct {
 	HasOpenQuestion bool
 }
 
-// Issue est le fil d'une issue, vu par un tiers qui n'en est ni l'auteur ni le destinataire.
-// CreatedAt ET UpdatedAt : « ouverte depuis 5 jours, silence depuis 3 » sont deux informations
-// différentes pour un superviseur.
+// Issue is the thread of an issue, seen by a third party that is neither its author nor its
+// recipient. CreatedAt AND UpdatedAt: "open for 5 days, silent for 3" are two different pieces of
+// information for a supervisor.
 type Issue struct {
 	ID               uuid.UUID
 	Number           int64
@@ -124,15 +123,15 @@ type Issue struct {
 	UpdatedAt        time.Time
 }
 
-// Message est un message du fil, désigné par la clé du projet qui l'a écrit.
+// Message is one message of the thread, designated by the key of the project that wrote it.
 type Message struct {
 	AuthorKey string
 	BodyMd    string
 	CreatedAt time.Time
 }
 
-// Task est une tâche désignée par sa référence, corps compris : c'est le seul endroit du produit
-// où un humain le lit sans le token du repo.
+// Task is one task designated by its reference, body included: this is the only place in the
+// product where a human reads it without the repo's token.
 type Task struct {
 	ID         uuid.UUID
 	Number     int64
@@ -146,20 +145,20 @@ type Task struct {
 	UpdatedAt  time.Time
 }
 
-// Note est une note de progression. C'est la vraie réponse à « pourquoi c'est bloqué ».
+// Note is one progress note. It is the real answer to "why is this blocked".
 type Note struct {
 	BodyMd    string
 	CreatedAt time.Time
 }
 
-// Store lit l'état d'une team entière. C'est le SEUL store du dépôt dont les lectures ne portent
-// pas de prédicat de projet, et c'est pour ça qu'il vit dans son propre module : voisiner une
-// méthode team-seule et une méthode project-scopée est la configuration où le copier-coller fuit.
+// Store reads the state of a whole team. It is the ONLY store of the repo whose reads carry no
+// project predicate, and that is why it lives in its own module: sitting a team-only method next
+// to a project-scoped one is the setup where copy-paste leaks.
 //
-// Les méthodes qui bornent leur résultat rendent aussi le total AVANT la borne : sans lui, une
-// liste tronquée ment, et l'écran est faux d'une manière silencieuse et crédible.
+// The methods that bound their result also yield the total BEFORE the bound: without it a
+// truncated list lies, and the screen is wrong in a silent, credible way.
 type Store interface {
-	// TeamBySlug est la SEULE méthode sans teamID : c'est celle qui le produit.
+	// TeamBySlug is the ONLY method without a teamID: it is the one that produces it.
 	TeamBySlug(ctx context.Context, slug string) (Team, error)
 
 	Projects(ctx context.Context, teamID uuid.UUID) ([]ProjectCounters, error)
@@ -173,12 +172,12 @@ type Store interface {
 	TaskNotes(ctx context.Context, teamID, taskID uuid.UUID, limit int32) ([]Note, int64, error)
 }
 
-// store adosse le contrat aux queries générées. Pas de *sql.DB : aucune transaction, jamais.
+// store backs the contract with the generated queries. No *sql.DB: no transaction, ever.
 type store struct {
 	q *database.Queries
 }
 
-// New crée le store overview.
+// New creates the overview store.
 func New(q *database.Queries) Store {
 	return &store{q: q}
 }

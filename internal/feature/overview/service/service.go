@@ -4,37 +4,36 @@ package service
 //
 // | Élément     | Résumé                                                              | Ligne |
 // |-------------|---------------------------------------------------------------------|-------|
-// | Service     | Contrat consommé par le handler overview                              | 77    |
-// | service     | Implémentation, dépendante de l'interface store                       | 89    |
-// | New         | Crée le service overview                                              | 94    |
-// | Team        | Identité d'une team résolue par son slug                              | 100   |
-// | ProjectLine | Un repo, ses cinq compteurs et son pouls                              | 111   |
-// | Debt        | Une ligne de dette, déjà classée                                      | 129   |
-// | TeamState   | L'écran d'ensemble : les repos, les dettes, ce qui est caché          | 144   |
-// | Message     | Un message du fil, tel qu'exposé                                      | 152   |
-// | Note        | Une note de progression, telle qu'exposée                             | 159   |
-// | RefDetail   | Le détail d'une référence, polymorphe entre issue et tâche            | 175   |
+// | Service     | Contract consumed by the overview handler                             | 76    |
+// | service     | Implementation, depending on the store interface                      | 88    |
+// | New         | Creates the overview service                                          | 93    |
+// | Team        | Identity of a team resolved by its slug                               | 99    |
+// | ProjectLine | One repo, its five counters and its pulse                             | 110   |
+// | Debt        | One debt row, already classified                                      | 128   |
+// | TeamState   | The overview screen: the repos, the debts, what is hidden             | 142   |
+// | Message     | One message of the thread, as it is exposed                           | 150   |
+// | Note        | One progress note, as it is exposed                                   | 157   |
+// | RefDetail   | The detail of a reference, polymorphic between issue and task         | 173   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// CONTRAT UNIQUEMENT — l'implémentation est dans team_state.go, ref_detail.go et validate.go.
+// CONTRACT ONLY — the implementation lives in team_state.go, ref_detail.go and validate.go.
 //
-// CE QUE CETTE SURFACE NE REND PAS, ET POURQUOI. Chaque coupe ci-dessous a été payée une fois ;
-// les rouvrir se fait avec un argument, pas par confort de client :
+// WHAT THIS SURFACE DOES NOT YIELD, AND WHY. Every cut below was paid for once; reopening them
+// takes an argument, not a client's convenience:
 //
-//   - aucun UUID, nulle part. La team est désignée par un slug, tout le reste par une référence
-//     `CLÉ-numéro`. Un identifiant opaque rendu à un client devient un identifiant qu'on accepte
-//     en entrée le jour d'après.
-//   - pas de `health`, pas de `is_stale`, pas de durée en secondes, pas de couleur. « Trois jours
-//     = rouge » est une politique de rendu : la coder ici la rend fausse pour la team suivante.
-//   - pas de drapeau « nouveau ». Le curseur appartient à un token d'agent ; un « déjà vu »
-//     humain serait une nouvelle table, donc une écriture sur une surface déclarée en lecture
-//     seule.
-//   - pas d'extrait sur les lignes de dette. Cinquante extraits ne se lisent pas en trois
-//     secondes, et le détail est à un appel de là.
-//   - pas d'écho du slug de team. L'appelant l'a fourni ; le lui renvoyer invite à faire de cette
-//     réponse la source des métadonnées de team.
+//   - no UUID, anywhere. The team is designated by a slug, everything else by a `KEY-number`
+//     reference. An opaque identifier handed to a client becomes an identifier accepted as input
+//     the day after.
+//   - no `health`, no `is_stale`, no duration in seconds, no colour. "Three days = red" is a
+//     rendering policy: coding it here makes it wrong for the next team.
+//   - no "new" flag. The cursor belongs to an agent token; a human "already seen" would be a new
+//     table, hence a write on a surface declared read-only.
+//   - no excerpt on the debt rows. Fifty excerpts do not read in three seconds, and the detail is
+//     one call away.
+//   - no echo of the team slug. The caller supplied it; sending it back invites making this
+//     response the source of the team's metadata.
 
 import (
 	"context"
@@ -45,69 +44,69 @@ import (
 	"github.com/google/uuid"
 )
 
-// Erreurs domaine, traduites en codes HTTP par le handler.
+// Domain errors, translated into HTTP codes by the handler.
 //
-// ErrNotFound couvre indifféremment « slug inconnu », « team qui n'est pas la tienne » et
-// « référence introuvable » : les distinguer donnerait un oracle permettant d'énumérer les teams
-// de l'installation par balayage de slugs.
+// ErrNotFound covers "unknown slug", "team that is not yours" and "reference not found" alike:
+// telling them apart would give an oracle letting the installation's teams be enumerated by
+// sweeping slugs.
 var (
 	ErrInvalidInput = errors.New("overview: invalid input")
 	ErrNotFound     = errors.New("overview: not found")
 )
 
-// Les quatre kinds de dette. La classification est TOTALE : toute ligne rendue par le store
-// tombe dans exactement un kind, ou est omise pour une raison nommée (§ team_state.go).
+// The four debt kinds. The classification is TOTAL: every row yielded by the store falls into
+// exactly one kind, or is omitted for a named reason (§ team_state.go).
 const (
-	// KindAnswer — un agent frère est bloqué sur ce repo.
+	// KindAnswer — a sibling agent is blocked on this repo.
 	KindAnswer = "answer"
-	// KindCollect — il a sa réponse et ne l'a pas consommée.
+	// KindCollect — it has its answer and has not consumed it.
 	KindCollect = "collect"
-	// KindResume — session vraisemblablement morte en cours de tâche.
+	// KindResume — session likely dead in the middle of a task.
 	KindResume = "resume"
-	// KindAsk — il s'est déclaré coincé sans rien demander à personne.
+	// KindAsk — it declared itself stuck without asking anybody anything.
 	KindAsk = "ask"
 )
 
-// Service répond aux deux questions d'un superviseur humain : « où en sont mes repos » et
-// « qu'est-ce qui se dit sur CORE-41 ».
+// Service answers the two questions of a human supervisor: "where are my repos at" and "what is
+// being said about CORE-41".
 //
-// TeamBySlug est exposée parce que le handler doit résoudre le scope AVANT de le passer aux deux
-// autres méthodes, et parce que c'est ce même appel qui refuse un admin épinglé à une autre team.
-// Les deux autres méthodes ne prennent qu'un teamID déjà résolu : un slug ne descend jamais ici.
+// TeamBySlug is exposed because the handler must resolve the scope BEFORE passing it to the other
+// two methods, and because it is that same call that rejects an admin pinned to another team. The
+// other two methods take nothing but an already-resolved teamID: a slug never comes down here.
 type Service interface {
-	// TeamBySlug résout un slug en identité de team, ou rend ErrNotFound.
+	// TeamBySlug resolves a slug into a team identity, or yields ErrNotFound.
 	TeamBySlug(ctx context.Context, slug string) (Team, error)
 
-	// TeamState assemble les repos, leur pouls et la file de dettes de la team.
+	// TeamState assembles the repos, their pulse and the team's debt queue.
 	TeamState(ctx context.Context, teamID uuid.UUID) (TeamState, error)
 
-	// RefDetail rend le détail d'une référence : issue d'abord, tâche ensuite.
+	// RefDetail yields the detail of a reference: issue first, task second.
 	RefDetail(ctx context.Context, teamID uuid.UUID, projectKey string, number int64) (RefDetail, error)
 }
 
-// service dépend de l'interface store, jamais de sqlc.
+// service depends on the store interface, never on sqlc.
 type service struct {
 	store store.Store
 }
 
-// New crée le service overview.
+// New creates the overview service.
 func New(st store.Store) Service {
 	return &service{store: st}
 }
 
-// Team est l'identité d'une team résolue par son slug. Elle ne sort jamais telle quelle vers le
-// client : le handler n'en garde que l'ID, pour scoper les deux autres appels.
+// Team is the identity of a team resolved by its slug. It never leaves as-is towards the client:
+// the handler keeps nothing but the ID, to scope the other two calls.
 type Team struct {
 	ID   uuid.UUID
 	Slug string
 	Name string
 }
 
-// ProjectLine est un repo, ses cinq compteurs et son pouls.
+// ProjectLine is one repo, its five counters and its pulse.
 //
-// LastAgentSeenAt est un HORODATAGE, jamais une durée : une durée périme dans le client. Il est
-// absent — et non nul — pour un repo dont aucun token n'a encore servi : « pas de pouls » et
-// « pouls au 1er janvier de l'an 1 » ne sont pas la même chose.
+// LastAgentSeenAt is a TIMESTAMP, never a duration: a duration goes stale inside the client. It is
+// absent — and not zero — for a repo no token of which has served yet: "no pulse" and "pulse on
+// the 1st of January of year 1" are not the same thing.
 type ProjectLine struct {
 	Key             string     `json:"key"`
 	OwesAnswer      int64      `json:"owes_answer"`
@@ -118,14 +117,14 @@ type ProjectLine struct {
 	LastAgentSeenAt *time.Time `json:"last_agent_seen_at,omitempty"`
 }
 
-// Debt est une ligne de dette, déjà classée : le client n'a aucune règle métier à rejouer.
+// Debt is one debt row, already classified: the client has no business rule to replay.
 //
-// Ref porte toujours la clé du DESTINATAIRE de l'issue ou du propriétaire de la tâche — c'est
-// celle qu'on retape pour ouvrir le détail. Debtor est celui qui doit agir, et les deux diffèrent
-// sur `collect` : l'issue est `CORE-41`, mais c'est WEB qui doit aller lire sa réponse.
+// Ref always carries the key of the issue's RECIPIENT or of the task's owner — that is the one
+// retyped to open the detail. Debtor is the one that must act, and the two differ on `collect`:
+// the issue is `CORE-41`, but it is WEB that must go and read its answer.
 //
-// Peer est vide sur `resume` et `ask`, qui n'ont pas de correspondant. Since agrège deux colonnes
-// différentes (`issues.updated_at` et `last_move`), d'où son nom plutôt qu'`updated_at`.
+// Peer is empty on `resume` and `ask`, which have no counterpart. Since aggregates two different
+// columns (`issues.updated_at` and `last_move`), hence its name rather than `updated_at`.
 type Debt struct {
 	Kind   string    `json:"kind"`
 	Ref    string    `json:"ref"`
@@ -135,12 +134,11 @@ type Debt struct {
 	Since  time.Time `json:"since"`
 }
 
-// TeamState est l'écran d'ensemble.
+// TeamState is the overview screen.
 //
-// GeneratedAt est l'horloge depuis laquelle le client calcule TOUS les âges : s'il utilisait la
-// sienne, une dérive produirait « il y a −3 s ». Truncated compte les dettes que la borne a
-// cachées ; sans lui, une liste tronquée ment, et l'écran est faux d'une manière silencieuse et
-// crédible.
+// GeneratedAt is the clock the client computes ALL the ages from: if it used its own, a drift
+// would produce "−3 s ago". Truncated counts the debts the bound hid; without it a truncated list
+// lies, and the screen is wrong in a silent, credible way.
 type TeamState struct {
 	GeneratedAt time.Time     `json:"generated_at"`
 	Projects    []ProjectLine `json:"projects"`
@@ -148,39 +146,39 @@ type TeamState struct {
 	Truncated   int           `json:"truncated"`
 }
 
-// Message est un message du fil, désigné par la clé du projet qui l'a écrit.
+// Message is one message of the thread, designated by the key of the project that wrote it.
 type Message struct {
 	From      string    `json:"from"`
 	CreatedAt time.Time `json:"created_at"`
 	Body      string    `json:"body"`
 }
 
-// Note est une note de progression.
+// Note is one progress note.
 type Note struct {
 	CreatedAt time.Time `json:"created_at"`
 	Body      string    `json:"body"`
 }
 
-// RefDetail est le détail d'une référence, polymorphe entre issue et tâche.
+// RefDetail is the detail of a reference, polymorphic between issue and task.
 //
-// UN SEUL TYPE, ET NON DEUX. `kind` est le premier champ, et c'est lui qui dit quels champs sont
-// renseignés — miroir exact de ce que la surface MCP fait déjà. Deux structs auraient forcé un
-// `any` dans la signature du service, ce que code-conventions.md refuse.
+// ONE TYPE, AND NOT TWO. `kind` is the first field, and it is the one saying which fields are
+// filled in — an exact mirror of what the MCP surface already does. Two structs would have forced
+// an `any` in the service signature, which code-conventions.md rejects.
 //
-// MessagesTotal et NotesTotal ne sont émis QUE s'ils dépassent le nombre de lignes rendues :
-// « 3 notes, 3 rendues » n'apprend rien, « 3 rendues sur 47 » change la lecture.
+// MessagesTotal and NotesTotal are emitted ONLY when they exceed the number of rows rendered:
+// "3 notes, 3 rendered" teaches nothing, "3 rendered out of 47" changes the reading.
 //
-// closed_at est coupé : `state` et `updated_at` le disent déjà, et une troisième source de la
-// même information est une divergence en attente.
+// closed_at is cut: `state` and `updated_at` already say it, and a third source of the same
+// information is a divergence waiting to happen.
 type RefDetail struct {
 	Kind string `json:"kind"`
 	Ref  string `json:"ref"`
 
-	// Issue uniquement.
+	// Issue only.
 	From  string `json:"from,omitempty"`
 	State string `json:"state,omitempty"`
 
-	// Tâche uniquement.
+	// Task only.
 	Status   string `json:"status,omitempty"`
 	Priority string `json:"priority,omitempty"`
 

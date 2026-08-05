@@ -4,11 +4,11 @@ package service
 //
 // | Élément       | Résumé                                                         | Ligne |
 // |---------------|----------------------------------------------------------------|-------|
-// | service.Check | Renvoie l'état actionnable du projet et avance le curseur        | 39    |
-// | toIssueLines  | Projette des issues du store en lignes d'inbox                   | 110   |
-// | toTaskLines   | Projette des tâches du store en lignes d'inbox                   | 131   |
-// | toUnblockedLines | Projette des tâches débloquées en lignes d'inbox              | 144   |
-// | overflow      | Compte ce qui n'a pas tenu dans un seau                          | 160   |
+// | service.Check | Returns the actionable state and moves the cursor forward        | 39    |
+// | toIssueLines  | Projects store issues into inbox lines                           | 110   |
+// | toTaskLines   | Projects store tasks into inbox lines                            | 131   |
+// | toUnblockedLines | Projects unblocked tasks into inbox lines                     | 144   |
+// | overflow      | Counts what did not fit in a bucket                              | 160   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -21,24 +21,24 @@ import (
 	"github.com/google/uuid"
 )
 
-// bucketSize borne chaque seau. Un agent qui démarre doit pouvoir tout lire : au-delà, la
-// réponse cesse d'être un point de départ et devient un problème de plus.
+// bucketSize bounds every bucket. An agent that is starting up must be able to read everything:
+// past that, the answer stops being a starting point and becomes one more problem.
 //
-// Une ligne de plus que la borne est demandée au store pour savoir s'il en reste, sans avoir à
-// compter séparément — un COUNT par seau serait trois requêtes de plus pour un chiffre indicatif.
+// One line more than the bound is asked of the store to know whether any are left, without having
+// to count separately — a COUNT per bucket would be three more queries for an indicative figure.
 const bucketSize = 10
 
-// Check renvoie l'état actionnable du projet, puis avance le curseur du token.
+// Check returns the actionable state of the project, then moves the token cursor forward.
 //
-// La tête du journal est lue AVANT les seaux : un événement écrit pendant l'appel restera donc
-// « nouveau » au prochain tour, plutôt que d'être dépassé sans avoir jamais été montré.
+// The head of the journal is read BEFORE the buckets: an event written during the call therefore
+// stays "new" on the next round, rather than being passed over without ever being shown.
 //
-// Le curseur est avancé APRÈS que la réponse est constituée, et son échec n'est pas fatal : au
-// pire un événement déjà lu reste marqué « nouveau » une fois de plus. Refuser la réponse parce
-// qu'un drapeau n'a pas pu être mis à jour serait échanger une gêne contre une panne.
+// The cursor is moved forward AFTER the response is built, and its failure is not fatal: at worst
+// an already-read event stays flagged "new" one more time. Refusing the response because a flag
+// could not be updated would be trading an annoyance for an outage.
 func (s *service) Check(ctx context.Context, in CheckInput) (Inbox, error) {
 	if in.TeamID == uuid.Nil || in.ProjectID == uuid.Nil || in.TokenID == uuid.Nil {
-		return Inbox{}, fmt.Errorf("%w: scope de projet incomplet", ErrInvalidInput)
+		return Inbox{}, fmt.Errorf("%w: incomplete project scope", ErrInvalidInput)
 	}
 
 	scope := store.Scope{
@@ -77,13 +77,13 @@ func (s *service) Check(ctx context.Context, in CheckInput) (Inbox, error) {
 
 	inbox := Inbox{
 		Project: projectKey,
-		// Une issue entrante porte MA clé : c'est mon projet qui la possède et qui lui a donné
-		// son numéro. Une issue sortante porte celle du destinataire, qui est le pair.
+		// An incoming issue carries MY key: my project owns it and gave it its number. An
+		// outgoing issue carries the recipient's key, which is the peer.
 		NeedsAnswer: toIssueLines(incoming, projectKey, true),
 		Answered:    toIssueLines(answered, projectKey, false),
 		InProgress:  toTaskLines(tasks, projectKey),
-		// Une dépendance ne traverse jamais un repo (D42) : les deux extrémités portent donc MA
-		// clé, sans exception possible.
+		// A dependency never crosses a repo (D42): both ends therefore carry MY key, with no
+		// possible exception.
 		Unblocked: toUnblockedLines(unblocked, projectKey),
 	}
 
@@ -97,16 +97,16 @@ func (s *service) Check(ctx context.Context, in CheckInput) (Inbox, error) {
 	}
 
 	if err := s.store.Advance(ctx, in.TokenID, cursor.HeadEventID); err != nil {
-		// Best effort : la réponse est juste, seul le confort du prochain appel est dégradé.
+		// Best effort: the response is right, only the comfort of the next call is degraded.
 		return inbox, nil
 	}
 	return inbox, nil
 }
 
-// toIssueLines projette des issues du store en lignes d'inbox.
+// toIssueLines projects store issues into inbox lines.
 //
-// mine indique que la référence porte MA clé de projet — cas des issues entrantes, dont je suis
-// le destinataire. Pour les sortantes, la référence porte celle du pair.
+// mine says the reference carries MY project key — the case of incoming issues, of which I am the
+// recipient. For outgoing ones, the reference carries the peer's key.
 func toIssueLines(rows []store.IssueLine, projectKey string, mine bool) []IssueLine {
 	lines := make([]IssueLine, 0, min(len(rows), bucketSize))
 	for _, row := range rows[:min(len(rows), bucketSize)] {
@@ -127,7 +127,7 @@ func toIssueLines(rows []store.IssueLine, projectKey string, mine bool) []IssueL
 	return lines
 }
 
-// toTaskLines projette des tâches du store en lignes d'inbox.
+// toTaskLines projects store tasks into inbox lines.
 func toTaskLines(rows []store.TaskLine, projectKey string) []TaskLine {
 	lines := make([]TaskLine, 0, min(len(rows), bucketSize))
 	for _, row := range rows[:min(len(rows), bucketSize)] {
@@ -140,7 +140,7 @@ func toTaskLines(rows []store.TaskLine, projectKey string) []TaskLine {
 	return lines
 }
 
-// toUnblockedLines projette des tâches débloquées du store en lignes d'inbox.
+// toUnblockedLines projects unblocked store tasks into inbox lines.
 func toUnblockedLines(rows []store.UnblockedLine, projectKey string) []UnblockedLine {
 	lines := make([]UnblockedLine, 0, min(len(rows), bucketSize))
 	for _, row := range rows[:min(len(rows), bucketSize)] {
@@ -155,8 +155,8 @@ func toUnblockedLines(rows []store.UnblockedLine, projectKey string) []Unblocked
 	return lines
 }
 
-// overflow compte ce qui n'a pas tenu dans un seau. Le store en renvoie un de plus que la borne :
-// la présence de cette ligne suffit à dire « il en reste », sans compter davantage.
+// overflow counts what did not fit in a bucket. The store returns one more than the bound: the
+// presence of that line is enough to say "some are left", without counting any further.
 func overflow(fetched int) int {
 	if fetched > bucketSize {
 		return fetched - bucketSize

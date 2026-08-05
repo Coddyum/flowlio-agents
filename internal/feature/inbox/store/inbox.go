@@ -4,14 +4,14 @@ package store
 //
 // | Élément                | Résumé                                                  | Ligne |
 // |------------------------|---------------------------------------------------------|-------|
-// | store.ProjectKey       | Résout la clé du projet du token                          | 29    |
-// | store.Cursor           | Lit le curseur du token et la tête du journal             | 45    |
-// | store.IncomingOpen     | Les questions entrantes en attente de réponse             | 60    |
-// | store.OutgoingAnswered | Mes questions qui ont reçu une réponse                    | 88    |
-// | store.InProgressTasks  | Mes tâches en cours, signe d'une session interrompue      | 116   |
-// | store.UnblockedTasks   | Mes tâches que plus aucune dépendance interne ne bloque   | 143   |
-// | store.Advance          | Avance le curseur du token sans le faire reculer          | 172   |
-// | translate              | Ramène une erreur de base à une erreur domaine            | 180   |
+// | store.ProjectKey       | Resolves the key of the token's project                   | 29    |
+// | store.Cursor           | Reads the token cursor and the head of the journal        | 45    |
+// | store.IncomingOpen     | The incoming questions waiting for an answer              | 60    |
+// | store.OutgoingAnswered | My questions that got an answer                           | 88    |
+// | store.InProgressTasks  | My tasks in progress, sign of an interrupted session      | 116   |
+// | store.UnblockedTasks   | My tasks no internal dependency blocks any more           | 143   |
+// | store.Advance          | Moves the token cursor forward, never backwards           | 172   |
+// | translate              | Brings a database error back to a domain error            | 180   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -25,7 +25,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// ProjectKey résout la clé du projet du token, pour composer les références lisibles.
+// ProjectKey resolves the key of the token's project, to compose readable references.
 func (s *store) ProjectKey(ctx context.Context, teamID, projectID uuid.UUID) (string, error) {
 	key, err := s.q.InboxProjectKey(ctx, database.InboxProjectKeyParams{
 		ID:     projectID,
@@ -37,11 +37,11 @@ func (s *store) ProjectKey(ctx context.Context, teamID, projectID uuid.UUID) (st
 	return key, nil
 }
 
-// Cursor lit la position du token et la tête du journal de la team.
+// Cursor reads the token position and the head of the team journal.
 //
-// Un token qui n'a jamais appelé check_inbox n'a pas de ligne de curseur : la query renvoie 0
-// plutôt qu'une absence, et tout apparaît donc comme nouveau. C'est exact, et c'est ce qui rend
-// une rotation de token indolore.
+// A token that never called check_inbox has no cursor row: the query returns 0 rather than an
+// absence, so everything shows up as new. That is exact, and it is what makes a token rotation
+// painless.
 func (s *store) Cursor(ctx context.Context, sc Scope) (Cursor, error) {
 	row, err := s.q.InboxCursor(ctx, database.InboxCursorParams{
 		TokenID: sc.TokenID,
@@ -53,10 +53,10 @@ func (s *store) Cursor(ctx context.Context, sc Scope) (Cursor, error) {
 	return Cursor{LastEventID: row.LastEventID, HeadEventID: row.HeadEventID}, nil
 }
 
-// IncomingOpen liste les questions dont je suis le destinataire et qui attendent une réponse.
+// IncomingOpen lists the questions I am the recipient of and that are waiting for an answer.
 //
-// Dans ce seau, le dernier message est toujours celui de l'auteur : ma propre réponse ferait
-// passer l'issue en `answered` et la sortirait d'ici.
+// In this bucket the last message is always the author's: my own answer would move the issue to
+// `answered` and take it out of here.
 func (s *store) IncomingOpen(ctx context.Context, sc Scope, lastEventID int64) ([]IssueLine, error) {
 	rows, err := s.q.ListIncomingOpenIssues(ctx, database.ListIncomingOpenIssuesParams{
 		TeamID:      sc.TeamID,
@@ -83,8 +83,8 @@ func (s *store) IncomingOpen(ctx context.Context, sc Scope, lastEventID int64) (
 	return lines, nil
 }
 
-// OutgoingAnswered liste mes questions qui ont reçu une réponse : j'étais bloqué, je ne le suis
-// plus. PeerKey est ici la clé du destinataire, celle que porte la référence.
+// OutgoingAnswered lists my questions that got an answer: I was blocked, I no longer am. PeerKey
+// is here the recipient's key, the one the reference carries.
 func (s *store) OutgoingAnswered(ctx context.Context, sc Scope, lastEventID int64) ([]IssueLine, error) {
 	rows, err := s.q.ListOutgoingAnsweredIssues(ctx, database.ListOutgoingAnsweredIssuesParams{
 		TeamID:      sc.TeamID,
@@ -111,8 +111,8 @@ func (s *store) OutgoingAnswered(ctx context.Context, sc Scope, lastEventID int6
 	return lines, nil
 }
 
-// InProgressTasks liste mes tâches en cours : une tâche restée là signale une session
-// interrompue, à reprendre avant d'en ouvrir une nouvelle.
+// InProgressTasks lists my tasks in progress: a task left there signals an interrupted session,
+// to be picked up again before opening a new one.
 func (s *store) InProgressTasks(ctx context.Context, sc Scope) ([]TaskLine, error) {
 	rows, err := s.q.ListInProgressTasks(ctx, database.ListInProgressTasksParams{
 		TeamID:    sc.TeamID,
@@ -135,11 +135,11 @@ func (s *store) InProgressTasks(ctx context.Context, sc Scope) ([]TaskLine, erro
 	return lines, nil
 }
 
-// UnblockedTasks liste les tâches que plus aucune dépendance interne ne bloque.
+// UnblockedTasks lists the tasks no internal dependency blocks any more.
 //
-// C'est le seul seau de tâches à porter un drapeau « nouveau » : contrairement à mon travail en
-// cours, le déblocage m'arrive du dehors — c'est une AUTRE tâche qui a avancé — et je peux ne pas
-// l'avoir vu passer.
+// It is the only task bucket to carry a "new" flag: unlike my work in progress, the unblocking
+// reaches me from the outside — it is ANOTHER task that moved on — and I may not have seen it go
+// by.
 func (s *store) UnblockedTasks(ctx context.Context, sc Scope, lastEventID int64) ([]UnblockedLine, error) {
 	rows, err := s.q.ListUnblockedTasks(ctx, database.ListUnblockedTasksParams{
 		TeamID:      sc.TeamID,
@@ -164,11 +164,11 @@ func (s *store) UnblockedTasks(ctx context.Context, sc Scope, lastEventID int64)
 	return lines, nil
 }
 
-// Advance avance le curseur du token.
+// Advance moves the token cursor forward.
 //
-// La query prend le maximum entre l'ancienne et la nouvelle valeur : deux check_inbox concurrents
-// du même token ne peuvent donc pas faire reculer la position. Aucune transaction n'est
-// nécessaire — le pire cas est un drapeau « nouveau » perdu.
+// The query takes the maximum of the old and the new value: two concurrent check_inbox calls of
+// the same token therefore cannot make the position go backwards. No transaction is needed — the
+// worst case is a lost "new" flag.
 func (s *store) Advance(ctx context.Context, tokenID uuid.UUID, headEventID int64) error {
 	return translate(s.q.AdvanceInboxCursor(ctx, database.AdvanceInboxCursorParams{
 		TokenID:     tokenID,
@@ -176,7 +176,7 @@ func (s *store) Advance(ctx context.Context, tokenID uuid.UUID, headEventID int6
 	}), "advance cursor")
 }
 
-// translate ramène les erreurs de la base aux erreurs domaine du store.
+// translate brings database errors back to the store's domain errors.
 func translate(err error, op string) error {
 	if err == nil {
 		return nil
