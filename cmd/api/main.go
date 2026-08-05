@@ -4,10 +4,10 @@ package main
 //
 // | Élément      | Résumé                                                           | Ligne |
 // |--------------|------------------------------------------------------------------|-------|
-// | main         | Charge la config, câble l'infra, monte les modules, sert l'API     | 49    |
-// | buildModules   | Instancie les modules de feature — point d'ajout unique          | 112   |
-// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 130   |
-// | bootstrapLocal | Émet le token admin au tout premier démarrage local              | 157   |
+// | main         | Charge la config, câble l'infra, monte les modules, sert l'API     | 51    |
+// | buildModules   | Instancie les modules de feature — point d'ajout unique          | 114   |
+// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 132   |
+// | bootstrapLocal | Émet le token admin au tout premier démarrage local              | 164   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -18,8 +18,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -67,7 +69,7 @@ func main() {
 	queries := database.New(rawDB)
 
 	if cfg.IsLocal() {
-		if err := bootstrapLocal(ctx, queries, cfg.Addr); err != nil {
+		if err := bootstrapLocal(ctx, bootstrap.NewStore(queries), cfg.Addr, os.Stdout); err != nil {
 			log.Fatalf("main: %v", err)
 		}
 	}
@@ -149,13 +151,18 @@ func ensureSchema(ctx context.Context, db *sql.DB, isLocal bool) error {
 	return nil
 }
 
-// bootstrapLocal émet le token d'administration au tout premier démarrage en mode local, puis
-// l'écrit dans le fichier d'identifiants de l'utilisateur et l'affiche une seule fois.
+// bootstrapLocal issues the admin token on the very first local start and writes it to the
+// credentials file. It prints the PATH, never the secret.
 //
-// Le secret transite par stdout et par un fichier en 0600 — nulle part ailleurs, et jamais dans
-// les logs applicatifs.
-func bootstrapLocal(ctx context.Context, queries *database.Queries, addr string) error {
-	token, created, err := bootstrap.EnsureAdminToken(ctx, bootstrap.NewStore(queries))
+// The secret reaches exactly one place: a 0600 file. Not stdout, not the application logs. It used
+// to be printed so that a Docker user could copy it out of `docker compose logs api`, which put a
+// live admin credential into a durable log that anything reaching the daemon can read. The compose
+// stack now keeps that file on a named volume and `flowlio init` copies it onto the host itself, so
+// the printing had nothing left to buy.
+// The store and the writer are parameters rather than built here so that "the secret never reaches
+// the output" is a testable claim instead of a comment.
+func bootstrapLocal(ctx context.Context, st bootstrap.Store, addr string, out io.Writer) error {
+	token, created, err := bootstrap.EnsureAdminToken(ctx, st)
 	if err != nil {
 		return err
 	}
@@ -173,17 +180,18 @@ func bootstrapLocal(ctx context.Context, queries *database.Queries, addr string)
 		return err
 	}
 
-	// La ligne d'export est donnée prête à coller parce que le chemin nominal du produit passe
-	// par Docker : le fichier d'identifiants est alors écrit DANS le conteneur, où la CLI de
-	// l'hôte ne le lira jamais. Afficher un chemin sans dire quoi en faire laisse l'utilisateur
-	// devant un token qu'il ne sait pas où mettre — c'est exactement là qu'on perd les deux
-	// minutes que ce démarrage doit tenir.
-	fmt.Println("\n  flowlio — première initialisation")
-	fmt.Println("  Token d'administration créé. Il ne sera plus jamais affiché.")
-	fmt.Printf("\n    export FLOWLIO_API_URL=%s\n    export FLOWLIO_TOKEN=%s\n\n", apiURL, token)
-	fmt.Printf("  Copie ces deux lignes dans ton terminal, puis :\n")
-	fmt.Println("    flowlio init --team <slug> --project <CLÉ>")
-	fmt.Printf("\n  (Aussi enregistré dans %s, 0600 — inutile si tu passes par Docker.)\n", path)
+	// The token is NO LONGER printed. It is written to the credentials file, which the compose
+	// stack keeps on a named volume, and `flowlio init` copies onto the host by itself. Printing it
+	// as well would put a live admin secret into `docker logs` — durable, readable by anything that
+	// can reach the daemon, and impossible to revoke by scrolling.
+	//
+	// The path is still named: a user running the API outside Docker reads that file directly, and
+	// the CLI finds it there with no help.
+	_, _ = fmt.Fprintln(out, "\n  flowlio — first run")
+	_, _ = fmt.Fprintln(out, "  Admin token created and stored, never printed.")
+	_, _ = fmt.Fprintf(out, "  Credentials: %s (0600)\n", path)
+	_, _ = fmt.Fprintln(out, "\n  From the repository you want to track:")
+	_, _ = fmt.Fprintln(out, "    flowlio init --team <slug> --project <KEY>")
 
 	return nil
 }

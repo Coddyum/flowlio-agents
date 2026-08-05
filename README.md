@@ -51,17 +51,14 @@ Requirement: **Docker**. That's all.
 ```bash
 git clone https://github.com/Coddyum/flowlio-agents && cd flowlio-agents
 docker compose up -d
-docker compose logs api        # prints the admin token, once
 ```
 
 Two containers start: Postgres, then the API. The API carries its own migrations and applies them
-itself, so the image is all you need — nothing to sequence, nothing else to install. The logs print
-two ready-to-paste lines:
+itself, so the image is all you need — nothing to sequence, nothing else to install.
 
-```bash
-export FLOWLIO_API_URL=http://localhost:42058
-export FLOWLIO_TOKEN=flw_<prefix>_<secret>
-```
+**No token to copy.** The admin credential is never printed: the API writes it to a `0600` file the
+stack keeps on a Docker volume, and the CLI picks it up from there on its own. Nothing to grep out
+of a log, nothing to paste into an `export`.
 
 Install the CLI from the [latest release](https://github.com/Coddyum/flowlio-agents/releases)
 (`flowlio_<version>_<os>_<arch>.tar.gz`), then, **from the root of the repo you want to track**:
@@ -70,9 +67,13 @@ Install the CLI from the [latest release](https://github.com/Coddyum/flowlio-age
 flowlio init --team acme --project API --project-name acme-api
 ```
 
-This creates the team, the project and an agent token, and writes a `.mcp.json` into the repo. It
-prints a new `export FLOWLIO_TOKEN=…` line — that one is the **agent's** token, and it replaces the
-admin one.
+On its first run it copies the instance's credentials onto your machine, then creates the team, the
+project and an agent token, and writes a `.mcp.json` into the repo. It prints one
+`export FLOWLIO_TOKEN=…` line — that one is the **agent's** token, the only one your agent needs.
+
+> Ran `flowlio init` before starting anything? From a flowlio-agents checkout it offers to bring the
+> stack up for you. From anywhere else it tells you to, because `docker compose` reads the compose
+> file of the directory you are standing in.
 
 Your agent can now see flowlio:
 

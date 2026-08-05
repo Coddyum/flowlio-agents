@@ -4,12 +4,12 @@ package main
 //
 // | Élément    | Résumé                                                           | Ligne |
 // |------------|------------------------------------------------------------------|-------|
-// | runInit    | Prépare team, projet et token d'agent en une seule commande        | 34    |
-// | announceTrustIsClosed | Prévient qu'aucune confiance n'est déclarée, au 2ᵉ projet  | 111   |
-// | announceMCPConfig | Écrit la configuration MCP du dépôt et dit ce qui s'est passé | 145   |
-// | ensure     | Exécute une création en tolérant l'existence préalable             | 166   |
-// | splitFlags | Sépare options et arguments positionnels, dans n'importe quel ordre| 183   |
-// | printToken | Affiche un token fraîchement émis, avec l'avertissement qui va avec| 203   |
+// | runInit    | Prépare team, projet et token d'agent en une seule commande        | 35    |
+// | announceTrustIsClosed | Prévient qu'aucune confiance n'est déclarée, au 2ᵉ projet  | 133   |
+// | announceMCPConfig | Écrit la configuration MCP du dépôt et dit ce qui s'est passé | 186   |
+// | ensure     | Exécute une création en tolérant l'existence préalable             | 207   |
+// | splitFlags | Sépare options et arguments positionnels, dans n'importe quel ordre| 224   |
+// | printToken | Affiche un token fraîchement émis, avec l'avertissement qui va avec| 244   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -55,7 +55,28 @@ func runInit(ctx context.Context, args []string) error {
 
 	c, err := newClient()
 	if err != nil {
-		return err
+		// `flowlio init` is the command a user reaches for before anything exists, and the only
+		// interactive one. It is therefore the ONLY place allowed to offer to start the stack:
+		// every other command fails with an explanation instead, because an agent runs them with
+		// no terminal to answer from.
+		//
+		// An instance that IS running and still left newClient failing is a different problem —
+		// unreadable credentials, a broken daemon — and starting a second stack would not fix it.
+		if !isInteractive(os.Stdin) || instanceIsRunning(ctx, execDocker) {
+			return err
+		}
+		if err := offerToStartStack(ctx, execDocker, os.Stdin, os.Stdout); err != nil {
+			return err
+		}
+
+		waitCtx, cancel := context.WithTimeout(ctx, instanceReadyTimeout)
+		defer cancel()
+		adopted, waitErr := waitForCredentials(waitCtx, execDocker, credentialsPollInterval)
+		if waitErr != nil {
+			return waitErr
+		}
+		c = client.New(adopted.APIURL, adopted.Token)
+		fmt.Println("Instance ready. Credentials saved locally — nothing to copy from the logs.")
 	}
 
 	if err := ensure(func() error {

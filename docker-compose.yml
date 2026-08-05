@@ -50,7 +50,19 @@ services:
       ENV: dev
     ports:
       - "42058:42058"
+    volumes:
+      # The credentials the API writes at first boot, kept out of the container's writable layer so
+      # they survive `docker compose up --build`. `flowlio init` copies them onto the host from
+      # here, which is why nobody has to grep a token out of the logs any more.
+      #
+      # A NAMED volume, not a bind mount of ~/.config: Docker initialises a named volume's
+      # ownership from the image, where that directory already belongs to the container's user. A
+      # bind mount would keep the host's ownership instead, and the container — running as uid
+      # 10001 — could not write into it on Linux. Docker Desktop hides that on macOS by virtualising
+      # ownership, which is exactly how the bug would have shipped.
+      - flowlio-config:/home/flowlio/.config
     restart: unless-stopped
 
 volumes:
   flowlio-pgdata:
+  flowlio-config:

@@ -129,12 +129,23 @@ Environment:
 // d'exposer un chemin de fichier sans contexte.
 func newClient() (*client.Client, error) {
 	c, err := client.FromCredentials(os.Getenv("FLOWLIO_API_URL"), os.Getenv("FLOWLIO_TOKEN"))
-	if err != nil {
-		if errors.Is(err, credentials.ErrNotFound) {
-			return nil, errors.New("aucun identifiant trouvé — démarrer le serveur une première fois, " +
-				"ou renseigner FLOWLIO_API_URL et FLOWLIO_TOKEN")
-		}
+	if err == nil {
+		return c, nil
+	}
+	if !errors.Is(err, credentials.ErrNotFound) {
 		return nil, err
 	}
-	return c, nil
+
+	// No credentials on the host, but the instance holds its own. Adopting them is silent and
+	// prompts nothing: this path is shared by every command, including the ones an agent runs in a
+	// session with no terminal attached.
+	adopted, adoptErr := adoptCredentials(context.Background(), execDocker)
+	if adoptErr != nil {
+		if errors.Is(adoptErr, errNoInstance) {
+			return nil, errors.New("no credentials found — run `flowlio init` from the repository you want to track, " +
+				"or set FLOWLIO_API_URL and FLOWLIO_TOKEN")
+		}
+		return nil, adoptErr
+	}
+	return client.New(adopted.APIURL, adopted.Token), nil
 }
