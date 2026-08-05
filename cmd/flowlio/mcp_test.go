@@ -446,7 +446,7 @@ func TestInstructionsCarryTheIdentity(t *testing.T) {
 
 	// Sans projet frère, create_issue n'a personne à qui écrire : le dire évite un aller-retour.
 	srv.siblings = nil
-	if !strings.Contains(srv.instructions(), "Aucun projet frère") {
+	if !strings.Contains(srv.instructions(), "No sibling project") {
 		t.Errorf("sans projet frère, les instructions doivent le dire:\n%s", srv.instructions())
 	}
 }
@@ -522,7 +522,7 @@ func TestPanicDansUnOutilNeTuePasLaSession(t *testing.T) {
 	if strings.Contains(responses[0].Error.Message, "goroutine") {
 		t.Errorf("la trace Go part vers l'agent et pollue son contexte: %q", responses[0].Error.Message)
 	}
-	if !strings.Contains(responses[0].Error.Message, "la session continue") {
+	if !strings.Contains(responses[0].Error.Message, "the session goes on") {
 		t.Errorf("le message ne dit pas à l'agent que la session tient: %q", responses[0].Error.Message)
 	}
 

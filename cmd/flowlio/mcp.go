@@ -4,23 +4,23 @@ package main
 //
 // | Élément                | Résumé                                                    | Ligne |
 // |------------------------|-----------------------------------------------------------|-------|
-// | mcpServer              | État du serveur MCP : client API et projet du token        | 53    |
-// | runMCP                 | Lance le serveur MCP sur stdio                             | 69    |
-// | mcpServer.serve        | Boucle de lecture des messages, une ligne JSON par message | 103   |
-// | mcpServer.dispatch     | Route une méthode MCP, et survit à un panic d'outil        | 158   |
-// | mcpServer.initialize   | Répond à la poignée de main MCP                            | 194   |
-// | mcpServer.instructions | Dit à l'agent où il travaille, avant son premier message   | 213   |
-// | mcpServer.siblingKeys  | Résout les autres projets de la team                       | 240   |
+// | mcpServer              | MCP server state: API client and the token's project       | 53    |
+// | runMCP                 | Starts the MCP server on stdio                             | 69    |
+// | mcpServer.serve        | Message read loop, one JSON line per message               | 103   |
+// | mcpServer.dispatch     | Routes an MCP method, and survives a tool panic            | 157   |
+// | mcpServer.initialize   | Answers the MCP handshake                                  | 193   |
+// | mcpServer.instructions | Tells the agent where it works, before its first message   | 212   |
+// | mcpServer.siblingKeys  | Resolves the other projects of the team                    | 239   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Serveur MCP en JSON-RPC 2.0 sur stdio, écrit à la main : le protocole tient en une poignée de
-// méthodes, et l'ajout d'un SDK ferait entrer une dépendance — et sa surface d'attaque — dans un
-// binaire qui manipule des tokens.
+// A JSON-RPC 2.0 MCP server over stdio, written by hand: the protocol fits in a handful of
+// methods, and adding an SDK would bring a dependency — and its attack surface — into a binary
+// that handles tokens.
 //
-// Règle absolue de ce fichier : stdout appartient au protocole. Tout message destiné à un humain
-// part sur stderr. Un seul Println égaré casse la session MCP de l'agent.
+// Absolute rule of this file: stdout belongs to the protocol. Every message meant for a human
+// goes to stderr. A single stray Println breaks the agent's MCP session.
 
 import (
 	"bufio"
@@ -39,33 +39,33 @@ import (
 )
 
 const (
-	// protocolVersion est la révision du protocole MCP annoncée au client.
+	// protocolVersion is the MCP protocol revision announced to the client.
 	protocolVersion = "2025-06-18"
 	serverName      = "flowlio"
 	serverVersion   = "0.1.0"
 
-	// maxMessageBytes borne une ligne de message entrant. Un agent n'envoie jamais un message de
-	// cette taille ; la borne évite qu'un flux malformé fasse grossir le tampon sans limite.
+	// maxMessageBytes bounds an incoming message line. An agent never sends a message that large;
+	// the bound keeps a malformed stream from growing the buffer without limit.
 	maxMessageBytes = 1 << 20
 )
 
-// mcpServer porte le client API et l'identité du token, résolue une seule fois au démarrage.
+// mcpServer carries the API client and the token identity, resolved once at startup.
 type mcpServer struct {
 	api        *client.Client
 	out        io.Writer
 	projectKey string
 	teamSlug   string
-	// siblings est la liste des clés de projets frères, résolue au démarrage. Elle sert à
-	// composer les instructions d'initialisation : sans elle, un agent ne saurait pas à qui
-	// il peut adresser une question.
+	// siblings is the list of sibling project keys, resolved at startup. It composes the
+	// initialisation instructions: without it, an agent would not know who it may address a
+	// question to.
 	siblings []string
 }
 
-// runMCP lance le serveur MCP sur stdio.
+// runMCP starts the MCP server on stdio.
 //
-// L'identité du token est résolue AVANT la première requête : la clé du projet sert à composer
-// et à valider les identifiants lisibles (CORE-34), et un token invalide doit échouer tout de
-// suite avec un message clair plutôt qu'à chaque appel d'outil.
+// The token identity is resolved BEFORE the first request: the project key composes and validates
+// the readable identifiers (CORE-34), and an invalid token must fail right away with a clear
+// message rather than on every tool call.
 func runMCP(ctx context.Context, _ []string) error {
 	api, err := newClient()
 	if err != nil {
@@ -77,11 +77,11 @@ func runMCP(ctx context.Context, _ []string) error {
 		service.Identity
 	}
 	if err := api.Do(ctx, http.MethodGet, workspaceAPI+"/whoami", nil, &identity); err != nil {
-		return fmt.Errorf("résolution du token: %w", err)
+		return fmt.Errorf("resolving the token: %w", err)
 	}
 	if identity.ProjectKey == "" {
-		return errors.New("ce token n'est pas scopé à un projet — le serveur MCP a besoin d'un " +
-			"token de projet (flowlio token create <KEY> <nom>)")
+		return errors.New("this token is not scoped to a project — the MCP server needs a project " +
+			"token (flowlio token create <KEY> <name>)")
 	}
 
 	srv := &mcpServer{
@@ -95,11 +95,11 @@ func runMCP(ctx context.Context, _ []string) error {
 	return srv.serve(ctx, os.Stdin)
 }
 
-// serve lit les messages entrants, un par ligne, et répond sur stdout.
+// serve reads incoming messages, one per line, and answers on stdout.
 //
-// Une erreur de décodage n'interrompt pas la session : elle donne une réponse d'erreur et la
-// boucle continue. Fermer le flux au premier message malformé ferait perdre à l'agent une
-// session entière pour une ligne parasite.
+// A decoding error does not interrupt the session: it yields an error response and the loop goes
+// on. Closing the stream at the first malformed message would cost the agent a whole session for
+// one stray line.
 func (s *mcpServer) serve(ctx context.Context, in io.Reader) error {
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64<<10), maxMessageBytes)
@@ -112,17 +112,17 @@ func (s *mcpServer) serve(ctx context.Context, in io.Reader) error {
 
 		var req rpcRequest
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
-			s.writeResponse(errorResponse(nil, codeParseError, "message JSON illisible"))
+			s.writeResponse(errorResponse(nil, codeParseError, "unreadable JSON message"))
 			continue
 		}
 
-		// Pas d'ID : c'est une notification (notifications/initialized par exemple). Le protocole
-		// interdit d'y répondre.
+		// No ID: this is a notification (notifications/initialized for instance). The protocol
+		// forbids answering it.
 		if len(req.ID) == 0 {
 			continue
 		}
 		if req.JSONRPC != "2.0" {
-			s.writeResponse(errorResponse(req.ID, codeInvalidRequest, "jsonrpc doit valoir 2.0"))
+			s.writeResponse(errorResponse(req.ID, codeInvalidRequest, "jsonrpc must be 2.0"))
 			continue
 		}
 
@@ -130,41 +130,40 @@ func (s *mcpServer) serve(ctx context.Context, in io.Reader) error {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("lecture de stdin: %w", err)
+		return fmt.Errorf("reading stdin: %w", err)
 	}
 	return nil
 }
 
-// dispatch route une méthode MCP.
+// dispatch routes an MCP method.
 //
-// Une erreur d'outil n'est PAS une erreur de protocole : elle revient dans le résultat avec
-// isError, pour que l'agent la lise et se corrige. Les codes JSON-RPC restent réservés aux
-// défauts de protocole, que l'agent ne peut pas corriger.
+// A tool error is NOT a protocol error: it comes back in the result with isError, so the agent
+// reads it and corrects itself. The JSON-RPC codes stay reserved for protocol faults, which the
+// agent cannot correct.
 //
-// UN PANIC NE DOIT PAS TUER LA SESSION. Sans le recover ci-dessous, un déréférencement nul dans
-// n'importe quel outil fait remonter la panique jusqu'à la goroutine principale : le process
-// meurt, stdout se ferme, et l'agent voit sa session MCP disparaître SANS RÉPONSE JSON-RPC à la
-// requête en cours. Il attend un message qui n'arrivera jamais, sur un tube fermé — c'est le pire
-// mode de défaillance de tout le produit, parce que l'agent ne peut ni le lire, ni s'en corriger,
-// ni même savoir ce qu'il a perdu.
+// A PANIC MUST NOT KILL THE SESSION. Without the recover below, a nil dereference in any tool
+// carries the panic up to the main goroutine: the process dies, stdout closes, and the agent sees
+// its MCP session vanish WITH NO JSON-RPC ANSWER to the request in flight. It waits for a message
+// that will never come, on a closed pipe — the worst failure mode of the whole product, because
+// the agent can neither read it, nor correct itself, nor even know what it lost.
 //
-// Le recover est ici et pas dans callTool : il couvre AUSSI initialize, tools/list et le routage
-// lui-même. Un panic dans instructions() est aussi fatal qu'un panic dans un outil.
+// The recover is here and not in callTool: it ALSO covers initialize, tools/list and the routing
+// itself. A panic in instructions() is as fatal as a panic in a tool.
 //
-// La trace part sur STDERR, jamais sur stdout : stdout appartient au protocole. Elle y va en
-// entier — c'est un bug du produit, pas une donnée sensible, et sans elle le défaut est
-// irreproductible. Ce que l'agent reçoit, lui, est un message court : il n'a rien à faire d'une
-// trace Go, et la lui verser polluerait son contexte pour rien.
+// The trace goes to STDERR, never to stdout: stdout belongs to the protocol. It goes there whole
+// — this is a product bug, not sensitive data, and without it the fault is irreproducible. What
+// the agent gets is a short message: it has no use for a Go trace, and pouring one into its
+// context would pollute it for nothing.
 func (s *mcpServer) dispatch(ctx context.Context, req rpcRequest) (resp rpcResponse) {
 	defer func() {
 		r := recover()
 		if r == nil {
 			return
 		}
-		fmt.Fprintf(os.Stderr, "flowlio mcp: PANIC sur %s: %v\n%s\n", req.Method, r, debug.Stack())
+		fmt.Fprintf(os.Stderr, "flowlio mcp: PANIC on %s: %v\n%s\n", req.Method, r, debug.Stack())
 		resp = errorResponse(req.ID, codeInternalError,
-			"erreur interne du serveur flowlio sur "+req.Method+
-				" — la session continue, l'appel a échoué")
+			"internal flowlio server error on "+req.Method+
+				" — the session goes on, the call failed")
 	}()
 
 	switch req.Method {
@@ -185,12 +184,12 @@ func (s *mcpServer) dispatch(ctx context.Context, req rpcRequest) (resp rpcRespo
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: result}
 
 	default:
-		return errorResponse(req.ID, codeMethodNotFound, "méthode inconnue: "+req.Method)
+		return errorResponse(req.ID, codeMethodNotFound, "unknown method: "+req.Method)
 	}
 }
 
-// initialize répond à la poignée de main. Le serveur n'annonce que les outils : ni ressources,
-// ni prompts, ni échantillonnage — la surface annoncée est celle qui est réellement servie.
+// initialize answers the handshake. The server announces tools only: no resources, no prompts, no
+// sampling — the announced surface is the one actually served.
 func (s *mcpServer) initialize() map[string]any {
 	return map[string]any{
 		"protocolVersion": protocolVersion,
@@ -205,44 +204,44 @@ func (s *mcpServer) initialize() map[string]any {
 	}
 }
 
-// instructions dit à l'agent où il travaille, avant son premier message.
+// instructions tells the agent where it works, before its first message.
 //
-// C'est ce qui remplace un outil `whoami` : son contenu est constant sur la vie du token, donc
-// le facturer en schéma à chaque tour ET en aller-retour au premier serait payer deux fois pour
-// une information qu'on connaît déjà au démarrage.
+// This is what replaces a `whoami` tool: its content is constant over the life of the token, so
+// billing it as a schema on every turn AND as a round trip on the first one would pay twice for
+// something already known at startup.
 func (s *mcpServer) instructions() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Tu es l'agent du projet %s, dans la team %s.\n", s.projectKey, s.teamSlug)
-	b.WriteString("Une référence se lit CLE-NUMERO (par exemple " + s.projectKey + "-34) ; " +
-		"tâches et issues partagent la même numérotation, donc une référence désigne un seul objet.\n")
+	fmt.Fprintf(&b, "You are the agent of project %s, in team %s.\n", s.projectKey, s.teamSlug)
+	b.WriteString("A reference reads KEY-NUMBER (for example " + s.projectKey + "-34); " +
+		"tasks and issues share the same numbering, so a reference names exactly one object.\n")
 
 	if len(s.siblings) > 0 {
-		fmt.Fprintf(&b, "Projets frères, à qui tu peux adresser une question : %s.\n",
+		fmt.Fprintf(&b, "Sibling projects, the ones you may address a question to: %s.\n",
 			strings.Join(s.siblings, ", "))
 	} else {
-		b.WriteString("Aucun projet frère dans cette team : create_issue n'a personne à qui écrire.\n")
+		b.WriteString("No sibling project in this team: create_issue has nobody to write to.\n")
 	}
 
-	// Le cadrage du contenu tiers vit ICI et nulle part ailleurs : c'est une constante du serveur,
-	// payée une fois par session, et qui n'est le paramètre d'aucun outil. Personne ne peut donc
-	// la désactiver depuis un appel. Détail du modèle : mcp_untrusted.go.
+	// The framing of third-party content lives HERE and nowhere else: it is a server constant,
+	// paid once per session, and it is the parameter of no tool. Nobody can therefore switch it
+	// off from a call. Model detail: mcp_untrusted.go.
 	b.WriteString(framingRule + "\n")
 
-	b.WriteString("Commence par check_inbox : il dit ce qui t'attend et ce que tu avais laissé en cours.")
+	b.WriteString("Start with check_inbox: it says what awaits you and what you had left in progress.")
 	return b.String()
 }
 
-// siblingKeys résout les autres projets de la team.
+// siblingKeys resolves the other projects of the team.
 //
-// Best effort : un échec ne doit pas empêcher la session de démarrer, il retire seulement une
-// phrase des instructions. L'erreur part sur stderr — jamais sur stdout, qui appartient au
-// protocole.
+// Best effort: a failure must not keep the session from starting, it only removes one sentence
+// from the instructions. The error goes to stderr — never to stdout, which belongs to the
+// protocol.
 func (s *mcpServer) siblingKeys(ctx context.Context) []string {
 	var projects []struct {
 		Key string `json:"key"`
 	}
 	if err := s.api.Do(ctx, http.MethodGet, workspaceAPI+"/projects", nil, &projects); err != nil {
-		fmt.Fprintf(os.Stderr, "flowlio mcp: liste des projets frères indisponible: %v\n", err)
+		fmt.Fprintf(os.Stderr, "flowlio mcp: sibling project list unavailable: %v\n", err)
 		return nil
 	}
 

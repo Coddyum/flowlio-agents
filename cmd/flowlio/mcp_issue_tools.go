@@ -4,18 +4,19 @@ package main
 //
 // | Élément                | Résumé                                                  | Ligne |
 // |------------------------|---------------------------------------------------------|-------|
-// | mcpServer.createIssue  | Pose une question à un projet frère                       | 40    |
-// | mcpServer.listIssues   | Les questions échangées avec les projets frères           | 61    |
-// | mcpServer.answerIssue  | Ajoute un message au fil d'une issue, et la clôt          | 107   |
-// | mcpServer.checkInbox   | Ce qui attend l'agent, sans aucun paramètre               | 143   |
-// | mcpServer.issuePath    | Compose le chemin d'API d'une issue                       | 157   |
-// | splitRef               | Découpe CORE-34 en clé de projet et numéro                | 167   |
+// | mcpServer.createIssue  | Asks a sibling project a question                         | 41    |
+// | mcpServer.listIssues   | The questions exchanged with the sibling projects          | 62    |
+// | mcpServer.answerIssue  | Adds a message to an issue thread, and closes it          | 108   |
+// | mcpServer.checkInbox   | What awaits the agent, with no parameter at all           | 144   |
+// | mcpServer.issuePath    | Composes the API path of an issue                         | 158   |
+// | splitRef               | Splits CORE-34 into a project key and a number            | 168   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Les issues sont le cœur du produit : deux repos qui se parlent sans que l'humain serve de
-// messager. Une référence porte TOUJOURS la clé du projet destinataire, qui possède l'issue.
+// Issues are the heart of the product: two repositories talking to each other without the human
+// carrying the messages. A reference ALWAYS carries the key of the addressee project, which owns
+// the issue.
 
 import (
 	"context"
@@ -36,17 +37,17 @@ const (
 	inboxAPI = "/api/inbox"
 )
 
-// createIssue pose une question à un projet frère de la team.
+// createIssue asks a question to a sibling project of the team.
 func (s *mcpServer) createIssue(ctx context.Context, args json.RawMessage) (any, error) {
 	var in issueservice.CreateIssueInput
 	if err := json.Unmarshal(args, &in); err != nil {
-		return nil, errors.New("arguments illisibles")
+		return nil, errors.New("unreadable arguments")
 	}
 
 	in.ToProject = strings.ToUpper(strings.TrimSpace(in.ToProject))
 	if in.ToProject == s.projectKey {
 		return nil, fmt.Errorf(
-			"une question à son propre projet (%s) est une tâche — utiliser create_task",
+			"a question to one's own project (%s) is a task — use create_task",
 			s.projectKey)
 	}
 
@@ -57,7 +58,7 @@ func (s *mcpServer) createIssue(ctx context.Context, args json.RawMessage) (any,
 	return writeResult("issue", issue.Ref, issue), nil
 }
 
-// listIssues renvoie les questions échangées avec les projets frères.
+// listIssues returns the questions exchanged with the sibling projects.
 func (s *mcpServer) listIssues(ctx context.Context, args json.RawMessage) (any, error) {
 	var in struct {
 		Role   string `json:"role"`
@@ -66,7 +67,7 @@ func (s *mcpServer) listIssues(ctx context.Context, args json.RawMessage) (any, 
 		Closed bool   `json:"closed"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
-		return nil, errors.New("arguments illisibles")
+		return nil, errors.New("unreadable arguments")
 	}
 
 	query := url.Values{}
@@ -93,9 +94,9 @@ func (s *mcpServer) listIssues(ctx context.Context, args json.RawMessage) (any, 
 		return nil, err
 	}
 
-	// Le titre d'une issue entrante est écrit par le pair, et 200 caractères suffisent à loger
-	// une consigne. Un listing ne porte pas de rappel de lecture : une ligne par issue, la
-	// consigne complète est déjà dans les instructions de session.
+	// The title of an incoming issue is written by the peer, and 200 characters are enough to
+	// hold an instruction. A listing carries no reading notice: one line per issue, and the full
+	// rule is already in the session instructions.
 	f, err := newFraming(s.projectKey)
 	if err != nil {
 		return nil, err
@@ -103,7 +104,7 @@ func (s *mcpServer) listIssues(ctx context.Context, args json.RawMessage) (any, 
 	return f.markIssues(issues), nil
 }
 
-// answerIssue ajoute un message au fil d'une issue, et la clôt si demandé.
+// answerIssue adds a message to an issue thread, and closes it when asked.
 func (s *mcpServer) answerIssue(ctx context.Context, args json.RawMessage) (any, error) {
 	var in struct {
 		Ref   string `json:"ref"`
@@ -111,7 +112,7 @@ func (s *mcpServer) answerIssue(ctx context.Context, args json.RawMessage) (any,
 		Close bool   `json:"close"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
-		return nil, errors.New("arguments illisibles")
+		return nil, errors.New("unreadable arguments")
 	}
 
 	projectKey, number, err := splitRef(in.Ref, s.projectKey)
@@ -126,9 +127,9 @@ func (s *mcpServer) answerIssue(ctx context.Context, args json.RawMessage) (any,
 		return nil, err
 	}
 
-	// Répondre à une issue ENTRANTE en renvoie le titre, écrit par le pair : il est balisé comme
-	// partout ailleurs. L'enveloppe d'écriture reste {ref, objet} — pas de rappel de lecture ici,
-	// l'agent vient d'écrire, il ne découvre rien.
+	// Answering an INCOMING issue returns its title, written by the peer: it is marked as
+	// everywhere else. The write envelope stays {ref, object} — no reading notice here, the agent
+	// has just written, it discovers nothing.
 	f, err := newFraming(s.projectKey)
 	if err != nil {
 		return nil, err
@@ -136,10 +137,10 @@ func (s *mcpServer) answerIssue(ctx context.Context, args json.RawMessage) (any,
 	return writeResult("issue", issue.Ref, f.markIssue(issue)), nil
 }
 
-// checkInbox renvoie ce qui attend l'agent. Aucun paramètre : tout vient du token.
+// checkInbox returns what awaits the agent. No parameter: everything comes from the token.
 //
-// C'est le premier appel d'une session, donc le premier endroit où du texte écrit par un autre
-// dépôt entre dans le contexte de l'agent. Tout ce que le pair a écrit y est balisé.
+// This is the first call of a session, hence the first place where text written by another
+// repository enters the agent's context. Everything the peer wrote is marked there.
 func (s *mcpServer) checkInbox(ctx context.Context, _ json.RawMessage) (any, error) {
 	var inbox inboxservice.Inbox
 	if err := s.api.Do(ctx, http.MethodGet, inboxAPI+"/", nil, &inbox); err != nil {
@@ -153,36 +154,36 @@ func (s *mcpServer) checkInbox(ctx context.Context, _ json.RawMessage) (any, err
 	return inboxResult{Reading: f.notice(), Inbox: f.markInbox(inbox)}, nil
 }
 
-// issuePath compose le chemin d'API d'une issue.
+// issuePath composes the API path of an issue.
 func (s *mcpServer) issuePath(projectKey string, number int64) string {
 	return issueAPI + "/" + url.PathEscape(projectKey) + "/" + strconv.FormatInt(number, 10)
 }
 
-// splitRef découpe CORE-34 en clé de projet et numéro.
+// splitRef splits CORE-34 into a project key and a number.
 //
-// Contrairement aux tâches, la clé peut désigner un projet frère : une issue appartient à son
-// destinataire, qui n'est pas toujours l'appelant. Un numéro nu désigne le projet courant.
-// Le contrôle d'accès n'est PAS fait ici — il est dans la query : une référence pointant une
-// conversation à laquelle l'appelant ne participe pas remonte simplement « introuvable ».
+// Unlike tasks, the key may name a sibling project: an issue belongs to its addressee, which is
+// not always the caller. A bare number names the current project. Access control is NOT done here
+// — it lives in the query: a reference pointing at a conversation the caller takes no part in
+// simply comes back as "not found".
 func splitRef(ref, defaultKey string) (string, int64, error) {
 	trimmed := strings.TrimSpace(ref)
 	if trimmed == "" {
-		return "", 0, errors.New("référence manquante")
+		return "", 0, errors.New("missing reference")
 	}
 
 	projectKey, digits := defaultKey, trimmed
 	if prefix, suffix, found := strings.Cut(trimmed, "-"); found {
-		// Un préfixe vide (« -34 ») produirait un chemin d'API avec un segment vide, donc une
-		// route qui ne correspond à rien : le refuser ici donne un message utile.
+		// An empty prefix ("-34") would produce an API path with an empty segment, hence a route
+		// that matches nothing: refusing it here gives a useful message.
 		if prefix == "" {
-			return "", 0, fmt.Errorf("référence invalide: %s (attendu %s-34)", trimmed, defaultKey)
+			return "", 0, fmt.Errorf("invalid reference: %s (expected %s-34)", trimmed, defaultKey)
 		}
 		projectKey, digits = strings.ToUpper(prefix), suffix
 	}
 
 	number, err := strconv.ParseInt(digits, 10, 64)
 	if err != nil || number < 1 {
-		return "", 0, fmt.Errorf("référence invalide: %s (attendu %s-34)", trimmed, defaultKey)
+		return "", 0, fmt.Errorf("invalid reference: %s (expected %s-34)", trimmed, defaultKey)
 	}
 	return projectKey, number, nil
 }

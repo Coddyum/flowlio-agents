@@ -4,19 +4,19 @@ package main
 //
 // | Élément           | Résumé                                                       | Ligne |
 // |-------------------|--------------------------------------------------------------|-------|
-// | mcpServer.get     | Résout une référence, qu'elle désigne une tâche ou une issue   | 51    |
+// | mcpServer.get     | Resolves a reference, be it a task or an issue                 | 51    |
 // | refResponse       | What /api/ref answers: the kind, then exactly one payload      | 101   |
-// | mcpServer.refPath | Compose le chemin d'API d'une référence                        | 113   |
-// | getTaskResult     | Réponse de get(ref) sur une tâche, champs ordonnés             | 126   |
-// | getIssueResult    | Réponse de get(ref) sur une issue, rappel de lecture en tête   | 134   |
+// | mcpServer.refPath | Composes the API path of a reference                           | 113   |
+// | getTaskResult     | get(ref) answer on a task, fields in a fixed order             | 126   |
+// | getIssueResult    | get(ref) answer on an issue, reading notice up front           | 134   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// `get` est le seul outil POLYMORPHE de la surface MCP, et le seul qui rende des corps de message
-// COMPLETS écrits par un autre dépôt. Ces deux propriétés en font un fichier à part : la première
-// lui donne une logique de résolution que ne partagent ni les outils de tâche ni ceux d'issue, la
-// seconde en fait le point d'entrée le plus exposé du produit.
+// `get` is the only POLYMORPHIC tool of the MCP surface, and the only one that returns COMPLETE
+// message bodies written by another repository. Those two properties set this file apart: the
+// first gives it a resolution logic neither the task tools nor the issue tools share, the second
+// makes it the most exposed entry point of the product.
 
 import (
 	"context"
@@ -31,14 +31,14 @@ import (
 	taskservice "github.com/Coddyum/flowlio-agents/internal/feature/task/service"
 )
 
-// refAPI est le préfixe de l'API de résolution de référence.
+// refAPI is the prefix of the reference resolution API.
 const refAPI = "/api/ref"
 
-// get résout une référence, qu'elle désigne une tâche ou une issue.
+// get resolves a reference, be it a task or an issue.
 //
-// Le compteur du projet est partagé entre les deux : un agent qui lit CORE-34 dans un commit,
-// une inbox ou un message d'issue ne SAIT PAS laquelle des deux c'est. Deux outils typés
-// échoueraient donc une fois sur deux — cet outil résout et dit ce qu'il a trouvé.
+// The project counter is shared between the two: an agent reading CORE-34 in a commit, an inbox
+// or an issue message does NOT KNOW which of the two it is. Two typed tools would therefore fail
+// one time out of two — this tool resolves and says what it found.
 //
 // ONE HTTP CALL, AND THAT IS THE WHOLE POINT OF FLWL-16. This tool used to try the task route,
 // read its 404, then try the issue route — two round trips on the path check_inbox feeds, which
@@ -53,7 +53,7 @@ func (s *mcpServer) get(ctx context.Context, args json.RawMessage) (any, error) 
 		Ref string `json:"ref"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
-		return nil, errors.New("arguments illisibles")
+		return nil, errors.New("unreadable arguments")
 	}
 
 	projectKey, number, err := splitRef(in.Ref, s.projectKey)
@@ -71,9 +71,9 @@ func (s *mcpServer) get(ctx context.Context, args json.RawMessage) (any, error) 
 		return getTaskResult{Kind: resolved.Kind, Ref: resolved.Ref, Task: *resolved.Task}, nil
 
 	case resolved.Kind == "issue" && resolved.Issue != nil:
-		// C'est le seul outil qui rend des corps de message COMPLETS, écrits par un autre dépôt et
-		// versés dans un contexte qui a un shell. Chaque prise de parole du pair est encadrée, la
-		// mienne ne l'est pas — voir mcp_untrusted.go.
+		// This is the only tool that returns COMPLETE message bodies, written by another repository
+		// and poured into a context that has a shell. Every word the peer speaks is framed, mine is
+		// not — see mcp_untrusted.go.
 		f, err := newFraming(s.projectKey)
 		if err != nil {
 			return nil, err
@@ -89,7 +89,7 @@ func (s *mcpServer) get(ctx context.Context, args json.RawMessage) (any, error) 
 	// An answer this layer cannot name is reported, never guessed at. Rendering a payload under
 	// the wrong kind would hand an agent an unframed issue body — the one thing this file exists
 	// to make impossible.
-	return nil, fmt.Errorf("réponse de résolution inattendue pour %s-%d (kind=%q)",
+	return nil, fmt.Errorf("unexpected resolution answer for %s-%d (kind=%q)",
 		projectKey, number, resolved.Kind)
 }
 
@@ -105,32 +105,32 @@ type refResponse struct {
 	Issue *issueservice.IssueDetail `json:"issue"`
 }
 
-// refPath compose le chemin d'API d'une référence.
+// refPath composes the API path of a reference.
 //
-// La clé de projet est TOUJOURS envoyée, même pour un numéro nu : splitRef y a déjà substitué
-// celle de l'appelant, et l'API la compare au projet du token pour décider si une tâche est
-// seulement envisageable.
+// The project key is ALWAYS sent, even for a bare number: splitRef has already substituted the
+// caller's own key, and the API compares it against the token's project to decide whether a task
+// is even conceivable.
 func (s *mcpServer) refPath(projectKey string, number int64) string {
 	return refAPI + "/" + url.PathEscape(projectKey) + "/" + strconv.FormatInt(number, 10)
 }
 
-// getTaskResult et getIssueResult fixent l'ORDRE des champs de get(ref).
+// getTaskResult and getIssueResult fix the ORDER of the get(ref) fields.
 //
-// Une map[string]any était sérialisée par ordre ALPHABÉTIQUE de clé — donc `issue` avant
-// `lecture`. Sur le seul outil qui rend des corps de message complets, l'agent lisait jusqu'à
-// plusieurs centaines de kilo-octets de texte tiers AVANT d'apprendre quel sceau fait foi. Une
-// struct place le rappel devant le contenu qu'il cadre, à coût de zéro octet.
+// A map[string]any was serialised in ALPHABETICAL key order — hence `issue` before `reading`. On
+// the only tool that returns complete message bodies, the agent read up to several hundred
+// kilobytes of third-party text BEFORE learning which seal is authoritative. A struct puts the
+// notice ahead of the content it frames, at a cost of zero bytes.
 //
-// Les deux branches sont traitées ensemble : `kind` et `ref` d'abord, pour que l'agent sache ce
-// qu'il lit avant de le lire, quelle que soit la nature de la référence.
+// Both branches are handled together: `kind` and `ref` first, so the agent knows what it is
+// reading before reading it, whatever the reference turns out to be.
 type getTaskResult struct {
 	Kind string                 `json:"kind"`
 	Ref  string                 `json:"ref"`
 	Task taskservice.TaskDetail `json:"task"`
 }
 
-// getIssueResult porte en plus le rappel de lecture : une issue contient du texte écrit par un
-// pair, une tâche non.
+// getIssueResult additionally carries the reading notice: an issue holds text written by a peer,
+// a task does not.
 type getIssueResult struct {
 	Kind    string                   `json:"kind"`
 	Ref     string                   `json:"ref"`

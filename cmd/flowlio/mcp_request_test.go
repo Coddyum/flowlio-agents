@@ -200,8 +200,8 @@ func TestUpdateTaskWithNothingToChangeSendsNoRequest(t *testing.T) {
 			if err == nil {
 				t.Fatal("un appel qui ne demande aucun changement doit être une erreur, pas un succès")
 			}
-			if err.Error() != "aucune modification demandée" {
-				t.Errorf("message = %q, attendu \"aucune modification demandée\"", err)
+			if err.Error() != "no change requested" {
+				t.Errorf("message = %q, attendu \"no change requested\"", err)
 			}
 			if got := rec.all(); len(got) != 0 {
 				t.Errorf("%d requêtes émises: %+v", len(got), got)
