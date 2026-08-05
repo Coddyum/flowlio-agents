@@ -28,3 +28,8 @@ coverage.*
 next.md
 docs/decisions.md
 docs/lecons.md
+
+# Memory system copied from another repo as a design reference. It carries that repo's real
+# security findings and internal state — it is somebody else's context, not this project's, and
+# nothing in it belongs in a public repository.
+docs/memory-agents/
