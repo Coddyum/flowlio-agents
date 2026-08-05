@@ -4,20 +4,19 @@ package service
 //
 // | Élément              | Résumé                                                  | Ligne |
 // |----------------------|---------------------------------------------------------|-------|
-// | service.AllowTrust   | Ouvre une paire de confiance entre deux projets          | 43    |
-// | service.RevokeTrust  | Ferme une paire de confiance entre deux projets          | 61    |
-// | service.ListTrust    | Rend le graphe de confiance d'une team                   | 78    |
-// | normalisePair        | Valide et normalise les deux clés d'une paire            | 105   |
+// | service.AllowTrust   | Opens a trust pair between two projects                  | 43    |
+// | service.RevokeTrust  | Closes a trust pair between two projects                 | 61    |
+// | service.ListTrust    | Returns a team's trust graph                             | 78    |
+// | normalisePair        | Validates and normalises the two keys of a pair          | 105   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// CE FICHIER NE DÉCIDE D'AUCUNE AUTORISATION.
+// THIS FILE DECIDES NO AUTHORISATION.
 //
-// Il édite une déclaration ; c'est le prédicat du WHERE de CreateIssue (sql/queries/issues.sql)
-// qui l'applique, et lui seul. La seule validation ici est celle de deux chaînes tapées par un
-// humain — la tenancy vit dans la query, où elle ne peut pas être contournée par un appelant qui
-// atteindrait le store directement.
+// It edits a declaration; it is the WHERE predicate of CreateIssue (sql/queries/issues.sql) that
+// enforces it, and it alone. The only validation here is that of two strings typed by a human —
+// tenancy lives in the query, where a caller reaching the store directly cannot work around it.
 
 import (
 	"context"
@@ -27,19 +26,19 @@ import (
 	"github.com/google/uuid"
 )
 
-// errSelfPair est le message rendu à un humain qui autorise un projet avec lui-même.
+// errSelfPair is the message returned to a human allowing a project with itself.
 //
-// C'est de la validation d'entrée, pas de la tenancy : la base refuserait de toute façon (sa
-// CHECK d'ordre exclut l'égalité, voir la migration 000007), mais elle rendrait un 500 ou un
-// `not found` là où un 400 lisible dit ce qu'il faut faire. Un projet qui se pose une question à
-// lui-même n'a pas besoin du canal inter-projets : il a des tâches.
+// This is input validation, not tenancy: the database would refuse anyway (its ordering CHECK
+// excludes equality, see migration 000007), but it would return a 500 or a `not found` where a
+// readable 400 says what to do. A project asking itself a question has no need for the
+// cross-project channel: it has tasks.
 var errSelfPair = errors.New(
-	"un projet ne peut pas s'autoriser lui-même — une question à son propre repo est une tâche")
+	"a project cannot allow itself — a question to one's own repo is a task")
 
-// AllowTrust ouvre une paire. Idempotente : rejouer la commande rend Changed à faux.
+// AllowTrust opens a pair. Idempotent: replaying the command returns Changed as false.
 //
-// Une clé inconnue, ou d'une autre team, remonte en ErrNotFound depuis la query — jamais depuis
-// un contrôle écrit ici, qui devrait pour cela résoudre les clés lui-même.
+// An unknown key, or one from another team, surfaces as ErrNotFound from the query — never from a
+// check written here, which would have to resolve the keys itself to do so.
 func (s *service) AllowTrust(ctx context.Context, in TrustPairInput) (TrustDecision, error) {
 	first, second, err := normalisePair(in)
 	if err != nil {
@@ -53,11 +52,11 @@ func (s *service) AllowTrust(ctx context.Context, in TrustPairInput) (TrustDecis
 	return TrustDecision{First: first, Second: second, Changed: created}, nil
 }
 
-// RevokeTrust ferme une paire. Idempotente : rejouer la commande rend Changed à faux.
+// RevokeTrust closes a pair. Idempotent: replaying the command returns Changed as false.
 //
-// Retirer une confiance interdit d'OUVRIR une nouvelle issue, et rien d'autre. Les fils déjà
-// ouverts restent lisibles et répondables : ce n'est pas un outil de confinement, c'est une
-// déclaration de moindre privilège. Le coupe-circuit du produit est la révocation de token.
+// Removing a trust forbids OPENING a new issue, and nothing else. Threads already open stay
+// readable and answerable: this is not a containment tool, it is a least-privilege declaration. The
+// product's circuit breaker is token revocation.
 func (s *service) RevokeTrust(ctx context.Context, in TrustPairInput) (TrustDecision, error) {
 	first, second, err := normalisePair(in)
 	if err != nil {
@@ -71,10 +70,10 @@ func (s *service) RevokeTrust(ctx context.Context, in TrustPairInput) (TrustDeci
 	return TrustDecision{First: first, Second: second, Changed: removed}, nil
 }
 
-// ListTrust rend le graphe d'une team, trié par clés.
+// ListTrust returns a team's graph, sorted by keys.
 //
-// C'est la seule surface où la vérité du graphe est lisible, et la première commande que tape un
-// humain dont un agent vient de recevoir `not found` sur un create_issue.
+// This is the only surface where the truth of the graph is readable, and the first command a human
+// types when an agent has just been handed `not found` on a create_issue.
 func (s *service) ListTrust(ctx context.Context, teamID uuid.UUID) ([]TrustEdge, error) {
 	if teamID == uuid.Nil {
 		return nil, ErrInvalidInput
@@ -96,12 +95,12 @@ func (s *service) ListTrust(ctx context.Context, teamID uuid.UUID) ([]TrustEdge,
 	return edges, nil
 }
 
-// normalisePair valide et normalise les deux clés. Majuscules, comme partout : `frnt` et `FRNT`
-// désignent le même projet, et laisser la casse décider de l'existence d'une arête produirait
-// deux graphes pour une seule intention.
+// normalisePair validates and normalises both keys. Uppercase, as everywhere: `frnt` and `FRNT`
+// name the same project, and letting case decide whether an edge exists would produce two graphs
+// for a single intention.
 //
-// La comparaison d'égalité a lieu APRÈS normalisation : sans ça, `trust allow frnt FRNT` passerait
-// la validation pour être refusé par la base.
+// The equality comparison happens AFTER normalisation: without that, `trust allow frnt FRNT` would
+// pass validation only to be refused by the database.
 func normalisePair(in TrustPairInput) (string, string, error) {
 	if in.TeamID == uuid.Nil {
 		return "", "", ErrInvalidInput

@@ -8,13 +8,13 @@ import (
 )
 
 const (
-	// codeUniqueViolation et codeCheckViolation : codes SQLSTATE de Postgres.
+	// codeUniqueViolation and codeCheckViolation: Postgres SQLSTATE codes.
 	codeUniqueViolation = "23505"
 	codeCheckViolation  = "23514"
 )
 
-// translate ramène les erreurs de la base à ErrNotFound / ErrConflict, pour que le service
-// raisonne sur des cas métier et pas sur des codes SQLSTATE.
+// translate brings database errors back to ErrNotFound / ErrConflict, so that the service reasons
+// about business cases and not about SQLSTATE codes.
 func translate(err error, op string) error {
 	if err == nil {
 		return nil

@@ -4,10 +4,10 @@ package service
 //
 // | Élément            | Résumé                                                    | Ligne |
 // |--------------------|-----------------------------------------------------------|-------|
-// | service.CreateTeam | Valide puis crée une team                                  | 23    |
-// | service.ListTeams  | Liste les teams existantes                                 | 43    |
-// | service.TeamBySlug | Résout une team par son slug                               | 57    |
-// | toTeam             | Projette une team du store en vue API                      | 66    |
+// | service.CreateTeam | Validates then creates a team                              | 23    |
+// | service.ListTeams  | Lists the existing teams                                   | 43    |
+// | service.TeamBySlug | Resolves a team by its slug                                | 57    |
+// | toTeam             | Projects a store team onto the API view                    | 66    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -19,7 +19,8 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/store"
 )
 
-// CreateTeam valide le slug et le nom, puis crée la team. Un slug déjà pris remonte ErrConflict.
+// CreateTeam validates the slug and the name, then creates the team. A slug already taken yields
+// ErrConflict.
 func (s *service) CreateTeam(ctx context.Context, in CreateTeamInput) (Team, error) {
 	slug := strings.ToLower(strings.TrimSpace(in.Slug))
 	name := strings.TrimSpace(in.Name)
@@ -27,7 +28,7 @@ func (s *service) CreateTeam(ctx context.Context, in CreateTeamInput) (Team, err
 	if err := validateSlug(slug); err != nil {
 		return Team{}, err
 	}
-	if err := validateName("nom de team", name); err != nil {
+	if err := validateName("team name", name); err != nil {
 		return Team{}, err
 	}
 
@@ -38,8 +39,8 @@ func (s *service) CreateTeam(ctx context.Context, in CreateTeamInput) (Team, err
 	return toTeam(created), nil
 }
 
-// ListTeams liste les teams. Réservé aux tokens admin : un token de projet n'a aucune raison de
-// connaître les autres teams.
+// ListTeams lists the teams. Admin tokens only: a project token has no reason to know about the
+// other teams.
 func (s *service) ListTeams(ctx context.Context) ([]Team, error) {
 	rows, err := s.store.ListTeams(ctx)
 	if err != nil {
@@ -53,7 +54,7 @@ func (s *service) ListTeams(ctx context.Context) ([]Team, error) {
 	return teams, nil
 }
 
-// TeamBySlug résout une team par son slug, pour que la CLI n'ait jamais à manipuler d'UUID.
+// TeamBySlug resolves a team by its slug, so that the CLI never has to handle a UUID.
 func (s *service) TeamBySlug(ctx context.Context, slug string) (Team, error) {
 	found, err := s.store.TeamBySlug(ctx, strings.ToLower(strings.TrimSpace(slug)))
 	if err != nil {
@@ -62,7 +63,7 @@ func (s *service) TeamBySlug(ctx context.Context, slug string) (Team, error) {
 	return toTeam(found), nil
 }
 
-// toTeam projette une team du store en vue API.
+// toTeam projects a store team onto the API view.
 func toTeam(t store.Team) Team {
 	return Team{ID: t.ID, Slug: t.Slug, Name: t.Name, CreatedAt: t.CreatedAt}
 }

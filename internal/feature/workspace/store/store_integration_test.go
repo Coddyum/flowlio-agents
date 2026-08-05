@@ -16,41 +16,41 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// newStore ouvre la base de test. Sans FLOWLIO_TEST_DATABASE_URL, le test est ignoré : la
-// suite unitaire doit rester exécutable sans infrastructure.
+// newStore opens the test database. Without FLOWLIO_TEST_DATABASE_URL the test is skipped: the unit
+// suite has to stay runnable with no infrastructure.
 func newStore(t *testing.T) (store.Store, *sql.DB) {
 	t.Helper()
 
 	dsn := os.Getenv("FLOWLIO_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("FLOWLIO_TEST_DATABASE_URL non renseigné — test d'intégration ignoré")
+		t.Skip("FLOWLIO_TEST_DATABASE_URL not set — integration test skipped")
 	}
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		t.Fatalf("ouverture de la base: %v", err)
+		t.Fatalf("opening the database: %v", err)
 	}
 	if err := db.Ping(); err != nil {
-		t.Fatalf("base injoignable: %v", err)
+		t.Fatalf("database unreachable: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
 	return store.New(database.New(db)), db
 }
 
-// createTeam crée une team jetable et programme sa suppression : les lignes liées partent en
-// cascade, la base de test ne dérive pas d'une exécution à l'autre.
+// createTeam creates a throwaway team and schedules its deletion: the related rows go in cascade,
+// so the test database does not drift from one run to the next.
 func createTeam(t *testing.T, st store.Store, db *sql.DB) store.Team {
 	t.Helper()
 
 	slug := "test-" + strings.ToLower(uuid.NewString()[:8])
-	team, err := st.CreateTeam(context.Background(), slug, "Team de test")
+	team, err := st.CreateTeam(context.Background(), slug, "Test team")
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}
 	t.Cleanup(func() {
 		if _, err := db.Exec("DELETE FROM teams WHERE id = $1", team.ID); err != nil {
-			t.Errorf("nettoyage de la team %s: %v", team.ID, err)
+			t.Errorf("cleaning up team %s: %v", team.ID, err)
 		}
 	})
 	return team
@@ -66,7 +66,7 @@ func TestTeamLifecycle(t *testing.T) {
 		t.Fatalf("TeamBySlug: %v", err)
 	}
 	if bySlug.ID != team.ID {
-		t.Errorf("TeamBySlug renvoie %s, attendu %s", bySlug.ID, team.ID)
+		t.Errorf("TeamBySlug returns %s, want %s", bySlug.ID, team.ID)
 	}
 
 	byID, err := st.TeamByID(ctx, team.ID)
@@ -74,20 +74,20 @@ func TestTeamLifecycle(t *testing.T) {
 		t.Fatalf("TeamByID: %v", err)
 	}
 	if byID.Slug != team.Slug {
-		t.Errorf("TeamByID renvoie %s, attendu %s", byID.Slug, team.Slug)
+		t.Errorf("TeamByID returns %s, want %s", byID.Slug, team.Slug)
 	}
 
-	if _, err := st.CreateTeam(ctx, team.Slug, "Doublon"); !errors.Is(err, store.ErrConflict) {
-		t.Errorf("slug dupliqué: erreur = %v, attendu ErrConflict", err)
+	if _, err := st.CreateTeam(ctx, team.Slug, "Duplicate"); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("duplicate slug: error = %v, want ErrConflict", err)
 	}
 
-	if _, err := st.TeamBySlug(ctx, "slug-inexistant-"+uuid.NewString()[:8]); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("slug inconnu: erreur = %v, attendu ErrNotFound", err)
+	if _, err := st.TeamBySlug(ctx, "missing-slug-"+uuid.NewString()[:8]); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("unknown slug: error = %v, want ErrNotFound", err)
 	}
 }
 
-// Propriété de sécurité centrale : une clé de projet appartenant à une autre team est
-// introuvable, pas seulement interdite.
+// Central security property: a project key belonging to another team is not found, not merely
+// forbidden.
 func TestProjectsAreIsolatedAcrossTeams(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -95,16 +95,16 @@ func TestProjectsAreIsolatedAcrossTeams(t *testing.T) {
 	teamA := createTeam(t, st, db)
 	teamB := createTeam(t, st, db)
 
-	projectA, err := st.CreateProject(ctx, teamA.ID, "CORE", "core de A")
+	projectA, err := st.CreateProject(ctx, teamA.ID, "CORE", "A's core")
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
 	if _, err := st.ProjectByKey(ctx, teamB.ID, "CORE"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("la team B voit le projet de A: erreur = %v, attendu ErrNotFound", err)
+		t.Errorf("team B sees A's project: error = %v, want ErrNotFound", err)
 	}
 	if _, err := st.ProjectByID(ctx, teamB.ID, projectA.ID); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("la team B lit le projet de A par identifiant: erreur = %v, attendu ErrNotFound", err)
+		t.Errorf("team B reads A's project by identifier: error = %v, want ErrNotFound", err)
 	}
 
 	projects, err := st.ListProjects(ctx, teamB.ID)
@@ -112,15 +112,15 @@ func TestProjectsAreIsolatedAcrossTeams(t *testing.T) {
 		t.Fatalf("ListProjects: %v", err)
 	}
 	if len(projects) != 0 {
-		t.Errorf("la team B liste %d projets, attendu 0", len(projects))
+		t.Errorf("team B lists %d projects, want 0", len(projects))
 	}
 
-	// La même clé reste disponible dans une autre team : l'unicité est par team, pas globale.
-	if _, err := st.CreateProject(ctx, teamB.ID, "CORE", "core de B"); err != nil {
-		t.Errorf("clé CORE refusée dans la team B: %v", err)
+	// The same key stays available in another team: uniqueness is per team, not global.
+	if _, err := st.CreateProject(ctx, teamB.ID, "CORE", "B's core"); err != nil {
+		t.Errorf("key CORE refused in team B: %v", err)
 	}
-	if _, err := st.CreateProject(ctx, teamA.ID, "CORE", "doublon dans A"); !errors.Is(err, store.ErrConflict) {
-		t.Errorf("clé dupliquée dans la team A: erreur = %v, attendu ErrConflict", err)
+	if _, err := st.CreateProject(ctx, teamA.ID, "CORE", "duplicate in A"); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("duplicate key in team A: error = %v, want ErrConflict", err)
 	}
 }
 
@@ -137,7 +137,7 @@ func TestTokenLifecycle(t *testing.T) {
 	}
 
 	prefix := strings.ToLower(uuid.NewString()[:8]) + "abcd"
-	token, err := st.CreateToken(ctx, team.ID, project.ID, "agent", prefix, "hash-de-test")
+	token, err := st.CreateToken(ctx, team.ID, project.ID, "agent", prefix, "test-hash")
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -147,12 +147,12 @@ func TestTokenLifecycle(t *testing.T) {
 		t.Fatalf("ListTokens: %v", err)
 	}
 	if len(tokens) != 1 || tokens[0].ID != token.ID {
-		t.Fatalf("ListTokens renvoie %d tokens, attendu celui qui vient d'être créé", len(tokens))
+		t.Fatalf("ListTokens returns %d tokens, want the one just created", len(tokens))
 	}
 
-	// Une autre team ne peut pas révoquer ce token.
+	// Another team cannot revoke this token.
 	if _, err := st.RevokeToken(ctx, other.ID, token.ID); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("révocation croisée: erreur = %v, attendu ErrNotFound", err)
+		t.Errorf("cross revocation: error = %v, want ErrNotFound", err)
 	}
 
 	revoked, err := st.RevokeToken(ctx, team.ID, token.ID)
@@ -160,26 +160,26 @@ func TestTokenLifecycle(t *testing.T) {
 		t.Fatalf("RevokeToken: %v", err)
 	}
 	if !revoked.Revoked {
-		t.Error("le token révoqué doit être marqué comme tel")
+		t.Error("a revoked token must be marked as such")
 	}
 
 	if _, err := st.RevokeToken(ctx, team.ID, token.ID); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("seconde révocation: erreur = %v, attendu ErrNotFound", err)
+		t.Errorf("second revocation: error = %v, want ErrNotFound", err)
 	}
 }
 
-// Un token admin ne porte NI team NI projet, et la base le refuse — pas seulement le code.
+// An admin token carries NEITHER team NOR project, and the database refuses it — not just the code.
 //
-// La forme `scope='admin' AND team_id IS NOT NULL` était légale jusqu'à la migration 000006 :
-// rien ne la produisait, donc elle était invisible, et elle armait un piège pour la première
-// session qui aurait une raison de créer un « admin épinglé à une team ». La doctrine du dépôt
-// est de rendre la forme illégale NON INSÉRABLE plutôt que seulement non produite.
+// The shape `scope='admin' AND team_id IS NOT NULL` was legal until migration 000006: nothing
+// produced it, so it was invisible, and it armed a trap for the first session with a reason to
+// create an "admin pinned to a team". The repo's doctrine is to make the illegal shape NOT
+// INSERTABLE rather than merely not produced.
 //
-// Le SQL est écrit ici en direct, sans passer par le store : le store n'expose aucun chemin
-// pour créer cette ligne, et c'est justement ce qu'on ne veut pas avoir à croire sur parole.
+// The SQL is written here directly, without going through the store: the store exposes no path for
+// creating that row, and that is precisely what we do not want to have to take on faith.
 //
-// MUTATION : rétablir la contrainte de 000002 (`scope='admin' AND project_id IS NULL`, sans la
-// clause sur team_id) fait passer le premier cas, donc tomber ce test.
+// MUTATION: restoring the 000002 constraint (`scope='admin' AND project_id IS NULL`, without the
+// clause on team_id) makes the first case pass, hence this test fail.
 func TestDatabaseRejectsAdminTokenCarryingATeam(t *testing.T) {
 	st, db := newStore(t)
 	team := createTeam(t, st, db)
@@ -189,71 +189,71 @@ func TestDatabaseRejectsAdminTokenCarryingATeam(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
-	interdits := []struct {
+	forbidden := []struct {
 		name      string
 		teamID    any
 		projectID any
 	}{
-		{"admin avec une team", team.ID, nil},
-		{"admin avec un projet", nil, project.ID},
-		{"admin complètement scopé", team.ID, project.ID},
+		{"admin with a team", team.ID, nil},
+		{"admin with a project", nil, project.ID},
+		{"fully scoped admin", team.ID, project.ID},
 	}
 
-	for _, tc := range interdits {
+	for _, tc := range forbidden {
 		t.Run(tc.name, func(t *testing.T) {
 			prefix := strings.ToLower(uuid.NewString()[:8]) + "abcd"
 			_, err := db.Exec(
 				`INSERT INTO tokens (scope, team_id, project_id, name, prefix, secret_hash)
-				 VALUES ('admin', $1, $2, 'piège', $3, 'hash-de-test')`,
+				 VALUES ('admin', $1, $2, 'trap', $3, 'test-hash')`,
 				tc.teamID, tc.projectID, prefix,
 			)
 			if err == nil {
-				// La ligne ne devrait jamais exister : on la retire pour ne pas polluer la base
-				// de dev, puis on échoue.
+				// The row should never exist: we remove it so as not to pollute the dev database,
+				// then we fail.
 				_, _ = db.Exec("DELETE FROM tokens WHERE prefix = $1", prefix)
-				t.Fatalf("la base a accepté un token admin (%s) : la contrainte tokens_scope_shape ne borne pas cette forme", tc.name)
+				t.Fatalf("the database accepted an admin token (%s): the tokens_scope_shape constraint does not bound that shape", tc.name)
 			}
 			if !strings.Contains(err.Error(), "tokens_scope_shape") {
-				t.Errorf("refusé par autre chose que tokens_scope_shape: %v", err)
+				t.Errorf("refused by something other than tokens_scope_shape: %v", err)
 			}
 		})
 	}
 
-	// Contre-épreuve : la forme légale, elle, passe. Sans elle, une contrainte qui refuserait
-	// TOUT token admin passerait pour correcte.
+	// Counter-check: the legal shape does go through. Without it, a constraint refusing EVERY admin
+	// token would pass for correct.
 	prefix := strings.ToLower(uuid.NewString()[:8]) + "abcd"
 	if _, err := db.Exec(
 		`INSERT INTO tokens (scope, team_id, project_id, name, prefix, secret_hash)
-		 VALUES ('admin', NULL, NULL, 'admin global', $1, 'hash-de-test')`, prefix,
+		 VALUES ('admin', NULL, NULL, 'global admin', $1, 'test-hash')`, prefix,
 	); err != nil {
-		t.Fatalf("la base refuse l'admin global, qui est la seule forme que l'amorçage produit: %v", err)
+		t.Fatalf("the database refuses the global admin, which is the only shape bootstrapping produces: %v", err)
 	}
 	t.Cleanup(func() {
 		if _, err := db.Exec("DELETE FROM tokens WHERE prefix = $1", prefix); err != nil {
-			t.Errorf("nettoyage du token %s: %v", prefix, err)
+			t.Errorf("cleaning up token %s: %v", prefix, err)
 		}
 	})
 }
 
-// La contrainte de format des clés est portée par la base : la validation applicative donne le
-// message, la base donne la garantie.
+// The key format constraint is carried by the database: the application-level validation gives the
+// message, the database gives the guarantee.
 func TestDatabaseRejectsMalformedKey(t *testing.T) {
 	st, db := newStore(t)
 	team := createTeam(t, st, db)
 
-	for _, key := range []string{"minuscule", "C", "TROP-LONGUE-CLE", ""} {
-		t.Run(fmt.Sprintf("clé %q", key), func(t *testing.T) {
+	for _, key := range []string{"lowercase", "C", "WAY-TOO-LONG-KEY", ""} {
+		t.Run(fmt.Sprintf("key %q", key), func(t *testing.T) {
 			if _, err := st.CreateProject(context.Background(), team.ID, key, "x"); !errors.Is(err, store.ErrConflict) {
-				t.Errorf("erreur = %v, attendu ErrConflict (violation de contrainte)", err)
+				t.Errorf("error = %v, want ErrConflict (constraint violation)", err)
 			}
 		})
 	}
 }
 
-// ordered rend la paire canonique d'une arête de confiance : low < high, au sens de Postgres.
+// ordered returns the canonical pair of a trust edge: low < high, in Postgres's sense.
 //
-// uuid.UUID est un [16]byte, donc l'opérateur < de Go ne s'applique pas ; la comparaison octet par
-// octet est exactement celle que Postgres fait sur le type uuid.
+// uuid.UUID is a [16]byte, so Go's < operator does not apply; the byte-by-byte comparison is
+// exactly the one Postgres performs on the uuid type.
 func ordered(a, b uuid.UUID) (low, high uuid.UUID) {
 	if bytes.Compare(a[:], b[:]) < 0 {
 		return a, b
@@ -261,7 +261,7 @@ func ordered(a, b uuid.UUID) (low, high uuid.UUID) {
 	return b, a
 }
 
-// allowTrust pose une arête de confiance par SQL direct, en la normalisant.
+// allowTrust lays down a trust edge through direct SQL, normalising it.
 func allowTrust(t *testing.T, db *sql.DB, teamID, a, b uuid.UUID) error {
 	t.Helper()
 
@@ -273,16 +273,16 @@ func allowTrust(t *testing.T, db *sql.DB, teamID, a, b uuid.UUID) error {
 	return err
 }
 
-// La base refuse les neuf formes illégales du graphe de confiance — pas le code, la BASE.
+// The database refuses the nine illegal shapes of the trust graph — not the code, the DATABASE.
 //
-// C'est la doctrine du dépôt appliquée à `project_trust` : on rend la forme illégale NON
-// INSÉRABLE plutôt que seulement non produite. Les FK COMPOSITES `(project_id, team_id)` sont ce
-// qui fait le travail : l'unique colonne `team_id` doit satisfaire les DEUX à la fois, donc une
-// arête entre deux projets de teams différentes est impossible, y compris si l'appelant MENT sur
-// `team_id` — les deux sens du mensonge sont testés.
+// This is the repo's doctrine applied to `project_trust`: the illegal shape is made NOT INSERTABLE
+// rather than merely not produced. The COMPOSITE FKs `(project_id, team_id)` are what does the
+// work: the single `team_id` column has to satisfy BOTH at once, so an edge between two projects of
+// different teams is impossible, including when the caller LIES about `team_id` — both directions
+// of the lie are tested.
 //
-// MUTATION : retirer `project_trust_ordered` fait passer l'auto-arête et le miroir ; retirer une
-// des deux FK composites fait passer l'arête inter-team correspondante.
+// MUTATION: removing `project_trust_ordered` lets the self-edge and the mirror through; removing
+// either composite FK lets the corresponding cross-team edge through.
 func TestDatabaseRejectsIllegalTrustEdges(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -291,43 +291,43 @@ func TestDatabaseRejectsIllegalTrustEdges(t *testing.T) {
 	teamB := createTeam(t, st, db)
 	teamC := createTeam(t, st, db)
 
-	core, err := st.CreateProject(ctx, teamA.ID, "CORE", "core de A")
+	core, err := st.CreateProject(ctx, teamA.ID, "CORE", "A's core")
 	if err != nil {
 		t.Fatalf("CreateProject CORE: %v", err)
 	}
-	front, err := st.CreateProject(ctx, teamA.ID, "FRNT", "front de A")
+	front, err := st.CreateProject(ctx, teamA.ID, "FRNT", "A's front")
 	if err != nil {
 		t.Fatalf("CreateProject FRNT: %v", err)
 	}
-	voisin, err := st.CreateProject(ctx, teamB.ID, "CORE", "core de B")
+	neighbour, err := st.CreateProject(ctx, teamB.ID, "CORE", "B's core")
 	if err != nil {
-		t.Fatalf("CreateProject voisin: %v", err)
+		t.Fatalf("CreateProject neighbour: %v", err)
 	}
 
-	lowAB, highAB := ordered(core.ID, voisin.ID)
+	lowAB, highAB := ordered(core.ID, neighbour.ID)
 
-	interdits := []struct {
+	forbidden := []struct {
 		name     string
 		exec     func() error
 		contains string
 	}{
 		{
-			"arête inter-team, team_id du premier projet",
-			func() error { return allowTrust(t, db, teamA.ID, core.ID, voisin.ID) },
+			"cross-team edge, team_id of the first project",
+			func() error { return allowTrust(t, db, teamA.ID, core.ID, neighbour.ID) },
 			"project_trust_",
 		},
 		{
-			"arête inter-team, en mentant sur team_id",
-			func() error { return allowTrust(t, db, teamB.ID, core.ID, voisin.ID) },
+			"cross-team edge, lying about team_id",
+			func() error { return allowTrust(t, db, teamB.ID, core.ID, neighbour.ID) },
 			"project_trust_",
 		},
 		{
-			"arête inter-team, team_id d'une troisième team",
-			func() error { return allowTrust(t, db, teamC.ID, core.ID, voisin.ID) },
+			"cross-team edge, team_id of a third team",
+			func() error { return allowTrust(t, db, teamC.ID, core.ID, neighbour.ID) },
 			"project_trust_",
 		},
 		{
-			"auto-arête",
+			"self-edge",
 			func() error {
 				_, err := db.Exec(
 					"INSERT INTO project_trust (team_id, low_project_id, high_project_id) VALUES ($1, $2, $2)",
@@ -337,7 +337,7 @@ func TestDatabaseRejectsIllegalTrustEdges(t *testing.T) {
 			"project_trust_ordered",
 		},
 		{
-			"paire non canonique (miroir)",
+			"non-canonical pair (mirror)",
 			func() error {
 				_, err := db.Exec(
 					"INSERT INTO project_trust (team_id, low_project_id, high_project_id) VALUES ($1, $2, $3)",
@@ -348,56 +348,56 @@ func TestDatabaseRejectsIllegalTrustEdges(t *testing.T) {
 		},
 	}
 
-	for _, tc := range interdits {
+	for _, tc := range forbidden {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.exec()
 			if err == nil {
-				t.Fatalf("la base a accepté : %s", tc.name)
+				t.Fatalf("the database accepted: %s", tc.name)
 			}
 			if !strings.Contains(err.Error(), tc.contains) {
-				t.Errorf("refusé par autre chose que %s: %v", tc.contains, err)
+				t.Errorf("refused by something other than %s: %v", tc.contains, err)
 			}
 		})
 	}
 
-	// L'arête légale, elle, passe — sans contre-épreuve, une contrainte qui refuserait TOUT
-	// passerait pour correcte.
+	// The legal edge does go through — without a counter-check, a constraint refusing EVERYTHING
+	// would pass for correct.
 	if err := allowTrust(t, db, teamA.ID, core.ID, front.ID); err != nil {
-		t.Fatalf("arête légale refusée: %v", err)
+		t.Fatalf("legal edge refused: %v", err)
 	}
 
-	t.Run("doublon", func(t *testing.T) {
+	t.Run("duplicate", func(t *testing.T) {
 		if err := allowTrust(t, db, teamA.ID, front.ID, core.ID); err == nil {
-			t.Fatal("la base a accepté un doublon (la paire est déjà déclarée dans l'autre sens)")
+			t.Fatal("the database accepted a duplicate (the pair is already declared the other way round)")
 		} else if !strings.Contains(err.Error(), "project_trust_pkey") {
-			t.Errorf("refusé par autre chose que la clé primaire: %v", err)
+			t.Errorf("refused by something other than the primary key: %v", err)
 		}
 	})
 
-	t.Run("déplacer un projet vers une autre team", func(t *testing.T) {
+	t.Run("moving a project to another team", func(t *testing.T) {
 		if _, err := db.Exec("UPDATE projects SET team_id = $1 WHERE id = $2", teamB.ID, core.ID); err == nil {
-			t.Error("un projet portant une arête a pu changer de team")
+			t.Error("a project carrying an edge was able to change team")
 		}
 	})
 
-	t.Run("déplacer une arête vers une autre team", func(t *testing.T) {
+	t.Run("moving an edge to another team", func(t *testing.T) {
 		if _, err := db.Exec("UPDATE project_trust SET team_id = $1 WHERE team_id = $2", teamB.ID, teamA.ID); err == nil {
-			t.Error("une arête a pu être déplacée dans une autre team")
+			t.Error("an edge was able to be moved into another team")
 		}
 	})
 
-	t.Run("suppression d'un projet : cascade", func(t *testing.T) {
+	t.Run("deleting a project: cascade", func(t *testing.T) {
 		if _, err := db.Exec("DELETE FROM projects WHERE id = $1", front.ID); err != nil {
-			t.Fatalf("suppression du projet: %v", err)
+			t.Fatalf("deleting the project: %v", err)
 		}
-		var restantes int
+		var remaining int
 		if err := db.QueryRow(
 			"SELECT count(*) FROM project_trust WHERE team_id = $1", teamA.ID,
-		).Scan(&restantes); err != nil {
-			t.Fatalf("comptage: %v", err)
+		).Scan(&remaining); err != nil {
+			t.Fatalf("counting: %v", err)
 		}
-		if restantes != 0 {
-			t.Errorf("%d arête(s) survivent au projet supprimé, attendu 0", restantes)
+		if remaining != 0 {
+			t.Errorf("%d edge(s) survive the deleted project, want 0", remaining)
 		}
 	})
 }

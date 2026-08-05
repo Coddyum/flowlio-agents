@@ -6,7 +6,7 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
 )
 
-// CreateProject crée un projet dans la team désignée par ?team=<slug>. Réservé aux tokens admin.
+// CreateProject creates a project in the team named by ?team=<slug>. Admin tokens only.
 func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	principal, ok := h.principal(w, r)
 	if !ok {

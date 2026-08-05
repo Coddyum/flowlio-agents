@@ -4,10 +4,10 @@ package service
 //
 // | Élément             | Résumé                                                   | Ligne |
 // |---------------------|----------------------------------------------------------|-------|
-// | service.CreateToken | Émet un token d'agent scopé à un projet                   | 28    |
-// | service.ListTokens  | Liste les tokens d'un projet, sans secret                 | 68    |
-// | service.RevokeToken | Révoque un token de la team                               | 93    |
-// | toTokenInfo         | Projette un token du store en vue de listing              | 101   |
+// | service.CreateToken | Issues an agent token scoped to a project                 | 28    |
+// | service.ListTokens  | Lists a project's tokens, with no secret                  | 68    |
+// | service.RevokeToken | Revokes one of the team's tokens                          | 93    |
+// | toTokenInfo         | Projects a store token onto the listing view              | 101   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -21,10 +21,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// CreateToken émet un token d'agent pour un projet de la team.
+// CreateToken issues an agent token for one of the team's projects.
 //
-// Le secret en clair existe uniquement dans la valeur de retour : il n'est ni persisté, ni
-// journalisé, ni réaffichable. Un token perdu se révoque et se réémet, il ne se retrouve pas.
+// The secret in clear exists only in the return value: it is neither persisted, nor logged, nor
+// displayable again. A lost token is revoked and reissued, it is not recovered.
 func (s *service) CreateToken(ctx context.Context, in CreateTokenInput) (CreatedToken, error) {
 	key := strings.ToUpper(strings.TrimSpace(in.ProjectKey))
 	name := strings.TrimSpace(in.Name)
@@ -35,7 +35,7 @@ func (s *service) CreateToken(ctx context.Context, in CreateTokenInput) (Created
 	if err := validateKey(key); err != nil {
 		return CreatedToken{}, err
 	}
-	if err := validateName("nom de token", name); err != nil {
+	if err := validateName("token name", name); err != nil {
 		return CreatedToken{}, err
 	}
 
@@ -63,8 +63,8 @@ func (s *service) CreateToken(ctx context.Context, in CreateTokenInput) (Created
 	}, nil
 }
 
-// ListTokens liste les tokens d'un projet de la team. Le secret n'existe nulle part en base :
-// seuls le préfixe public et les dates sont exposés.
+// ListTokens lists the tokens of one of the team's projects. The secret exists nowhere in the
+// database: only the public prefix and the dates are exposed.
 func (s *service) ListTokens(ctx context.Context, teamID uuid.UUID, projectKey string) ([]TokenInfo, error) {
 	key := strings.ToUpper(strings.TrimSpace(projectKey))
 	if err := validateKey(key); err != nil {
@@ -88,8 +88,8 @@ func (s *service) ListTokens(ctx context.Context, teamID uuid.UUID, projectKey s
 	return tokens, nil
 }
 
-// RevokeToken révoque un token de la team. Rejouer la révocation remonte ErrNotFound : la
-// query ne cible que les tokens encore actifs.
+// RevokeToken revokes one of the team's tokens. Replaying the revocation yields ErrNotFound: the
+// query only targets tokens that are still active.
 func (s *service) RevokeToken(ctx context.Context, teamID, tokenID uuid.UUID) error {
 	if _, err := s.store.RevokeToken(ctx, teamID, tokenID); err != nil {
 		return translateStore(err, "revoke token")
@@ -97,7 +97,7 @@ func (s *service) RevokeToken(ctx context.Context, teamID, tokenID uuid.UUID) er
 	return nil
 }
 
-// toTokenInfo projette un token du store en vue de listing.
+// toTokenInfo projects a store token onto the listing view.
 func toTokenInfo(t store.Token) TokenInfo {
 	info := TokenInfo{
 		ID:        t.ID,

@@ -6,10 +6,10 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
 )
 
-// CreateToken émet un token d'agent pour un projet. Réservé aux tokens admin.
+// CreateToken issues an agent token for a project. Admin tokens only.
 //
-// La réponse contient le secret en clair : c'est la seule et unique fois. Elle ne doit être ni
-// journalisée, ni mise en cache, ni renvoyée ailleurs.
+// The response carries the secret in clear: this is the one and only time. It must be neither
+// logged, nor cached, nor returned anywhere else.
 func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 	principal, ok := h.principal(w, r)
 	if !ok {

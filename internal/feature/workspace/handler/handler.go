@@ -4,15 +4,15 @@ package handler
 //
 // | Élément             | Résumé                                                   | Ligne |
 // |---------------------|----------------------------------------------------------|-------|
-// | Handler             | Adaptateur HTTP de la feature workspace                   | 36    |
-// | New                 | Crée le handler avec l'auth partagée et le service        | 42    |
-// | Handler.writeJSON   | Sérialise une réponse JSON                                | 51    |
-// | Handler.writeError  | Répond une erreur domaine, sans fuite d'interne           | 77    |
-// | Handler.decodeBody  | Décode un corps JSON en refusant les champs inconnus      | 95    |
-// | Handler.principal   | Récupère le Principal déposé par le middleware            | 106   |
-// | Handler.teamFor     | Résout la team de la requête selon la portée du token     | 129   |
-// | errorBody           | Forme unique des réponses d'erreur                        | 147   |
-// | whoamiResponse      | Portée du token ajoutée à l'identité résolue              | 152   |
+// | Handler             | HTTP adapter of the workspace feature                     | 36    |
+// | New                 | Creates the handler with the shared auth and the service  | 42    |
+// | Handler.writeJSON   | Serialises a JSON response                                | 51    |
+// | Handler.writeError  | Answers a domain error without leaking internals          | 76    |
+// | Handler.decodeBody  | Decodes a JSON body, rejecting unknown fields             | 94    |
+// | Handler.principal   | Retrieves the Principal left by the middleware            | 105   |
+// | Handler.teamFor     | Resolves the request's team from the token scope          | 127   |
+// | errorBody           | The single shape of every error response                  | 145   |
+// | whoamiResponse      | The token scope added to the resolved identity            | 150   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -31,23 +31,23 @@ import (
 
 const maxBodyBytes = 64 << 10
 
-// Handler traduit HTTP ↔ service. Aucune logique métier ici : il valide la forme, appelle le
-// service, mappe l'erreur en code.
+// Handler translates HTTP ↔ service. No business logic here: it validates the shape, calls the
+// service, maps the error onto a code.
 type Handler struct {
 	auth auth.Service
 	svc  service.Service
 }
 
-// New crée le handler workspace.
+// New creates the workspace handler.
 func New(authSvc auth.Service, svc service.Service) *Handler {
 	return &Handler{auth: authSvc, svc: svc}
 }
 
-// writeJSON sérialise la réponse AVANT d'engager le code de statut.
+// writeJSON serialises the response BEFORE committing to a status code.
 //
-// L'ordre inverse transformerait tout échec de sérialisation en succès à corps vide : le client
-// aurait déjà reçu 200, alors que le serveur sait qu'il a échoué. Sérialiser d'abord permet de
-// répondre 500, qui est la vérité.
+// The reverse order would turn every serialisation failure into an empty-bodied success: the client
+// would already have received 200, while the server knows it failed. Serialising first makes it
+// possible to answer 500, which is the truth.
 func (h *Handler) writeJSON(w http.ResponseWriter, code int, v any) {
 	if v == nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -71,9 +71,8 @@ func (h *Handler) writeJSON(w http.ResponseWriter, code int, v any) {
 	}
 }
 
-// writeError mappe une erreur domaine en code HTTP. Les erreurs inattendues sont journalisées
-// côté serveur et renvoyées en message générique : un détail interne dans une réponse est une
-// fuite d'information.
+// writeError maps a domain error onto an HTTP code. Unexpected errors are logged server-side and
+// returned as a generic message: an internal detail in a response is an information leak.
 func (h *Handler) writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrInvalidInput):
@@ -90,8 +89,8 @@ func (h *Handler) writeError(w http.ResponseWriter, err error) {
 	}
 }
 
-// decodeBody décode le corps JSON. La taille est bornée et les champs inconnus sont refusés :
-// une faute de frappe dans un script d'agent doit échouer bruyamment, pas être ignorée.
+// decodeBody decodes the JSON body. The size is bounded and unknown fields are rejected: a typo in
+// an agent script must fail loudly rather than be ignored.
 func (h *Handler) decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	dec.DisallowUnknownFields()
@@ -101,37 +100,36 @@ func (h *Handler) decodeBody(w http.ResponseWriter, r *http.Request, dst any) er
 	return nil
 }
 
-// principal récupère l'identité authentifiée. Absente, la requête n'est jamais passée par le
-// middleware : c'est un bug de câblage, pas une erreur utilisateur.
+// principal retrieves the authenticated identity. When it is absent, the request never went
+// through the middleware: that is a wiring bug, not a user error.
 func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (auth.Principal, bool) {
 	p, ok := auth.FromContext(r.Context())
 	if !ok {
-		log.Printf("workspace handler: route sans middleware d'auth: %s %s", r.Method, r.URL.Path)
+		log.Printf("workspace handler: route without auth middleware: %s %s", r.Method, r.URL.Path)
 		h.writeJSON(w, http.StatusUnauthorized, errorBody{Error: "unauthorized"})
 		return auth.Principal{}, false
 	}
 	return p, true
 }
 
-// teamFor résout la team visée. Un token de projet est enfermé dans la sienne ; un token admin
-// doit la désigner explicitement par son slug.
+// teamFor resolves the target team. A project token is locked inside its own; an admin token has
+// to name it explicitly by its slug.
 //
-// UN ADMIN QUI PORTE UNE TEAM Y EST ENFERMÉ, exactement comme un token de projet. Cette forme
-// n'est pas insérable en base depuis la migration 000006, et rien ne la produit — mais une
-// défense qui repose sur une contrainte écrite dans un autre fichier n'est pas une défense.
-// Sans ce garde, la première session qui aura une raison d'épingler un admin à une team (la
-// lecture team-scopée du TUI, l'édition du graphe de confiance) armerait un piège que ni
-// AdminOnly ni les tests d'isolation existants ne voient : POST /tokens?team=<voisin> émettrait
-// un token de projet chez le voisin, secret en clair.
+// AN ADMIN CARRYING A TEAM IS LOCKED INSIDE IT, exactly like a project token. That shape has not
+// been insertable in the database since migration 000006, and nothing produces it — but a defence
+// resting on a constraint written in another file is not a defence. Without this guard, the first
+// session with a reason to pin an admin to a team (the TUI's team-scoped read, editing the trust
+// graph) would arm a trap that neither AdminOnly nor the existing isolation tests can see:
+// POST /tokens?team=<neighbour> would issue a project token at the neighbour's, secret in clear.
 //
-// Le refus est un ErrNotFound, jamais un 403 : « cette team existe mais pas pour toi » est un
-// oracle qui laisse énumérer les teams de l'installation par balayage de slugs.
+// The refusal is an ErrNotFound, never a 403: "this team exists but not for you" is an oracle that
+// lets one enumerate an installation's teams by sweeping slugs.
 func (h *Handler) teamFor(ctx context.Context, p auth.Principal, slug string) (uuid.UUID, error) {
 	if !p.IsAdmin() {
 		return p.TeamID, nil
 	}
 	if slug == "" {
-		return uuid.Nil, errors.Join(service.ErrInvalidInput, errors.New("team manquante"))
+		return uuid.Nil, errors.Join(service.ErrInvalidInput, errors.New("missing team"))
 	}
 	team, err := h.svc.TeamBySlug(ctx, slug)
 	if err != nil {
@@ -143,12 +141,12 @@ func (h *Handler) teamFor(ctx context.Context, p auth.Principal, slug string) (u
 	return team.ID, nil
 }
 
-// errorBody est la forme unique des réponses d'erreur.
+// errorBody is the single shape of every error response.
 type errorBody struct {
 	Error string `json:"error"`
 }
 
-// whoamiResponse ajoute la portée du token à l'identité résolue par le service.
+// whoamiResponse adds the token scope to the identity resolved by the service.
 type whoamiResponse struct {
 	Scope string `json:"scope"`
 	service.Identity

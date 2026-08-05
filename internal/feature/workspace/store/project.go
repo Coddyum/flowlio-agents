@@ -4,11 +4,11 @@ package store
 //
 // | Élément             | Résumé                                                 | Ligne |
 // |---------------------|--------------------------------------------------------|-------|
-// | store.CreateProject | Insère un projet dans une team                          | 24    |
-// | store.ProjectByID   | Lit un projet par son identifiant, scopé par la team    | 37    |
-// | store.ProjectByKey  | Lit un projet par sa clé, dans le scope de la team      | 50    |
-// | store.ListProjects  | Liste les projets d'une team                            | 62    |
-// | toProject           | Projette une ligne sqlc en projet domaine               | 76    |
+// | store.CreateProject | Inserts a project into a team                           | 24    |
+// | store.ProjectByID   | Reads a project by its identifier, scoped by the team   | 37    |
+// | store.ProjectByKey  | Reads a project by its key, within the team scope       | 50    |
+// | store.ListProjects  | Lists a team's projects                                 | 62    |
+// | toProject           | Projects an sqlc row onto the domain project            | 76    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -20,7 +20,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// CreateProject insère un projet. Une clé déjà prise dans la team remonte en ErrConflict.
+// CreateProject inserts a project. A key already taken inside the team yields ErrConflict.
 func (s *store) CreateProject(ctx context.Context, teamID uuid.UUID, key, name string) (Project, error) {
 	row, err := s.q.CreateProject(ctx, database.CreateProjectParams{
 		TeamID: teamID,
@@ -33,7 +33,7 @@ func (s *store) CreateProject(ctx context.Context, teamID uuid.UUID, key, name s
 	return toProject(row), nil
 }
 
-// ProjectByID lit un projet par son identifiant, toujours scopé par la team.
+// ProjectByID reads a project by its identifier, always scoped by the team.
 func (s *store) ProjectByID(ctx context.Context, teamID, id uuid.UUID) (Project, error) {
 	row, err := s.q.GetProjectByID(ctx, database.GetProjectByIDParams{
 		ID:     id,
@@ -45,8 +45,8 @@ func (s *store) ProjectByID(ctx context.Context, teamID, id uuid.UUID) (Project,
 	return toProject(row), nil
 }
 
-// ProjectByKey lit un projet par sa clé. Le team_id fait partie de la query : une clé d'une
-// autre team est introuvable, pas seulement interdite.
+// ProjectByKey reads a project by its key. The team_id is part of the query: a key from another
+// team is not found, not merely forbidden.
 func (s *store) ProjectByKey(ctx context.Context, teamID uuid.UUID, key string) (Project, error) {
 	row, err := s.q.GetProjectByKey(ctx, database.GetProjectByKeyParams{
 		TeamID: teamID,
@@ -58,7 +58,7 @@ func (s *store) ProjectByKey(ctx context.Context, teamID uuid.UUID, key string) 
 	return toProject(row), nil
 }
 
-// ListProjects liste les projets d'une team, triés par clé.
+// ListProjects lists a team's projects, sorted by key.
 func (s *store) ListProjects(ctx context.Context, teamID uuid.UUID) ([]Project, error) {
 	rows, err := s.q.ListProjectsByTeam(ctx, teamID)
 	if err != nil {
@@ -72,7 +72,7 @@ func (s *store) ListProjects(ctx context.Context, teamID uuid.UUID) ([]Project, 
 	return projects, nil
 }
 
-// toProject projette une ligne générée en type domaine.
+// toProject projects a generated row onto the domain type.
 func toProject(row database.Project) Project {
 	return Project{
 		ID:        row.ID,

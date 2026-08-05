@@ -8,10 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// RevokeToken révoque un token d'agent. Réservé aux tokens admin.
+// RevokeToken revokes an agent token. Admin tokens only.
 //
-// La révocation prend effet immédiatement : l'authentification relit la ligne à chaque requête,
-// il n'y a pas de session en cache à expirer.
+// Revocation takes effect immediately: authentication re-reads the row on every request, there is
+// no cached session to expire.
 func (h *Handler) RevokeToken(w http.ResponseWriter, r *http.Request) {
 	principal, ok := h.principal(w, r)
 	if !ok {
@@ -20,7 +20,7 @@ func (h *Handler) RevokeToken(w http.ResponseWriter, r *http.Request) {
 
 	tokenID, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		h.writeError(w, errors.Join(service.ErrInvalidInput, errors.New("identifiant de token invalide")))
+		h.writeError(w, errors.Join(service.ErrInvalidInput, errors.New("invalid token identifier")))
 		return
 	}
 

@@ -4,8 +4,8 @@ package service
 //
 // | Élément        | Résumé                                                       | Ligne |
 // |----------------|--------------------------------------------------------------|-------|
-// | Identity       | Identité lisible d'un principal : team et projet              | 21    |
-// | service.Whoami | Traduit des identifiants de principal en noms lisibles        | 30    |
+// | Identity       | Readable identity of a principal: team and project            | 21    |
+// | service.Whoami | Turns a principal's identifiers into readable names           | 30    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -16,8 +16,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Identity est la réponse de whoami : ce que l'agent doit savoir de lui-même pour travailler,
-// et rien de plus.
+// Identity is the whoami answer: what the agent needs to know about itself in order to work, and
+// nothing more.
 type Identity struct {
 	TeamSlug    string `json:"team,omitempty"`
 	TeamName    string `json:"team_name,omitempty"`
@@ -25,8 +25,8 @@ type Identity struct {
 	ProjectName string `json:"project_name,omitempty"`
 }
 
-// Whoami résout la team et le projet d'un principal. Un token admin n'a ni l'une ni l'autre :
-// la réponse est alors vide, ce qui est l'information juste.
+// Whoami resolves a principal's team and project. An admin token has neither: the answer is then
+// empty, which is the accurate information.
 func (s *service) Whoami(ctx context.Context, teamID, projectID uuid.UUID) (Identity, error) {
 	if teamID == uuid.Nil {
 		return Identity{}, nil

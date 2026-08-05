@@ -2,10 +2,10 @@ package handler
 
 import "net/http"
 
-// Whoami renvoie l'identité du token présenté : sa portée, sa team, son projet.
+// Whoami returns the identity of the token presented: its scope, its team, its project.
 //
-// C'est le premier appel d'un agent au démarrage d'une session : il apprend qui il est sans
-// que la réponse ne révèle quoi que ce soit d'une autre team.
+// This is an agent's first call when starting a session: it learns who it is without the response
+// revealing anything about another team.
 func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 	principal, ok := h.principal(w, r)
 	if !ok {

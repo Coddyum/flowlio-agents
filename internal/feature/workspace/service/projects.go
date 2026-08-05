@@ -4,9 +4,9 @@ package service
 //
 // | Élément               | Résumé                                                 | Ligne |
 // |-----------------------|--------------------------------------------------------|-------|
-// | service.CreateProject | Valide puis crée un projet dans une team                | 24    |
-// | service.ListProjects  | Liste les projets d'une team                            | 47    |
-// | toProject             | Projette un projet du store en vue API                  | 61    |
+// | service.CreateProject | Validates then creates a project inside a team          | 24    |
+// | service.ListProjects  | Lists a team's projects                                 | 47    |
+// | toProject             | Projects a store project onto the API view              | 61    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -19,8 +19,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// CreateProject valide la clé et le nom, puis crée le projet dans la team fournie.
-// La clé est normalisée en majuscules : `frnt` et `FRNT` désignent le même projet.
+// CreateProject validates the key and the name, then creates the project in the team provided.
+// The key is normalised to uppercase: `frnt` and `FRNT` name the same project.
 func (s *service) CreateProject(ctx context.Context, in CreateProjectInput) (Project, error) {
 	key := strings.ToUpper(strings.TrimSpace(in.Key))
 	name := strings.TrimSpace(in.Name)
@@ -31,7 +31,7 @@ func (s *service) CreateProject(ctx context.Context, in CreateProjectInput) (Pro
 	if err := validateKey(key); err != nil {
 		return Project{}, err
 	}
-	if err := validateName("nom de projet", name); err != nil {
+	if err := validateName("project name", name); err != nil {
 		return Project{}, err
 	}
 
@@ -42,8 +42,8 @@ func (s *service) CreateProject(ctx context.Context, in CreateProjectInput) (Pro
 	return toProject(created), nil
 }
 
-// ListProjects liste les projets d'une team. C'est la seule vue inter-projets accessible à un
-// token de projet : les métadonnées des repos frères, jamais leur contenu.
+// ListProjects lists a team's projects. This is the only cross-project view a project token can
+// reach: the metadata of the sibling repos, never their content.
 func (s *service) ListProjects(ctx context.Context, teamID uuid.UUID) ([]Project, error) {
 	rows, err := s.store.ListProjects(ctx, teamID)
 	if err != nil {
@@ -57,7 +57,7 @@ func (s *service) ListProjects(ctx context.Context, teamID uuid.UUID) ([]Project
 	return projects, nil
 }
 
-// toProject projette un projet du store en vue API.
+// toProject projects a store project onto the API view.
 func toProject(p store.Project) Project {
 	return Project{ID: p.ID, Key: p.Key, Name: p.Name, CreatedAt: p.CreatedAt}
 }

@@ -4,18 +4,18 @@ package store
 //
 // | Élément              | Résumé                                                  | Ligne |
 // |----------------------|---------------------------------------------------------|-------|
-// | store.AllowTrust     | Ouvre une paire de confiance, idempotente                | 31    |
-// | store.RevokeTrust    | Ferme une paire de confiance, idempotente                | 48    |
-// | store.ListTrustEdges | Liste le graphe d'une team, en clés lisibles             | 62    |
+// | store.AllowTrust     | Opens a trust pair, idempotent                           | 31    |
+// | store.RevokeTrust    | Closes a trust pair, idempotent                          | 48    |
+// | store.ListTrustEdges | Lists a team's graph, in readable keys                    | 62    |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Ce fichier ne NOMME jamais la table du graphe : il appelle les queries générées. La décision de
-// confiance vit dans le WHERE de CreateIssue, et l'administration dans sql/queries/trust.sql. Un
-// `.go` qui aurait besoin du nom de la table serait le signe que la décision a quitté la query —
-// c'est ce que garde scripts/check-trust-in-sql-only.sh, et c'est pourquoi ce commentaire-ci
-// n'écrit pas ce nom non plus : une règle absolue s'applique, une règle à exceptions se négocie.
+// This file never NAMES the graph table: it calls the generated queries. The trust decision lives
+// in the WHERE of CreateIssue, and administration in sql/queries/trust.sql. A `.go` needing the
+// table name would be the sign that the decision has left the query — that is what
+// scripts/check-trust-in-sql-only.sh guards, and it is why this very comment does not write that
+// name either: an absolute rule applies, a rule with exceptions gets negotiated.
 
 import (
 	"context"
@@ -24,10 +24,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// AllowTrust ouvre une paire, dans les deux sens puisque l'arête est symétrique.
+// AllowTrust opens a pair, in both directions since the edge is symmetric.
 //
-// created distingue « créée » de « déjà autorisée » sans second aller-retour. Une clé inconnue,
-// ou d'une autre team, ne se résout pas : la query rend zéro ligne, donc ErrNotFound.
+// created tells "created" from "already allowed" without a second round trip. An unknown key, or
+// one from another team, does not resolve: the query returns zero rows, hence ErrNotFound.
 func (s *store) AllowTrust(ctx context.Context, teamID uuid.UUID, firstKey, secondKey string) (bool, error) {
 	created, err := s.q.AllowTrust(ctx, database.AllowTrustParams{
 		TeamID:    teamID,
@@ -40,11 +40,11 @@ func (s *store) AllowTrust(ctx context.Context, teamID uuid.UUID, firstKey, seco
 	return created, nil
 }
 
-// RevokeTrust ferme une paire. removed vaut faux si la paire existait mais n'était pas déclarée ;
-// une clé qui ne se résout pas remonte en ErrNotFound, pas en « rien à retirer ».
+// RevokeTrust closes a pair. removed is false when the pair existed but was not declared; a key
+// that does not resolve yields ErrNotFound, not "nothing to remove".
 //
-// Retirer une confiance n'interdit que d'OUVRIR une nouvelle issue. Les fils déjà ouverts restent
-// répondables : le coupe-circuit du produit est la révocation de token.
+// Removing a trust only forbids OPENING a new issue. Threads already open stay answerable: the
+// product's circuit breaker is token revocation.
 func (s *store) RevokeTrust(ctx context.Context, teamID uuid.UUID, firstKey, secondKey string) (bool, error) {
 	removed, err := s.q.RevokeTrust(ctx, database.RevokeTrustParams{
 		TeamID:    teamID,
@@ -57,8 +57,8 @@ func (s *store) RevokeTrust(ctx context.Context, teamID uuid.UUID, firstKey, sec
 	return removed, nil
 }
 
-// ListTrustEdges rend le graphe d'une team en clés lisibles, trié. Lecture d'administration : elle
-// n'est jamais servie à un token de projet.
+// ListTrustEdges returns a team's graph in readable keys, sorted. An administration read: it is
+// never served to a project token.
 func (s *store) ListTrustEdges(ctx context.Context, teamID uuid.UUID) ([]TrustEdge, error) {
 	rows, err := s.q.ListTrustEdges(ctx, teamID)
 	if err != nil {

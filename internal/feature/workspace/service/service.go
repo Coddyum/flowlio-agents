@@ -4,24 +4,24 @@ package service
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | Service            | Contrat consommé par le handler workspace                    | 43    |
-// | service            | Implémentation, dépendante de l'interface store              | 71    |
-// | New                | Crée le service workspace                                    | 76    |
-// | CreateTeamInput    | Entrée de création d'une team                                | 82    |
-// | Team               | Une team telle qu'exposée par l'API                          | 88    |
-// | CreateProjectInput | Entrée de création d'un projet                               | 97    |
-// | Project            | Un projet tel qu'exposé par l'API                            | 104   |
-// | CreateTokenInput   | Entrée de création d'un token d'agent                        | 112   |
-// | CreatedToken       | Token fraîchement créé : seule occasion de voir le secret    | 120   |
-// | TokenInfo          | Token listé, sans secret ni hash                             | 129   |
-// | TrustPairInput     | Une paire de projets désignée par ses deux clés              | 145   |
-// | TrustDecision      | Ce qu'une écriture sur le graphe a réellement changé         | 156   |
-// | TrustEdge          | Une arête du graphe telle qu'exposée par l'API               | 163   |
+// | Service            | The contract consumed by the workspace handler                | 43    |
+// | service            | Implementation, depending on the store interface             | 71    |
+// | New                | Creates the workspace service                                | 76    |
+// | CreateTeamInput    | Input for creating a team                                    | 82    |
+// | Team               | A team as exposed by the API                                 | 88    |
+// | CreateProjectInput | Input for creating a project                                 | 97    |
+// | Project            | A project as exposed by the API                              | 104   |
+// | CreateTokenInput   | Input for issuing an agent token                             | 112   |
+// | CreatedToken       | A freshly created token: the one chance to see the secret    | 120   |
+// | TokenInfo          | A listed token, with neither secret nor hash                 | 129   |
+// | TrustPairInput     | A pair of projects named by their two keys                   | 145   |
+// | TrustDecision      | What a write on the graph actually changed                   | 156   |
+// | TrustEdge          | An edge of the graph as exposed by the API                   | 163   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// CONTRAT UNIQUEMENT — les implémentations sont dans teams.go, projects.go, tokens.go et trust.go.
+// CONTRACT ONLY — the implementations live in teams.go, projects.go, tokens.go and trust.go.
 
 import (
 	"context"
@@ -32,14 +32,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// Erreurs domaine, traduites en codes HTTP par le handler via errors.Is.
+// Domain errors, translated into HTTP codes by the handler through errors.Is.
 var (
 	ErrInvalidInput = errors.New("workspace: invalid input")
 	ErrNotFound     = errors.New("workspace: not found")
 	ErrConflict     = errors.New("workspace: already exists")
 )
 
-// Service porte l'administration de la tenancy : teams, projets, tokens d'agent.
+// Service carries the administration of tenancy: teams, projects, agent tokens.
 type Service interface {
 	CreateTeam(ctx context.Context, in CreateTeamInput) (Team, error)
 	ListTeams(ctx context.Context) ([]Team, error)
@@ -48,43 +48,44 @@ type Service interface {
 	CreateProject(ctx context.Context, in CreateProjectInput) (Project, error)
 	ListProjects(ctx context.Context, teamID uuid.UUID) ([]Project, error)
 
-	// Whoami traduit les identifiants d'un principal en noms lisibles, pour que ni la CLI ni
-	// un agent n'aient à manipuler d'UUID.
+	// Whoami turns a principal's identifiers into readable names, so that neither the CLI nor an
+	// agent ever has to handle a UUID.
 	Whoami(ctx context.Context, teamID, projectID uuid.UUID) (Identity, error)
 
-	// CreateToken émet un token de projet. Le secret en clair n'est renvoyé qu'ici, une fois.
+	// CreateToken issues a project token. The secret in clear is returned here, once, and nowhere
+	// else.
 	CreateToken(ctx context.Context, in CreateTokenInput) (CreatedToken, error)
 	ListTokens(ctx context.Context, teamID uuid.UUID, projectKey string) ([]TokenInfo, error)
 	RevokeToken(ctx context.Context, teamID, tokenID uuid.UUID) error
 
-	// Graphe de confiance — administration humaine, sous token admin.
+	// Trust graph — human administration, under an admin token.
 	//
-	// Ces trois méthodes ne portent AUCUNE décision d'autorisation : elles éditent une
-	// déclaration, et c'est la query CreateIssue qui l'applique. Leur seule validation est
-	// celle de deux chaînes tapées par un humain — la tenancy, elle, vit dans la query.
+	// These three methods carry NO authorisation decision: they edit a declaration, and it is the
+	// CreateIssue query that enforces it. Their only validation is that of two strings typed by a
+	// human — tenancy itself lives in the query.
 	AllowTrust(ctx context.Context, in TrustPairInput) (TrustDecision, error)
 	RevokeTrust(ctx context.Context, in TrustPairInput) (TrustDecision, error)
 	ListTrust(ctx context.Context, teamID uuid.UUID) ([]TrustEdge, error)
 }
 
-// service dépend de l'interface store, jamais de sqlc.
+// service depends on the store interface, never on sqlc.
 type service struct {
 	store store.Store
 }
 
-// New crée le service workspace.
+// New creates the workspace service.
 func New(st store.Store) Service {
 	return &service{store: st}
 }
 
-// CreateTeamInput porte les données de création d'une team. Slug est l'identifiant lisible
-// utilisé en CLI.
+// CreateTeamInput carries the data for creating a team. Slug is the readable identifier used in
+// the CLI.
 type CreateTeamInput struct {
 	Slug string `json:"slug"`
 	Name string `json:"name"`
 }
 
-// Team est la vue API d'une team.
+// Team is the API view of a team.
 type Team struct {
 	ID        uuid.UUID `json:"id"`
 	Slug      string    `json:"slug"`
@@ -92,15 +93,15 @@ type Team struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// CreateProjectInput porte les données de création d'un projet. Key sert de préfixe aux
-// identifiants lisibles (FRNT-34).
+// CreateProjectInput carries the data for creating a project. Key prefixes the readable
+// identifiers (FRNT-34).
 type CreateProjectInput struct {
 	TeamID uuid.UUID `json:"-"`
 	Key    string    `json:"key"`
 	Name   string    `json:"name"`
 }
 
-// Project est la vue API d'un projet.
+// Project is the API view of a project.
 type Project struct {
 	ID        uuid.UUID `json:"id"`
 	Key       string    `json:"key"`
@@ -108,15 +109,15 @@ type Project struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// CreateTokenInput porte les données d'émission d'un token d'agent, scopé à un projet.
+// CreateTokenInput carries the data for issuing an agent token, scoped to a project.
 type CreateTokenInput struct {
 	TeamID     uuid.UUID `json:"-"`
 	ProjectKey string    `json:"project"`
 	Name       string    `json:"name"`
 }
 
-// CreatedToken est renvoyé une seule fois, à la création. Secret n'est ni stocké, ni
-// réaffichable, ni journalisé.
+// CreatedToken is returned exactly once, at creation. Secret is neither stored, nor displayable
+// again, nor logged.
 type CreatedToken struct {
 	ID         uuid.UUID `json:"id"`
 	Name       string    `json:"name"`
@@ -125,7 +126,7 @@ type CreatedToken struct {
 	Secret     string    `json:"secret"`
 }
 
-// TokenInfo est la vue de listing : ni secret, ni hash.
+// TokenInfo is the listing view: neither secret nor hash.
 type TokenInfo struct {
 	ID         uuid.UUID  `json:"id"`
 	Name       string     `json:"name"`
@@ -135,31 +136,31 @@ type TokenInfo struct {
 	Revoked    bool       `json:"revoked"`
 }
 
-// TrustPairInput désigne une paire de projets par leurs CLÉS.
+// TrustPairInput names a pair of projects by their KEYS.
 //
-// Aucun UUID : les deux clés sont résolues DANS la query, sous le team_id déjà prouvé par
-// teamFor. Un handler qui résoudrait les clés lui-même recréerait à la main l'énumération que le
-// modèle refuse d'exposer.
+// No UUID: both keys are resolved INSIDE the query, under the team_id already proven by teamFor. A
+// handler resolving the keys itself would hand-rebuild the very enumeration the model refuses to
+// expose.
 //
-// L'ordre des deux clés n'a AUCUNE signification : l'arête est une paire, pas une flèche.
+// The order of the two keys carries NO meaning: the edge is a pair, not an arrow.
 type TrustPairInput struct {
 	TeamID uuid.UUID `json:"-"`
 	First  string    `json:"first"`
 	Second string    `json:"second"`
 }
 
-// TrustDecision dit ce que l'écriture a effectivement changé, pour que la CLI distingue « fait »
-// de « c'était déjà le cas » sans second aller-retour.
+// TrustDecision says what the write actually changed, so the CLI can tell "done" from "it already
+// was" without a second round trip.
 //
-// Changed est faux sur un rejeu : `trust allow` d'une paire déjà ouverte, `trust deny` d'une paire
-// déjà fermée. Les deux verbes sont idempotents, et c'est ce champ qui le rend visible.
+// Changed is false on a replay: `trust allow` on an already-open pair, `trust deny` on an
+// already-closed one. Both verbs are idempotent, and this field is what makes it visible.
 type TrustDecision struct {
 	First   string `json:"first"`
 	Second  string `json:"second"`
 	Changed bool   `json:"changed"`
 }
 
-// TrustEdge est une arête telle qu'exposée par l'API : deux clés et une date.
+// TrustEdge is an edge as exposed by the API: two keys and a date.
 type TrustEdge struct {
 	First     string    `json:"first"`
 	Second    string    `json:"second"`

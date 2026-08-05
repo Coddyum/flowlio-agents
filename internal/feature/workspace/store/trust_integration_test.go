@@ -1,10 +1,10 @@
 package store_test
 
-// Ce que ce fichier verrouille : les trois queries d'administration du graphe.
+// What this file locks down: the three administration queries of the graph.
 //
-// Les CONTRAINTES de la table sont couvertes par TestDatabaseRejectsIllegalTrustEdges
-// (store_integration_test.go) ; ici on vérifie ce que les queries font DE ces contraintes —
-// idempotence, résolution des clés, frontière de team — c'est-à-dire ce qu'un humain voit.
+// The table's CONSTRAINTS are covered by TestDatabaseRejectsIllegalTrustEdges
+// (store_integration_test.go); here we check what the queries make OF those constraints —
+// idempotence, key resolution, team boundary — that is, what a human sees.
 
 import (
 	"context"
@@ -16,31 +16,31 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/store"
 )
 
-// onlyPair rend l'unique arête d'un graphe sous une forme INDÉPENDANTE DE L'ORDRE des deux clés.
+// onlyPair returns a graph's single edge in a form INDEPENDENT OF THE ORDER of the two keys.
 //
-// L'ordre de `first_key`/`second_key` est celui des UUID en base, pas l'ordre alphabétique ni
-// celui de la commande : asserter `SecondKey == "FRNT"` serait un tirage à pile ou face à chaque
-// exécution. C'est exactement le défaut que la première version de ce fichier portait, et qui
-// n'est apparu qu'en jouant toute la suite.
+// The order of `first_key`/`second_key` is that of the UUIDs in the database, not alphabetical
+// order nor the order of the command: asserting `SecondKey == "FRNT"` would be a coin flip on every
+// run. That is exactly the defect the first version of this file carried, and which only showed up
+// when playing the whole suite.
 //
-// Trier ici n'affaiblit rien : une arête est une PAIRE, et prétendre tester un sens sur une
-// structure qui n'en a pas serait tester une propriété que le produit ne promet pas.
+// Sorting here weakens nothing: an edge is a PAIR, and claiming to test a direction on a structure
+// that has none would be testing a property the product does not promise.
 func onlyPair(t *testing.T, edges []store.TrustEdge) string {
 	t.Helper()
 
 	if len(edges) != 1 {
-		t.Fatalf("%d arêtes, attendu exactement 1 : %+v", len(edges), edges)
+		t.Fatalf("%d edges, want exactly 1: %+v", len(edges), edges)
 	}
 	keys := []string{edges[0].FirstKey, edges[0].SecondKey}
 	sort.Strings(keys)
 	return strings.Join(keys, "↔")
 }
 
-// Le cycle nominal : ouvrir, rejouer, lire, fermer, rejouer.
+// The nominal cycle: open, replay, read, close, replay.
 //
-// Les deux verbes sont idempotents et le disent — `created` et `removed` distinguent « fait » de
-// « c'était déjà le cas » SANS second aller-retour. Sans ces drapeaux, la CLI devrait relire le
-// graphe après chaque écriture pour savoir quoi afficher.
+// Both verbs are idempotent and say so — `created` and `removed` tell "done" from "it already was"
+// WITHOUT a second round trip. Without those flags, the CLI would have to re-read the graph after
+// every write to know what to display.
 func TestTrustLifecycle(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -53,94 +53,94 @@ func TestTrustLifecycle(t *testing.T) {
 		t.Fatalf("CreateProject FRNT: %v", err)
 	}
 
-	t.Run("ouverture", func(t *testing.T) {
+	t.Run("opening", func(t *testing.T) {
 		created, err := st.AllowTrust(ctx, team.ID, "CORE", "FRNT")
 		if err != nil {
 			t.Fatalf("AllowTrust: %v", err)
 		}
 		if !created {
-			t.Error("created = false à la première ouverture")
+			t.Error("created = false on the first opening")
 		}
 	})
 
-	t.Run("rejeu de l'ouverture", func(t *testing.T) {
+	t.Run("replaying the opening", func(t *testing.T) {
 		created, err := st.AllowTrust(ctx, team.ID, "CORE", "FRNT")
 		if err != nil {
-			t.Fatalf("AllowTrust (rejeu): %v", err)
+			t.Fatalf("AllowTrust (replay): %v", err)
 		}
 		if created {
-			t.Error("created = true au rejeu : la commande n'est pas idempotente")
+			t.Error("created = true on the replay: the command is not idempotent")
 		}
 	})
 
-	// L'arête est une PAIRE : la déclarer dans l'autre sens ne crée pas une seconde ligne, et le
-	// dit. Sous une table orientée, ce cas aurait rendu created = true et le graphe aurait porté
-	// deux lignes pour une seule autorisation.
-	t.Run("rejeu dans l'autre sens", func(t *testing.T) {
+	// The edge is a PAIR: declaring it the other way round does not create a second row, and says
+	// so. Under a directed table, this case would have returned created = true and the graph would
+	// have carried two rows for a single authorisation.
+	t.Run("replaying the other way round", func(t *testing.T) {
 		created, err := st.AllowTrust(ctx, team.ID, "FRNT", "CORE")
 		if err != nil {
-			t.Fatalf("AllowTrust (sens inverse): %v", err)
+			t.Fatalf("AllowTrust (reverse direction): %v", err)
 		}
 		if created {
-			t.Error("created = true dans l'autre sens : l'arête n'est pas symétrique")
+			t.Error("created = true the other way round: the edge is not symmetric")
 		}
 	})
 
-	t.Run("lecture", func(t *testing.T) {
+	t.Run("read", func(t *testing.T) {
 		edges, err := st.ListTrustEdges(ctx, team.ID)
 		if err != nil {
 			t.Fatalf("ListTrustEdges: %v", err)
 		}
-		// Une paire déclarée trois fois (deux sens, un rejeu) reste UNE ligne.
+		// A pair declared three times (both directions, one replay) stays ONE row.
 		if got := onlyPair(t, edges); got != "CORE↔FRNT" {
-			t.Errorf("graphe = %s, attendu CORE↔FRNT", got)
+			t.Errorf("graph = %s, want CORE↔FRNT", got)
 		}
 		if edges[0].CreatedAt.IsZero() {
-			t.Error("created_at nul : la date de déclaration est perdue")
+			t.Error("created_at is zero: the declaration date is lost")
 		}
 	})
 
-	t.Run("fermeture", func(t *testing.T) {
+	t.Run("closing", func(t *testing.T) {
 		removed, err := st.RevokeTrust(ctx, team.ID, "FRNT", "CORE")
 		if err != nil {
 			t.Fatalf("RevokeTrust: %v", err)
 		}
 		if !removed {
-			t.Error("removed = false alors que la paire était déclarée")
+			t.Error("removed = false although the pair was declared")
 		}
 	})
 
-	t.Run("rejeu de la fermeture", func(t *testing.T) {
+	t.Run("replaying the closing", func(t *testing.T) {
 		removed, err := st.RevokeTrust(ctx, team.ID, "CORE", "FRNT")
 		if err != nil {
-			t.Fatalf("RevokeTrust (rejeu): %v", err)
+			t.Fatalf("RevokeTrust (replay): %v", err)
 		}
 		if removed {
-			t.Error("removed = true au rejeu : la commande n'est pas idempotente")
+			t.Error("removed = true on the replay: the command is not idempotent")
 		}
 	})
 
-	t.Run("le graphe est vide", func(t *testing.T) {
+	t.Run("the graph is empty", func(t *testing.T) {
 		edges, err := st.ListTrustEdges(ctx, team.ID)
 		if err != nil {
 			t.Fatalf("ListTrustEdges: %v", err)
 		}
 		if len(edges) != 0 {
-			t.Errorf("%d arêtes après fermeture, attendu 0", len(edges))
+			t.Errorf("%d edges after closing, want 0", len(edges))
 		}
 	})
 }
 
-// Une clé qui ne se résout pas rend ErrNotFound sur les DEUX verbes.
+// A key that does not resolve yields ErrNotFound on BOTH verbs.
 //
-// C'est l'écart assumé avec docs/DESIGN-TRUST.md, qui prévoyait un `:execrows` pour RevokeTrust :
-// un DELETE nu aurait rendu « rien à retirer » à un humain qui vient de taper une clé de travers,
-// c'est-à-dire une réussite apparente. Ces routes sont ADMIN et un admin énumère déjà tous les
-// projets de toutes les teams : il n'y a aucun oracle à protéger, donc rien à gagner à taire
-// l'erreur.
+// This is the accepted departure from docs/DESIGN-TRUST.md, which planned an `:execrows` for
+// RevokeTrust: a bare DELETE would have returned "nothing to remove" to a human who just typed a
+// key wrong, that is, an apparent success. These routes are ADMIN and an admin already enumerates
+// every project of every team: there is no oracle to protect, hence nothing to gain from keeping
+// the error quiet.
 //
-// MUTATION : revenir à `DELETE ... USING projects a, projects b` sans la CTE `pair` fait tomber le
-// sous-test « fermeture, clé inconnue ».
+// MUTATION: going back to `DELETE ... USING projects a, projects b` without the `pair` CTE makes
+// the "closing, unknown key" subtest fail.
 func TestTrustRefusesUnknownKeys(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -150,38 +150,38 @@ func TestTrustRefusesUnknownKeys(t *testing.T) {
 		t.Fatalf("CreateProject CORE: %v", err)
 	}
 
-	cas := []struct {
+	cases := []struct {
 		name  string
 		first string
 		last  string
 	}{
-		{"seconde clé inconnue", "CORE", "NOPE"},
-		{"première clé inconnue", "NOPE", "CORE"},
-		{"les deux inconnues", "NOPE", "NADA"},
-		// La casse n'est PAS normalisée par la query : c'est le service qui met en majuscules.
-		// Ce cas fige la frontière — si la normalisation migrait dans le SQL, il virerait au
-		// vert et il faudrait décider où elle vit, plutôt que de l'avoir aux deux endroits.
-		{"clé en minuscules, non normalisée par la query", "core", "CORE"},
+		{"unknown second key", "CORE", "NOPE"},
+		{"unknown first key", "NOPE", "CORE"},
+		{"both unknown", "NOPE", "NADA"},
+		// Case is NOT normalised by the query: it is the service that uppercases. This case pins the
+		// boundary — were normalisation to migrate into the SQL, it would turn green and one would
+		// have to decide where it lives, rather than having it in both places.
+		{"lowercase key, not normalised by the query", "core", "CORE"},
 	}
 
-	for _, c := range cas {
-		t.Run("ouverture, "+c.name, func(t *testing.T) {
+	for _, c := range cases {
+		t.Run("opening, "+c.name, func(t *testing.T) {
 			if _, err := st.AllowTrust(ctx, team.ID, c.first, c.last); !errors.Is(err, store.ErrNotFound) {
-				t.Errorf("AllowTrust(%s, %s): erreur = %v, attendu ErrNotFound", c.first, c.last, err)
+				t.Errorf("AllowTrust(%s, %s): error = %v, want ErrNotFound", c.first, c.last, err)
 			}
 		})
-		t.Run("fermeture, "+c.name, func(t *testing.T) {
+		t.Run("closing, "+c.name, func(t *testing.T) {
 			if _, err := st.RevokeTrust(ctx, team.ID, c.first, c.last); !errors.Is(err, store.ErrNotFound) {
-				t.Errorf("RevokeTrust(%s, %s): erreur = %v, attendu ErrNotFound", c.first, c.last, err)
+				t.Errorf("RevokeTrust(%s, %s): error = %v, want ErrNotFound", c.first, c.last, err)
 			}
 		})
 	}
 }
 
-// Le scope de tenancy vit dans la query : une clé qui existe DANS UNE AUTRE TEAM est introuvable,
-// pas seulement interdite. Et un graphe ne fuit jamais chez le voisin.
+// The tenancy scope lives in the query: a key that exists IN ANOTHER TEAM is not found, not merely
+// forbidden. And a graph never leaks to the neighbour.
 //
-// MUTATION : retirer `a.team_id = @team_id` de l'une des trois queries fait tomber ce test.
+// MUTATION: removing `a.team_id = @team_id` from any of the three queries makes this test fail.
 func TestTrustNeverCrossesTeams(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -189,69 +189,69 @@ func TestTrustNeverCrossesTeams(t *testing.T) {
 	mine := createTeam(t, st, db)
 	other := createTeam(t, st, db)
 
-	if _, err := st.CreateProject(ctx, mine.ID, "CORE", "core chez moi"); err != nil {
+	if _, err := st.CreateProject(ctx, mine.ID, "CORE", "core at mine"); err != nil {
 		t.Fatalf("CreateProject CORE: %v", err)
 	}
-	if _, err := st.CreateProject(ctx, mine.ID, "FRNT", "front chez moi"); err != nil {
+	if _, err := st.CreateProject(ctx, mine.ID, "FRNT", "front at mine"); err != nil {
 		t.Fatalf("CreateProject FRNT: %v", err)
 	}
-	// Le voisin a un projet dont la clé existe aussi chez moi : c'est le cas qui piège une query
-	// qui résoudrait par clé sans team.
-	if _, err := st.CreateProject(ctx, other.ID, "CORE", "core chez le voisin"); err != nil {
-		t.Fatalf("CreateProject CORE (voisin): %v", err)
+	// The neighbour has a project whose key also exists at mine: this is the case that traps a query
+	// resolving by key without a team.
+	if _, err := st.CreateProject(ctx, other.ID, "CORE", "core at the neighbour's"); err != nil {
+		t.Fatalf("CreateProject CORE (neighbour): %v", err)
 	}
-	if _, err := st.CreateProject(ctx, other.ID, "OPS", "ops chez le voisin"); err != nil {
+	if _, err := st.CreateProject(ctx, other.ID, "OPS", "ops at the neighbour's"); err != nil {
 		t.Fatalf("CreateProject OPS: %v", err)
 	}
 
-	// Depuis ma team, la clé OPS du voisin n'existe pas.
+	// From my team, the neighbour's OPS key does not exist.
 	if _, err := st.AllowTrust(ctx, mine.ID, "CORE", "OPS"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("AllowTrust vers un projet du voisin: erreur = %v, attendu ErrNotFound", err)
+		t.Errorf("AllowTrust towards one of the neighbour's projects: error = %v, want ErrNotFound", err)
 	}
 
-	// Chacune ouvre chez elle, sans se voir.
+	// Each one opens at home, without seeing the other.
 	if _, err := st.AllowTrust(ctx, mine.ID, "CORE", "FRNT"); err != nil {
-		t.Fatalf("AllowTrust chez moi: %v", err)
+		t.Fatalf("AllowTrust at mine: %v", err)
 	}
 	if _, err := st.AllowTrust(ctx, other.ID, "CORE", "OPS"); err != nil {
-		t.Fatalf("AllowTrust chez le voisin: %v", err)
+		t.Fatalf("AllowTrust at the neighbour's: %v", err)
 	}
 
 	mineEdges, err := st.ListTrustEdges(ctx, mine.ID)
 	if err != nil {
-		t.Fatalf("ListTrustEdges (moi): %v", err)
+		t.Fatalf("ListTrustEdges (mine): %v", err)
 	}
 	if got := onlyPair(t, mineEdges); got != "CORE↔FRNT" {
-		t.Errorf("mon graphe = %s, attendu CORE↔FRNT", got)
+		t.Errorf("my graph = %s, want CORE↔FRNT", got)
 	}
 
 	otherEdges, err := st.ListTrustEdges(ctx, other.ID)
 	if err != nil {
-		t.Fatalf("ListTrustEdges (voisin): %v", err)
+		t.Fatalf("ListTrustEdges (neighbour): %v", err)
 	}
 	if got := onlyPair(t, otherEdges); got != "CORE↔OPS" {
-		t.Errorf("le graphe du voisin = %s, attendu CORE↔OPS", got)
+		t.Errorf("the neighbour's graph = %s, want CORE↔OPS", got)
 	}
 
-	// Et je ne peux pas fermer la sienne, même en nommant exactement ses clés.
+	// And I cannot close theirs, even by naming their keys exactly.
 	if _, err := st.RevokeTrust(ctx, mine.ID, "CORE", "OPS"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("RevokeTrust sur la paire du voisin: erreur = %v, attendu ErrNotFound", err)
+		t.Errorf("RevokeTrust on the neighbour's pair: error = %v, want ErrNotFound", err)
 	}
 	stillThere, err := st.ListTrustEdges(ctx, other.ID)
 	if err != nil {
-		t.Fatalf("ListTrustEdges (voisin, après): %v", err)
+		t.Fatalf("ListTrustEdges (neighbour, after): %v", err)
 	}
 	if len(stillThere) != 1 {
-		t.Errorf("le graphe du voisin a %d arêtes après ma tentative, attendu 1", len(stillThere))
+		t.Errorf("the neighbour's graph has %d edges after my attempt, want 1", len(stillThere))
 	}
 }
 
-// Deux mutations que la première rédaction de ce fichier laissait passer, trouvées par la revue
-// adversariale du jalon. Chacune a son test, et chacun appelle le STORE directement.
+// Two mutations the first draft of this file let through, found by the milestone's adversarial
+// review. Each has its test, and each calls the STORE directly.
 //
-// LEÇON COMMUNE : les tests existants prouvaient ces deux propriétés par le SERVICE, qui coupe en
-// amont. Prouver dans la couche qui valide, plutôt que dans celle qui décide, laisse la query
-// libre de ne rien garantir.
+// SHARED LESSON: the existing tests proved both properties through the SERVICE, which cuts in
+// upstream. Proving in the layer that validates, rather than in the one that decides, leaves the
+// query free to guarantee nothing.
 func TestTrustQueriesGuardTheirOwnScope(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -263,56 +263,56 @@ func TestTrustQueriesGuardTheirOwnScope(t *testing.T) {
 		team store.Team
 		key  string
 	}{{mine, "CORE"}, {mine, "FRNT"}, {other, "CORE"}, {other, "OPS"}} {
-		if _, err := st.CreateProject(ctx, p.team.ID, p.key, "projet "+p.key); err != nil {
+		if _, err := st.CreateProject(ctx, p.team.ID, p.key, "project "+p.key); err != nil {
 			t.Fatalf("CreateProject %s: %v", p.key, err)
 		}
 	}
 
-	// Le voisin déclare sa paire. Elle ne doit pouvoir être ni lue ni fermée depuis ma team.
+	// The neighbour declares its pair. It must be neither readable nor closable from my team.
 	if _, err := st.AllowTrust(ctx, other.ID, "CORE", "OPS"); err != nil {
-		t.Fatalf("AllowTrust chez le voisin: %v", err)
+		t.Fatalf("AllowTrust at the neighbour's: %v", err)
 	}
 
-	// MUTATION : retirer `a.team_id = @team_id` de la CTE `pair` de RevokeTrust.
+	// MUTATION: removing `a.team_id = @team_id` from the `pair` CTE of RevokeTrust.
 	//
-	// Le test de frontière existant ne la détectait pas : il passait OPS en SECONDE position, et
-	// `b.team_id` — resté en place — suffisait à faire échouer la résolution. Il faut donc une clé
-	// qui n'existe QUE chez le voisin en PREMIÈRE position, et une clé de ma team en seconde :
-	// seule la contrainte sur `a` décide alors.
+	// The existing boundary test did not catch it: it passed OPS in SECOND position, and
+	// `b.team_id` — still in place — was enough to make the resolution fail. What is needed is a key
+	// that exists ONLY at the neighbour's in FIRST position, and a key of my team in second: only
+	// the constraint on `a` decides then.
 	//
-	// Sous la mutation, `a` se résout au OPS du voisin, `b` à mon CORE, la paire se résout, et la
-	// query rend `removed=false` sans erreur — au lieu du ErrNotFound qu'une clé hors de ma team
-	// doit produire.
-	t.Run("RevokeTrust scope les deux clés, pas seulement la seconde", func(t *testing.T) {
+	// Under the mutation, `a` resolves to the neighbour's OPS, `b` to my CORE, the pair resolves,
+	// and the query returns `removed=false` with no error — instead of the ErrNotFound a key outside
+	// my team must produce.
+	t.Run("RevokeTrust scopes both keys, not just the second", func(t *testing.T) {
 		if _, err := st.RevokeTrust(ctx, mine.ID, "OPS", "CORE"); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("erreur = %v, attendu ErrNotFound : OPS n'existe pas dans ma team", err)
+			t.Errorf("error = %v, want ErrNotFound: OPS does not exist in my team", err)
 		}
-		// Et la paire du voisin est intacte.
+		// And the neighbour's pair is untouched.
 		edges, err := st.ListTrustEdges(ctx, other.ID)
 		if err != nil {
 			t.Fatalf("ListTrustEdges: %v", err)
 		}
 		if len(edges) != 1 {
-			t.Errorf("le graphe du voisin a %d arêtes, attendu 1", len(edges))
+			t.Errorf("the neighbour's graph has %d edges, want 1", len(edges))
 		}
 	})
 
-	// MUTATION : remplacer `a.id <> b.id` par `true` dans AllowTrust.
+	// MUTATION: replacing `a.id <> b.id` with `true` in AllowTrust.
 	//
-	// Le refus d'auto-paire n'était prouvé que par le service, qui valide `first != second` AVANT
-	// d'appeler le store. La query doit le refuser elle aussi : c'est le second tour de clé, et
-	// c'est lui qui tient si un appelant atteint le store directement.
-	t.Run("AllowTrust refuse une auto-paire dans la query", func(t *testing.T) {
+	// The self-pair refusal was only proven by the service, which validates `first != second` BEFORE
+	// calling the store. The query has to refuse it too: that is the second turn of the key, and it
+	// is what holds if a caller reaches the store directly.
+	t.Run("AllowTrust refuses a self-pair in the query", func(t *testing.T) {
 		if _, err := st.AllowTrust(ctx, mine.ID, "CORE", "CORE"); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("erreur = %v, attendu ErrNotFound : la query doit refuser l'auto-paire sans "+
-				"laisser la CHECK d'ordre lever un second chemin d'erreur", err)
+			t.Errorf("error = %v, want ErrNotFound: the query must refuse the self-pair without "+
+				"letting the ordering CHECK raise a second error path", err)
 		}
 		edges, err := st.ListTrustEdges(ctx, mine.ID)
 		if err != nil {
 			t.Fatalf("ListTrustEdges: %v", err)
 		}
 		if len(edges) != 0 {
-			t.Errorf("%d arête(s) créée(s) par une auto-paire", len(edges))
+			t.Errorf("%d edge(s) created by a self-pair", len(edges))
 		}
 	})
 }

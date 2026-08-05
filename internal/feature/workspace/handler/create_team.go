@@ -6,7 +6,7 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
 )
 
-// CreateTeam crée une team. Réservé aux tokens admin — la route est montée derrière AdminOnly.
+// CreateTeam creates a team. Admin tokens only — the route is mounted behind AdminOnly.
 func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	var in service.CreateTeamInput
 	if err := h.decodeBody(w, r, &in); err != nil {

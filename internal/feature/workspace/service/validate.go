@@ -4,16 +4,16 @@ package service
 //
 // | Élément        | Résumé                                                       | Ligne |
 // |----------------|--------------------------------------------------------------|-------|
-// | validateSlug   | Vérifie le format d'un slug de team                            | 35    |
-// | validateKey    | Vérifie le format d'une clé de projet                          | 45    |
-// | validateName   | Vérifie qu'un nom n'est ni vide ni démesuré                    | 54    |
-// | translateStore | Traduit une erreur de store en erreur domaine                  | 67    |
+// | validateSlug   | Checks the format of a team slug                               | 35    |
+// | validateKey    | Checks the format of a project key                             | 45    |
+// | validateName   | Checks a name is neither empty nor oversized                   | 54    |
+// | translateStore | Turns a store error into a domain error                        | 67    |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Les mêmes règles existent en CHECK dans la migration : la base est la garantie, cette
-// validation est le message d'erreur utile.
+// The very same rules exist as CHECK in the migration: the database is the guarantee, this
+// validation is the useful error message.
 
 import (
 	"errors"
@@ -31,42 +31,42 @@ var (
 	keyPattern  = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,9}$`)
 )
 
-// validateSlug vérifie le slug d'une team : minuscules, chiffres et tirets, 1 à 40 caractères.
+// validateSlug checks a team slug: lowercase letters, digits and dashes, 1 to 40 characters.
 func validateSlug(slug string) error {
 	if !slugPattern.MatchString(slug) {
-		return fmt.Errorf("%w: slug %q (minuscules, chiffres et tirets, 1 à 40 caractères)",
+		return fmt.Errorf("%w: slug %q (lowercase letters, digits and dashes, 1 to 40 characters)",
 			ErrInvalidInput, slug)
 	}
 	return nil
 }
 
-// validateKey vérifie la clé d'un projet : majuscules et chiffres, 2 à 10 caractères, comme
-// FRNT ou CORE. Elle apparaît dans chaque identifiant lisible, donc elle doit rester courte.
+// validateKey checks a project key: uppercase letters and digits, 2 to 10 characters, like FRNT or
+// CORE. It shows up in every readable identifier, so it has to stay short.
 func validateKey(key string) error {
 	if !keyPattern.MatchString(key) {
-		return fmt.Errorf("%w: clé %q (majuscules et chiffres, 2 à 10 caractères, ex: FRNT)",
+		return fmt.Errorf("%w: key %q (uppercase letters and digits, 2 to 10 characters, e.g. FRNT)",
 			ErrInvalidInput, key)
 	}
 	return nil
 }
 
-// validateName vérifie qu'un nom lisible est renseigné et de taille raisonnable.
+// validateName checks a readable name is filled in and of reasonable size.
 func validateName(field, name string) error {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return fmt.Errorf("%w: %s est vide", ErrInvalidInput, field)
+		return fmt.Errorf("%w: %s is empty", ErrInvalidInput, field)
 	}
 	if len(trimmed) > maxNameLen {
-		return fmt.Errorf("%w: %s dépasse %d caractères", ErrInvalidInput, field, maxNameLen)
+		return fmt.Errorf("%w: %s exceeds %d characters", ErrInvalidInput, field, maxNameLen)
 	}
 	return nil
 }
 
-// translateStore ramène les erreurs du store aux erreurs domaine du service, en conservant la
-// cause pour le log.
+// translateStore brings store errors back to the service's domain errors, keeping the cause for
+// the log.
 func translateStore(err error, op string) error {
-	// Le succès traverse cette fonction sans dommage : sans ce cas, fmt.Errorf envelopperait nil
-	// et fabriquerait une erreur là où il n'y en a pas.
+	// Success crosses this function unharmed: without that case, fmt.Errorf would wrap nil and
+	// manufacture an error where there is none.
 	if err == nil {
 		return nil
 	}

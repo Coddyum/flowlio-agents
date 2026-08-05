@@ -1,16 +1,17 @@
 package handler
 
-// Ce que ce fichier verrouille : un token admin qui porte une team ne peut agir QUE sur elle.
+// What this file locks down: an admin token carrying a team can act ONLY on that team.
 //
-// Le scénario est monté par le HAUT — vrai middleware d'auth, vrai AdminOnly, vraies routes,
-// vrai handler — parce que c'est exactement la chaîne qui donnait le faux sentiment de sécurité :
-// `AdminOnly` accepte le principal, les huit tests d'isolation de la feature restent verts, et
-// `POST /tokens?team=<voisin>` émet un token de projet chez le voisin, secret en clair.
+// The scenario is built FROM THE TOP — real auth middleware, real AdminOnly, real routes, real
+// handler — because that is exactly the chain that gave the false sense of safety: `AdminOnly`
+// accepts the principal, the feature's eight isolation tests stay green, and
+// `POST /tokens?team=<neighbour>` issues a project token at the neighbour's, secret in clear.
 //
-// Seul le STORE d'auth est faux, et c'est obligatoire : depuis la migration 000006, la ligne
-// `scope='admin' AND team_id IS NOT NULL` n'est plus insérable en base. Le scénario ne peut donc
-// PLUS être monté de bout en bout par SQL — ce qui est le but de la migration. Le faux store est
-// ce qui permet de continuer à prouver que le code tient sans la contrainte, et pas grâce à elle.
+// Only the auth STORE is fake, and it has to be: since migration 000006, the row
+// `scope='admin' AND team_id IS NOT NULL` is no longer insertable in the database. The scenario can
+// therefore NO LONGER be built end to end through SQL — which is the point of the migration. The
+// fake store is what allows us to keep proving the code holds without the constraint, rather than
+// thanks to it.
 
 import (
 	"context"
@@ -25,9 +26,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// fakeWorkspace enregistre ce que le handler lui demande. C'est là que se joue l'assertion qui
-// compte : un refus de teamFor doit couper AVANT que le service ne travaille, sinon le refus
-// n'est plus qu'un filtre de sortie et l'effet de bord a déjà eu lieu.
+// fakeWorkspace records what the handler asks of it. That is where the assertion that matters
+// plays out: a teamFor refusal must cut in BEFORE the service does any work, otherwise the refusal
+// is only an output filter and the side effect has already happened.
 type fakeWorkspace struct {
 	teams map[string]service.Team
 	calls []string
@@ -99,21 +100,21 @@ func (f *fakeWorkspace) ListTrust(context.Context, uuid.UUID) ([]service.TrustEd
 	return nil, nil
 }
 
-// adminServer monte les routes admin qui passent par teamFor, avec le vrai middleware d'auth,
-// et renvoie le token brut à présenter. teamID est la team que PORTE le token admin :
-// uuid.Nil pour l'admin global, celui qui existe réellement aujourd'hui.
+// adminServer mounts the admin routes that go through teamFor, with the real auth middleware, and
+// returns the raw token to present. teamID is the team the admin token CARRIES: uuid.Nil for the
+// global admin, the one that actually exists today.
 func adminServer(t *testing.T, teamID uuid.UUID, svc service.Service) (http.Handler, string) {
 	t.Helper()
 	return tokenServer(t, auth.TokenRecord{Scope: auth.ScopeAdmin, TeamID: teamID}, svc)
 }
 
-// tokenServer monte les mêmes routes derrière le VRAI AdminOnly, pour un token dont le test
-// choisit la portée.
+// tokenServer mounts the same routes behind the REAL AdminOnly, for a token whose scope the test
+// chooses.
 //
-// Le harnais vient d'authtest : `auth.contextKey` est privé, donc aucun test ne peut déposer un
-// Principal à la main — il doit passer par le vrai middleware, sur un vrai token frappé. C'est ce
-// qui permet de présenter un token de PROJET aux routes admin et de vérifier qu'il est refusé
-// AVANT le handler.
+// The harness comes from authtest: `auth.contextKey` is private, so no test can drop a Principal in
+// by hand — it has to go through the real middleware, on a real minted token. That is what makes it
+// possible to present a PROJECT token to the admin routes and check it is refused BEFORE the
+// handler.
 func tokenServer(t *testing.T, rec auth.TokenRecord, svc service.Service) (http.Handler, string) {
 	t.Helper()
 
@@ -136,9 +137,9 @@ func tokenServer(t *testing.T, rec auth.TokenRecord, svc service.Service) (http.
 	return mux, tok.Plain
 }
 
-// teamForRoute décrit une route dont la team est résolue par teamFor. Les cinq y sont : le garde
-// vit dans teamFor, donc une route ajoutée demain qui l'appelle est protégée sans y penser — et
-// une route qui ne l'appelle PAS doit sauter aux yeux de qui relit cette liste.
+// teamForRoute describes a route whose team is resolved by teamFor. All five are here: the guard
+// lives in teamFor, so a route added tomorrow that calls it is protected without thinking — and a
+// route that does NOT call it must leap out at whoever reads this list.
 type teamForRoute struct {
 	name    string
 	method  string
@@ -153,17 +154,17 @@ var teamForRoutes = []teamForRoute{
 	{"POST /tokens", http.MethodPost, "/tokens", `{"project":"FRNT","name":"agent"}`, "CreateToken"},
 	{"GET /tokens", http.MethodGet, "/tokens", "", "ListTokens"},
 	{"DELETE /tokens/{id}", http.MethodDelete, "/tokens/" + uuid.NewString(), "", "RevokeToken"},
-	// Le graphe de confiance édite QUI PEUT ÉCRIRE À QUI. Un admin épinglé à une team qui
-	// atteindrait `POST /trust?team=<voisin>` s'ouvrirait le canal chez le voisin — c'est-à-dire
-	// exactement la faille que le volet 2 ferme, rouverte par la porte de son administration.
-	// Les trois routes sont donc dans cette liste, et les quatre tests ci-dessous les couvrent.
+	// The trust graph edits WHO MAY WRITE TO WHOM. An admin pinned to a team that could reach
+	// `POST /trust?team=<neighbour>` would open the channel at the neighbour's — that is, exactly
+	// the hole part 2 closes, reopened through its administration door. All three routes are
+	// therefore in this list, and the four tests below cover them.
 	{"GET /trust", http.MethodGet, "/trust", "", "ListTrust"},
 	{"POST /trust", http.MethodPost, "/trust", `{"first":"FRNT","second":"CORE"}`, "AllowTrust"},
 	{"DELETE /trust/{first}/{second}", http.MethodDelete, "/trust/FRNT/CORE", "", "RevokeTrust"},
 }
 
-// call joue une requête admin sur une route et rend le statut, le corps, et les appels que le
-// service a reçus.
+// call plays an admin request on a route and returns the status, the body, and the calls the
+// service received.
 func call(t *testing.T, teamID uuid.UUID, r teamForRoute, teams map[string]service.Team, slug string) (int, string, []string) {
 	t.Helper()
 
@@ -187,18 +188,18 @@ func contains(calls []string, name string) bool {
 	return false
 }
 
-// fixtures monte deux teams : celle du token, et le voisin qu'il ne doit pas atteindre.
+// fixtures sets up two teams: the token's own, and the neighbour it must not reach.
 func fixtures() (map[string]service.Team, service.Team, service.Team) {
-	mine := service.Team{ID: uuid.New(), Slug: "ma-team", Name: "La mienne"}
-	other := service.Team{ID: uuid.New(), Slug: "team-du-voisin", Name: "Le voisin"}
+	mine := service.Team{ID: uuid.New(), Slug: "my-team", Name: "Mine"}
+	other := service.Team{ID: uuid.New(), Slug: "neighbour-team", Name: "The neighbour"}
 	return map[string]service.Team{mine.Slug: mine, other.Slug: other}, mine, other
 }
 
-// Un admin qui porte une team est enfermé dedans, sur TOUTES les routes qui résolvent une team.
+// An admin carrying a team is locked inside it, on EVERY route that resolves a team.
 //
-// MUTATION : retirer le garde `if p.TeamID != uuid.Nil && team.ID != p.TeamID` de teamFor fait
-// tomber ce test sur les cinq routes — le voisin répond alors 2xx et le service est appelé.
-func TestAdminPorteurDUneTeamNeSortPasDeLaSienne(t *testing.T) {
+// MUTATION: removing the `if p.TeamID != uuid.Nil && team.ID != p.TeamID` guard from teamFor makes
+// this test fail on all five routes — the neighbour then answers 2xx and the service is called.
+func TestAdminCarryingATeamDoesNotLeaveIt(t *testing.T) {
 	teams, mine, other := fixtures()
 
 	for _, r := range teamForRoutes {
@@ -206,47 +207,47 @@ func TestAdminPorteurDUneTeamNeSortPasDeLaSienne(t *testing.T) {
 			code, body, calls := call(t, mine.ID, r, teams, other.Slug)
 
 			if code != http.StatusNotFound {
-				t.Errorf("?team=%s : code = %d, attendu %d — un admin épinglé à %s a agi sur le voisin",
+				t.Errorf("?team=%s: code = %d, want %d — an admin pinned to %s acted on the neighbour",
 					other.Slug, code, http.StatusNotFound, mine.Slug)
 			}
 			if body != `{"error":"not found"}` {
-				t.Errorf("corps = %s, attendu {\"error\":\"not found\"}", body)
+				t.Errorf("body = %s, want {\"error\":\"not found\"}", body)
 			}
 			if contains(calls, r.svcCall) {
-				t.Errorf("le service a reçu %s : le refus arrive APRÈS le travail, donc l'effet de bord a eu lieu (appels: %v)",
+				t.Errorf("the service received %s: the refusal comes AFTER the work, so the side effect happened (calls: %v)",
 					r.svcCall, calls)
 			}
 		})
 	}
 }
 
-// Le refus doit être indiscernable d'une team inexistante : « elle existe mais pas pour toi »
-// laisserait énumérer les teams de l'installation par balayage de slugs.
+// The refusal must be indistinguishable from a non-existent team: "it exists but not for you" would
+// let one enumerate an installation's teams by sweeping slugs.
 //
-// MUTATION : répondre auth.ErrForbidden au lieu de service.ErrNotFound dans teamFor fait tomber
-// ce test — 403 d'un côté, 404 de l'autre.
-func TestLeRefusEstIndiscernableDUneTeamInexistante(t *testing.T) {
+// MUTATION: answering auth.ErrForbidden instead of service.ErrNotFound in teamFor makes this test
+// fail — 403 on one side, 404 on the other.
+func TestTheRefusalIsIndistinguishableFromAMissingTeam(t *testing.T) {
 	teams, mine, other := fixtures()
 
 	for _, r := range teamForRoutes {
 		t.Run(r.name, func(t *testing.T) {
-			refusCode, refusBody, _ := call(t, mine.ID, r, teams, other.Slug)
-			inconnuCode, inconnuBody, _ := call(t, mine.ID, r, teams, "team-qui-nexiste-pas")
+			refusedCode, refusedBody, _ := call(t, mine.ID, r, teams, other.Slug)
+			unknownCode, unknownBody, _ := call(t, mine.ID, r, teams, "team-that-does-not-exist")
 
-			if refusCode != inconnuCode {
-				t.Errorf("codes distincts : voisin = %d, slug inconnu = %d — le code dit que la team existe",
-					refusCode, inconnuCode)
+			if refusedCode != unknownCode {
+				t.Errorf("codes differ: neighbour = %d, unknown slug = %d — the code says the team exists",
+					refusedCode, unknownCode)
 			}
-			if refusBody != inconnuBody {
-				t.Errorf("corps distincts : voisin = %s, slug inconnu = %s", refusBody, inconnuBody)
+			if refusedBody != unknownBody {
+				t.Errorf("bodies differ: neighbour = %s, unknown slug = %s", refusedBody, unknownBody)
 			}
 		})
 	}
 }
 
-// Sa propre team reste évidemment accessible. Sans ce cas, un garde qui refuserait TOUT admin
-// porteur d'une team passerait pour correct.
-func TestAdminPorteurDUneTeamAgitSurLaSienne(t *testing.T) {
+// Its own team stays reachable, obviously. Without this case, a guard refusing EVERY admin carrying
+// a team would pass for correct.
+func TestAdminCarryingATeamActsOnItsOwn(t *testing.T) {
 	teams, mine, _ := fixtures()
 
 	for _, r := range teamForRoutes {
@@ -254,19 +255,19 @@ func TestAdminPorteurDUneTeamAgitSurLaSienne(t *testing.T) {
 			code, body, calls := call(t, mine.ID, r, teams, mine.Slug)
 
 			if code == http.StatusNotFound || code >= http.StatusInternalServerError {
-				t.Errorf("code = %d (corps %s) : sa propre team lui est refusée", code, body)
+				t.Errorf("code = %d (body %s): its own team is refused to it", code, body)
 			}
 			if !contains(calls, r.svcCall) {
-				t.Errorf("le service n'a pas reçu %s (appels: %v)", r.svcCall, calls)
+				t.Errorf("the service did not receive %s (calls: %v)", r.svcCall, calls)
 			}
 		})
 	}
 }
 
-// L'admin GLOBAL — celui que l'amorçage crée réellement, sans team — garde sa portée sur toutes
-// les teams. C'est le garde-fou dans l'autre sens : le correctif ne doit pas casser le seul
-// token admin qui existe aujourd'hui.
-func TestAdminGlobalAtteintNImporteQuelleTeam(t *testing.T) {
+// The GLOBAL admin — the one bootstrapping actually creates, with no team — keeps its reach over
+// every team. This is the guardrail in the other direction: the fix must not break the only admin
+// token that exists today.
+func TestGlobalAdminReachesAnyTeam(t *testing.T) {
 	teams, _, other := fixtures()
 
 	for _, r := range teamForRoutes {
@@ -274,10 +275,10 @@ func TestAdminGlobalAtteintNImporteQuelleTeam(t *testing.T) {
 			code, body, calls := call(t, uuid.Nil, r, teams, other.Slug)
 
 			if code == http.StatusNotFound || code >= http.StatusInternalServerError {
-				t.Errorf("code = %d (corps %s) : l'admin global ne peut plus administrer", code, body)
+				t.Errorf("code = %d (body %s): the global admin can no longer administer", code, body)
 			}
 			if !contains(calls, r.svcCall) {
-				t.Errorf("le service n'a pas reçu %s (appels: %v)", r.svcCall, calls)
+				t.Errorf("the service did not receive %s (calls: %v)", r.svcCall, calls)
 			}
 		})
 	}

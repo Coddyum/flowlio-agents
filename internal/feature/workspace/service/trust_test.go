@@ -1,11 +1,11 @@
 package service
 
-// Ce que ce fichier verrouille : la seule chose que le service décide sur le graphe, c'est-à-dire
-// la validation de deux chaînes tapées par un humain.
+// What this file locks down: the only thing the service decides about the graph, that is the
+// validation of two strings typed by a human.
 //
-// Tout le reste — l'appartenance des projets à la team, l'autorisation elle-même — vit dans le
-// SQL et n'est pas testable ici, délibérément. Un test de service qui prouverait la tenancy
-// prouverait la tenancy DU FAKE.
+// Everything else — the projects' membership of the team, the authorisation itself — lives in the
+// SQL and is not testable here, deliberately. A service test proving tenancy would prove the
+// tenancy OF THE FAKE.
 
 import (
 	"context"
@@ -17,9 +17,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// trustSpy enregistre les clés reçues par le store, telles que le service les a normalisées.
-// C'est la seule façon de vérifier que la normalisation a bien lieu AVANT l'appel — un fake qui
-// normaliserait à son tour rendrait le test vert quelle que soit l'implémentation.
+// trustSpy records the keys the store received, as the service normalised them. That is the only
+// way to check normalisation really happens BEFORE the call — a fake normalising in turn would make
+// the test green whatever the implementation.
 type trustSpy struct {
 	store.Store
 
@@ -40,52 +40,55 @@ func (s *trustSpy) RevokeTrust(_ context.Context, _ uuid.UUID, first, second str
 	return true, nil
 }
 
-// Un projet ne peut pas s'autoriser lui-même, et le message le DIT.
+// A project cannot allow itself, and the message SAYS so.
 //
-// La base refuserait de toute façon (project_trust_ordered exclut l'égalité), mais elle rendrait
-// un `not found` — c'est-à-dire, pour l'humain, le même message que s'il avait tapé une clé qui
-// n'existe pas. Ce contrôle existe pour transformer ce silence en phrase utile.
+// The database would refuse anyway (project_trust_ordered excludes equality), but it would return a
+// `not found` — that is, to the human, the same message as if they had typed a key that does not
+// exist. This check exists to turn that silence into a useful sentence.
 //
-// Le cas `frnt`/`FRNT` est celui qui compte : la comparaison a lieu APRÈS normalisation. Sans ça,
-// la validation passerait et la base rendrait un 404 sur une commande dont la faute était
-// évidente.
+// The `frnt`/`FRNT` case is the one that matters: the comparison happens AFTER normalisation.
+// Without that, validation would pass and the database would return a 404 on a command whose
+// mistake was obvious.
 func TestTrustRefusesASelfPair(t *testing.T) {
 	teamID := uuid.New()
 
-	cas := []struct{ name, first, second string }{
-		{"clés identiques", "FRNT", "FRNT"},
-		{"casse différente", "frnt", "FRNT"},
-		{"espaces autour", " FRNT ", "FRNT"},
+	cases := []struct{ name, first, second string }{
+		{"identical keys", "FRNT", "FRNT"},
+		{"different case", "frnt", "FRNT"},
+		{"surrounding spaces", " FRNT ", "FRNT"},
 	}
 
-	for _, c := range cas {
+	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			for verb, call := range map[string]func(Service, TrustPairInput) error{
 				"allow": func(s Service, in TrustPairInput) error { _, err := s.AllowTrust(context.Background(), in); return err },
-				"deny":  func(s Service, in TrustPairInput) error { _, err := s.RevokeTrust(context.Background(), in); return err },
+				"deny": func(s Service, in TrustPairInput) error {
+					_, err := s.RevokeTrust(context.Background(), in)
+					return err
+				},
 			} {
 				spy := &trustSpy{}
 				err := call(New(spy), TrustPairInput{TeamID: teamID, First: c.first, Second: c.second})
 
 				if !errors.Is(err, ErrInvalidInput) {
-					t.Errorf("%s: erreur = %v, attendu ErrInvalidInput", verb, err)
+					t.Errorf("%s: error = %v, want ErrInvalidInput", verb, err)
 				}
-				if !strings.Contains(err.Error(), "lui-même") {
-					t.Errorf("%s: message = %q, attendu une phrase qui explique le refus", verb, err)
+				if !strings.Contains(err.Error(), "itself") {
+					t.Errorf("%s: message = %q, want a sentence explaining the refusal", verb, err)
 				}
 				if spy.calls != 0 {
-					t.Errorf("%s: le store a été appelé %d fois — le refus arrive après le travail", verb, spy.calls)
+					t.Errorf("%s: the store was called %d times — the refusal comes after the work", verb, spy.calls)
 				}
 			}
 		})
 	}
 }
 
-// Les clés arrivent au store en MAJUSCULES et sans espaces. `frnt` et `FRNT` désignent le même
-// projet : laisser la casse décider de l'existence d'une arête produirait deux graphes pour une
-// seule intention, dont un que personne ne relit.
+// The keys reach the store in UPPERCASE and without spaces. `frnt` and `FRNT` name the same
+// project: letting case decide whether an edge exists would produce two graphs for a single
+// intention, one of which nobody ever reads.
 //
-// MUTATION : retirer `strings.ToUpper` de normalisePair fait tomber ce test.
+// MUTATION: removing `strings.ToUpper` from normalisePair makes this test fail.
 func TestTrustNormalisesKeysBeforeTheStore(t *testing.T) {
 	teamID := uuid.New()
 
@@ -97,16 +100,16 @@ func TestTrustNormalisesKeysBeforeTheStore(t *testing.T) {
 	}
 
 	if spy.first != "FRNT" || spy.second != "CORE" {
-		t.Errorf("le store a reçu (%q, %q), attendu (\"FRNT\", \"CORE\")", spy.first, spy.second)
+		t.Errorf("the store received (%q, %q), want (\"FRNT\", \"CORE\")", spy.first, spy.second)
 	}
 }
 
-// L'ORDRE des deux clés est conservé tel quel jusqu'au store : le service ne trie pas.
+// The ORDER of the two keys is carried through to the store as is: the service does not sort.
 //
-// C'est délibéré et ça mérite un test, parce que l'intuition dit l'inverse. La normalisation en
-// paire canonique (`least`/`greatest`) a lieu DANS LA QUERY, sur les UUID — pas sur les clés. Un
-// tri par clé ici serait un second ordre canonique, faux : `least` porte sur les identifiants,
-// dont l'ordre n'a aucun rapport avec l'alphabet.
+// This is deliberate and deserves a test, because intuition says the opposite. Normalisation into a
+// canonical pair (`least`/`greatest`) happens IN THE QUERY, on the UUIDs — not on the keys. Sorting
+// by key here would be a second canonical order, and a wrong one: `least` applies to the
+// identifiers, whose order has nothing to do with the alphabet.
 func TestTrustDoesNotReorderKeys(t *testing.T) {
 	teamID := uuid.New()
 
@@ -118,45 +121,45 @@ func TestTrustDoesNotReorderKeys(t *testing.T) {
 	}
 
 	if spy.first != "ZULU" || spy.second != "ALFA" {
-		t.Errorf("le store a reçu (%q, %q), attendu l'ordre de la commande — la paire canonique "+
-			"se calcule sur les UUID dans la query, pas sur les clés ici", spy.first, spy.second)
+		t.Errorf("the store received (%q, %q), want the order of the command — the canonical pair "+
+			"is computed on the UUIDs in the query, not on the keys here", spy.first, spy.second)
 	}
 }
 
-// Une clé malformée est refusée avant d'atteindre le store, par le même validateur que partout.
+// A malformed key is refused before reaching the store, by the same validator as everywhere else.
 func TestTrustRejectsMalformedKeys(t *testing.T) {
 	teamID := uuid.New()
 
-	for _, key := range []string{"", "F", "frnt-web", "1FRNT", "TROPLONGUECLE", "FR NT"} {
-		t.Run("clé "+key, func(t *testing.T) {
+	for _, key := range []string{"", "F", "frnt-web", "1FRNT", "WAYTOOLONGKEY", "FR NT"} {
+		t.Run("key "+key, func(t *testing.T) {
 			spy := &trustSpy{}
 			if _, err := New(spy).AllowTrust(context.Background(), TrustPairInput{
 				TeamID: teamID, First: key, Second: "CORE",
 			}); !errors.Is(err, ErrInvalidInput) {
-				t.Errorf("erreur = %v, attendu ErrInvalidInput", err)
+				t.Errorf("error = %v, want ErrInvalidInput", err)
 			}
 			if spy.calls != 0 {
-				t.Errorf("le store a été appelé malgré une clé invalide")
+				t.Errorf("the store was called despite an invalid key")
 			}
 		})
 	}
 }
 
-// Sans team résolue, rien ne part. C'est le garde-fou du câblage : si un handler oubliait
-// d'affecter TeamID après teamFor, l'écriture partirait sous uuid.Nil — donc sous aucune team,
-// donc en `not found` silencieux plutôt qu'en erreur de programmation visible.
+// With no resolved team, nothing leaves. This is the wiring guardrail: were a handler to forget
+// setting TeamID after teamFor, the write would go out under uuid.Nil — hence under no team, hence
+// as a silent `not found` rather than a visible programming error.
 func TestTrustRefusesAnUnresolvedTeam(t *testing.T) {
 	spy := &trustSpy{}
 
 	if _, err := New(spy).AllowTrust(context.Background(), TrustPairInput{
 		First: "FRNT", Second: "CORE",
 	}); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("AllowTrust sans team: erreur = %v, attendu ErrInvalidInput", err)
+		t.Errorf("AllowTrust with no team: error = %v, want ErrInvalidInput", err)
 	}
 	if _, err := New(spy).ListTrust(context.Background(), uuid.Nil); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("ListTrust sans team: erreur = %v, attendu ErrInvalidInput", err)
+		t.Errorf("ListTrust with no team: error = %v, want ErrInvalidInput", err)
 	}
 	if spy.calls != 0 {
-		t.Errorf("le store a été appelé sans team résolue")
+		t.Errorf("the store was called with no resolved team")
 	}
 }

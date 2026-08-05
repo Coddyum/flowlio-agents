@@ -6,20 +6,19 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
 )
 
-// RevokeTrust ferme une paire : plus aucune NOUVELLE issue entre ces deux projets. Réservé aux
-// tokens admin.
+// RevokeTrust closes a pair: no NEW issue between those two projects any more. Admin tokens only.
 //
-// CE N'EST PAS UN OUTIL DE CONFINEMENT, et la CLI le dit à l'humain à chaque appel. Les fils déjà
-// ouverts restent lisibles et répondables, sans borne de temps : le graphe est une déclaration de
-// moindre privilège au moment de la conception, pas un coupe-circuit. Le coupe-circuit existe,
-// s'appelle `flowlio token revoke`, et coupe tout immédiatement puisque l'authentification relit
-// la ligne à chaque requête. Confondre les deux le jour d'un incident ferait perdre du temps.
+// THIS IS NOT A CONTAINMENT TOOL, and the CLI says so to the human on every call. Threads already
+// open stay readable and answerable, with no time limit: the graph is a least-privilege declaration
+// at design time, not a circuit breaker. The circuit breaker exists, is called
+// `flowlio token revoke`, and cuts everything immediately since authentication re-reads the row on
+// every request. Confusing the two on the day of an incident would waste time.
 //
-// Les clés sont dans le CHEMIN et non dans un corps : elles valident `^[A-Z][A-Z0-9]{1,9}$`, donc
-// elles sont sûres en segment d'URL, et c'est le patron de `DELETE /tokens/{id}`.
+// The keys sit in the PATH rather than in a body: they validate `^[A-Z][A-Z0-9]{1,9}$`, so they are
+// safe as URL segments, and it is the pattern of `DELETE /tokens/{id}`.
 //
-// Idempotente : retirer une confiance absente rend 200 avec `changed: false`. Mais une CLÉ qui
-// n'existe pas rend 404 — une faute de frappe ne doit pas ressembler à une réussite.
+// Idempotent: removing an absent trust returns 200 with `changed: false`. But a KEY that does not
+// exist returns 404 — a typo must not look like a success.
 func (h *Handler) RevokeTrust(w http.ResponseWriter, r *http.Request) {
 	principal, ok := h.principal(w, r)
 	if !ok {

@@ -2,11 +2,11 @@ package handler
 
 import "net/http"
 
-// ListProjects liste les projets d'une team. Un token de projet obtient la sienne, quoi qu'il
-// demande ; un token admin désigne la team par ?team=<slug>.
+// ListProjects lists a team's projects. A project token gets its own, whatever it asks for; an
+// admin token names the team through ?team=<slug>.
 //
-// C'est la seule vue inter-projets ouverte à un agent : il découvre les repos frères pour leur
-// adresser des issues, sans jamais accéder à leur travail.
+// This is the only cross-project view open to an agent: it discovers the sibling repos in order to
+// address issues to them, without ever reaching their work.
 func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	principal, ok := h.principal(w, r)
 	if !ok {

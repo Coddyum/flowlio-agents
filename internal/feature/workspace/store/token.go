@@ -4,10 +4,10 @@ package store
 //
 // | Élément           | Résumé                                                   | Ligne |
 // |-------------------|----------------------------------------------------------|-------|
-// | store.CreateToken | Insère un token de projet (préfixe public + hash)         | 24    |
-// | store.ListTokens  | Liste les tokens d'un projet, secrets exclus              | 40    |
-// | store.RevokeToken | Révoque un token de la team, une seule fois               | 58    |
-// | toToken           | Projette une ligne sqlc en token domaine                  | 70    |
+// | store.CreateToken | Inserts a project token (public prefix + hash)            | 24    |
+// | store.ListTokens  | Lists a project's tokens, secrets excluded                | 40    |
+// | store.RevokeToken | Revokes one of the team's tokens, exactly once            | 58    |
+// | toToken           | Projects an sqlc row onto the domain token                | 70    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -19,8 +19,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// CreateToken insère un token de projet. Le secret en clair n'atteint jamais cette couche :
-// seul son hash est fourni par le service.
+// CreateToken inserts a project token. The secret in clear never reaches this layer: only its hash
+// is supplied by the service.
 func (s *store) CreateToken(ctx context.Context, teamID, projectID uuid.UUID, name, prefix, hash string) (Token, error) {
 	row, err := s.q.CreateProjectToken(ctx, database.CreateProjectTokenParams{
 		TeamID:     uuid.NullUUID{UUID: teamID, Valid: true},
@@ -35,8 +35,8 @@ func (s *store) CreateToken(ctx context.Context, teamID, projectID uuid.UUID, na
 	return toToken(row), nil
 }
 
-// ListTokens liste les tokens d'un projet. Aucun secret n'est renvoyé — il n'en existe aucun
-// en base, seulement des hashs.
+// ListTokens lists a project's tokens. No secret is returned — none exists in the database, only
+// hashes.
 func (s *store) ListTokens(ctx context.Context, teamID, projectID uuid.UUID) ([]Token, error) {
 	rows, err := s.q.ListProjectTokens(ctx, database.ListProjectTokensParams{
 		TeamID:    uuid.NullUUID{UUID: teamID, Valid: true},
@@ -53,8 +53,8 @@ func (s *store) ListTokens(ctx context.Context, teamID, projectID uuid.UUID) ([]
 	return tokens, nil
 }
 
-// RevokeToken révoque un token de la team. La query ne touche que les tokens de projet non
-// encore révoqués : rejouer la révocation remonte ErrNotFound plutôt que de mentir.
+// RevokeToken revokes one of the team's tokens. The query only touches project tokens not yet
+// revoked: replaying the revocation yields ErrNotFound rather than lying.
 func (s *store) RevokeToken(ctx context.Context, teamID, tokenID uuid.UUID) (Token, error) {
 	row, err := s.q.RevokeProjectToken(ctx, database.RevokeProjectTokenParams{
 		ID:     tokenID,
@@ -66,7 +66,7 @@ func (s *store) RevokeToken(ctx context.Context, teamID, tokenID uuid.UUID) (Tok
 	return toToken(row), nil
 }
 
-// toToken projette une ligne générée en type domaine.
+// toToken projects a generated row onto the domain type.
 func toToken(row database.Token) Token {
 	return Token{
 		ID:         row.ID,

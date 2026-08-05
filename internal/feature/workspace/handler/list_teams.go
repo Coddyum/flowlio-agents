@@ -2,8 +2,8 @@ package handler
 
 import "net/http"
 
-// ListTeams liste les teams. Réservé aux tokens admin : un agent n'a rien à savoir des autres
-// teams, ni même de leur existence.
+// ListTeams lists the teams. Admin tokens only: an agent has no business knowing about other
+// teams, not even that they exist.
 func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
 	teams, err := h.svc.ListTeams(r.Context())
 	if err != nil {

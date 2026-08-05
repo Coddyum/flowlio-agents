@@ -1,15 +1,15 @@
 package handler
 
-// Ce que ce fichier verrouille : les trois routes du graphe de confiance sont ADMIN, et un token
-// d'agent y est refusé AVANT d'atteindre le handler.
+// What this file locks down: the three trust-graph routes are ADMIN, and an agent token is refused
+// there BEFORE reaching the handler.
 //
-// C'est la garantie qui fonde Q3 de docs/DESIGN-TRUST.md. Un agent a plein pouvoir sur les
-// fichiers de son propre repo ; une confiance qu'il pourrait déclarer serait donc auto-signée par
-// la partie qu'elle est censée contraindre. Si `admin` devenait `authed` sur l'une des trois
-// lignes de Routes(), tout le volet 2 tomberait — et rien d'autre dans la suite ne le verrait.
+// This is the guarantee Q3 of docs/DESIGN-TRUST.md rests on. An agent has full power over the files
+// of its own repo; a trust it could declare would therefore be self-signed by the very party it is
+// meant to constrain. If `admin` became `authed` on one of the three lines of Routes(), the whole
+// of part 2 would fall — and nothing else in the suite would see it.
 //
-// Les quatre tests de handler_test.go couvrent déjà l'autre moitié (un admin épinglé à une team
-// ne sort pas de la sienne, sur les trois routes) : elles sont dans teamForRoutes.
+// The four tests in handler_test.go already cover the other half (an admin pinned to a team does
+// not leave it, on the three routes): they are in teamForRoutes.
 
 import (
 	"net/http"
@@ -22,20 +22,20 @@ import (
 	"github.com/google/uuid"
 )
 
-// trustRoutes est le sous-ensemble de teamForRoutes qui édite ou lit le graphe. Il est écrit à
-// part, et pas dérivé par filtre : une route de confiance ajoutée demain doit apparaître ici
-// explicitement, pas être capturée par un préfixe qu'on aurait oublié de vérifier.
+// trustRoutes is the subset of teamForRoutes that edits or reads the graph. It is written
+// separately rather than derived by a filter: a trust route added tomorrow must show up here
+// explicitly, not be caught by a prefix nobody remembered to check.
 var trustRoutes = []teamForRoute{
 	{"GET /trust", http.MethodGet, "/trust", "", "ListTrust"},
 	{"POST /trust", http.MethodPost, "/trust", `{"first":"FRNT","second":"CORE"}`, "AllowTrust"},
 	{"DELETE /trust/{first}/{second}", http.MethodDelete, "/trust/FRNT/CORE", "", "RevokeTrust"},
 }
 
-// Un token de PROJET — celui que porte un agent — est refusé sur les trois routes du graphe.
+// A PROJECT token — the one an agent carries — is refused on all three graph routes.
 //
-// MUTATION : remplacer `admin` par `authed` sur l'une des trois lignes de Routes() fait tomber ce
-// test sur cette route. C'est la seule chose qui empêche un agent de s'autoriser lui-même.
-func TestUnTokenDAgentNeTouchePasAuGrapheDeConfiance(t *testing.T) {
+// MUTATION: replacing `admin` with `authed` on one of the three lines of Routes() makes this test
+// fail on that route. It is the only thing preventing an agent from allowing itself.
+func TestAnAgentTokenDoesNotTouchTheTrustGraph(t *testing.T) {
 	teams, mine, _ := fixtures()
 
 	for _, r := range trustRoutes {
@@ -53,24 +53,24 @@ func TestUnTokenDAgentNeTouchePasAuGrapheDeConfiance(t *testing.T) {
 			mux.ServeHTTP(rec, req)
 
 			if rec.Code != http.StatusForbidden {
-				t.Errorf("code = %d, attendu %d — un agent peut éditer le graphe qui le contraint",
+				t.Errorf("code = %d, want %d — an agent can edit the graph that constrains it",
 					rec.Code, http.StatusForbidden)
 			}
-			// Le refus vient du MIDDLEWARE, pas du handler : le service ne doit avoir rien vu.
-			// Un 403 rendu après un appel au service serait un filtre de sortie, et l'écriture
-			// aurait déjà eu lieu.
+			// The refusal comes from the MIDDLEWARE, not the handler: the service must have seen
+			// nothing. A 403 returned after a service call would be an output filter, and the write
+			// would already have happened.
 			if len(svc.calls) != 0 {
-				t.Errorf("le service a été appelé (%v) : le refus arrive après le travail", svc.calls)
+				t.Errorf("the service was called (%v): the refusal comes after the work", svc.calls)
 			}
 		})
 	}
 }
 
-// Un token sans Authorization du tout est refusé aussi, et en 401 — pas en 403.
+// A request with no Authorization at all is refused too, and with a 401 — not a 403.
 //
-// Sans ce cas, un middleware qui refuserait TOUT le monde passerait pour correct au test
-// précédent. C'est le pendant de TestAdminPorteurDUneTeamAgitSurLaSienne.
-func TestLeGrapheExigeUneAuthentification(t *testing.T) {
+// Without this case, a middleware refusing EVERYONE would pass for correct on the previous test. It
+// is the counterpart of TestAdminCarryingATeamActsOnItsOwn.
+func TestTheGraphRequiresAuthentication(t *testing.T) {
 	teams, _, _ := fixtures()
 
 	for _, r := range trustRoutes {
@@ -78,24 +78,24 @@ func TestLeGrapheExigeUneAuthentification(t *testing.T) {
 			svc := &fakeWorkspace{teams: teams}
 			mux, _ := adminServer(t, uuid.Nil, svc)
 
-			req := httptest.NewRequest(r.method, r.path+"?team=ma-team", strings.NewReader(r.body))
+			req := httptest.NewRequest(r.method, r.path+"?team=my-team", strings.NewReader(r.body))
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 
 			if rec.Code != http.StatusUnauthorized {
-				t.Errorf("code = %d sans en-tête Authorization, attendu %d", rec.Code, http.StatusUnauthorized)
+				t.Errorf("code = %d with no Authorization header, want %d", rec.Code, http.StatusUnauthorized)
 			}
 		})
 	}
 }
 
-// La team vient de teamFor et de NULLE PART ailleurs : un `team_id` glissé dans le corps de
-// `POST /trust` doit être refusé par le décodeur, pas ignoré en silence.
+// The team comes from teamFor and from NOWHERE else: a `team_id` slipped into the body of
+// `POST /trust` must be refused by the decoder, not silently ignored.
 //
-// Le champ porte `json:"-"`, donc DisallowUnknownFields le rejette. Sans ce test, retirer le tag
-// transformerait le corps en second résolveur de team — et un admin global pourrait ouvrir une
-// arête dans une team qu'il n'a pas nommée dans `?team=`.
-func TestLaTeamNeSeGlissePasDansLeCorps(t *testing.T) {
+// The field carries `json:"-"`, so DisallowUnknownFields rejects it. Without this test, removing
+// the tag would turn the body into a second team resolver — and a global admin could open an edge
+// in a team it never named in `?team=`.
+func TestTheTeamDoesNotSlipIntoTheBody(t *testing.T) {
 	teams, mine, other := fixtures()
 
 	svc := &fakeWorkspace{teams: teams}
@@ -108,18 +108,18 @@ func TestLaTeamNeSeGlissePasDansLeCorps(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
-		t.Errorf("code = %d avec un team_id dans le corps, attendu %d", rec.Code, http.StatusBadRequest)
+		t.Errorf("code = %d with a team_id in the body, want %d", rec.Code, http.StatusBadRequest)
 	}
 	if contains(svc.calls, "AllowTrust") {
-		t.Errorf("le service a reçu AllowTrust (%v) : un corps invalide a atteint la logique", svc.calls)
+		t.Errorf("the service received AllowTrust (%v): an invalid body reached the logic", svc.calls)
 	}
 }
 
-// L'écriture est refusée AVANT le décodage du corps quand la team ne se résout pas.
+// The write is refused BEFORE the body is decoded when the team does not resolve.
 //
-// L'ordre compte : décoder d'abord donnerait à un admin épinglé un moyen de distinguer « corps
-// invalide » de « team interdite », donc un oracle sur l'existence des teams voisines.
-func TestUnCorpsValideNeSauvePasUneTeamInterdite(t *testing.T) {
+// The order matters: decoding first would give a pinned admin a way to tell "invalid body" from
+// "forbidden team", hence an oracle on the existence of neighbouring teams.
+func TestAValidBodyDoesNotRescueAForbiddenTeam(t *testing.T) {
 	teams, mine, other := fixtures()
 
 	svc := &fakeWorkspace{teams: teams}
@@ -132,16 +132,16 @@ func TestUnCorpsValideNeSauvePasUneTeamInterdite(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
-		t.Errorf("code = %d, attendu %d", rec.Code, http.StatusNotFound)
+		t.Errorf("code = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 	if strings.TrimSpace(rec.Body.String()) != `{"error":"not found"}` {
-		t.Errorf("corps = %s, attendu {\"error\":\"not found\"}", rec.Body.String())
+		t.Errorf("body = %s, want {\"error\":\"not found\"}", rec.Body.String())
 	}
 	if contains(svc.calls, "AllowTrust") {
-		t.Errorf("le service a reçu AllowTrust (%v)", svc.calls)
+		t.Errorf("the service received AllowTrust (%v)", svc.calls)
 	}
 }
 
-// Garde-fou de typage : le fake doit rester un service.Service complet. Si une méthode est ajoutée
-// au contrat sans être ajoutée au fake, c'est ici que ça se voit, avec un message lisible.
+// Typing guardrail: the fake must stay a complete service.Service. If a method is added to the
+// contract without being added to the fake, this is where it shows, with a readable message.
 var _ service.Service = (*fakeWorkspace)(nil)
