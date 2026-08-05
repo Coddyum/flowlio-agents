@@ -96,6 +96,27 @@ flowlio trust allow API WEB
 An existing `.mcp.json` is **merged**, never replaced: your other MCP servers survive, and a
 hand-tuned `flowlio` entry is left alone.
 
+### The stack listens on this machine only
+
+Both published ports are bound to `127.0.0.1`. Postgres carries the credentials written in
+`docker-compose.yml`, so publishing it on every interface would hand the database to anyone sharing
+the network. Nothing legitimate needs it from off-box: the API talks to Postgres over the compose
+network, the CLI runs here, and the browser bridge runs in *your* browser.
+
+Reaching the instance from another machine is a deliberate choice, so it is yours to make, in a
+`compose.override.yml` that Docker reads automatically and that you never commit:
+
+```yaml
+services:
+  api:
+    ports: !override ["42058:42058"]
+```
+
+`!override` matters: a plain `ports:` in an override file is *merged* with the base, so you would
+end up listening on both — the loopback binding would still be there, quietly doing nothing.
+Publishing Postgres the same way is a worse idea; if you need it remotely, tunnel it over SSH
+instead.
+
 ### Without Docker
 
 ```bash

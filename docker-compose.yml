@@ -22,8 +22,12 @@ services:
       POSTGRES_USER: flowlio
       POSTGRES_PASSWORD: flowlio
       POSTGRES_DB: flowlio
+    # Bound to the loopback, not to every interface. Docker publishes on 0.0.0.0 by default, which
+    # on a café wifi puts this database — password written in this very file — in front of anyone
+    # who scans the subnet. Nothing needs it from off-box: the API reaches Postgres over the compose
+    # network, and the CLI runs on this machine.
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       # Postgres 18 expects the mount on /var/lib/postgresql (not .../data): the data goes into a
       # subdirectory, which keeps `pg_upgrade --link` possible later on.
@@ -48,8 +52,12 @@ services:
       DATABASE_URL: postgres://flowlio:flowlio@postgres:5432/flowlio?sslmode=disable
       ADDR: ":42058"
       ENV: dev
+    # Loopback too, for the same reason. The browser bridge still works: the page served by
+    # flowlio.me runs in the user's OWN browser, so the call leaves from this machine. Serving the
+    # instance to another machine on the network is a deliberate choice, and it belongs in the
+    # user's own compose.override.yml — see the README.
     ports:
-      - "42058:42058"
+      - "127.0.0.1:42058:42058"
     volumes:
       # The credentials the API writes at first boot, kept out of the container's writable layer so
       # they survive `docker compose up --build`. `flowlio init` copies them onto the host from
