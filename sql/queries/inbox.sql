@@ -79,6 +79,42 @@ WHERE t.team_id     = @team_id
 ORDER BY t.updated_at DESC
 LIMIT @max_rows::int;
 
+-- Seau 4 — unblocked : j'étais bloquée par une autre tâche du repo, plus maintenant.
+--
+-- C'est le seau qui répond au manque d'origine : une tâche débloquée qui ne dit rien ne change
+-- rien. Comme les trois autres, il est recalculé et non rejoué — la trace durable est
+-- `released_at` sur l'arête, pas un événement à consommer une fois.
+--
+-- Le parcours part des ARÊTES du projet et remonte vers les tâches : un repo a peu d'arêtes et
+-- beaucoup de tâches, l'inverse scannerait tout le backlog actif à chaque check_inbox.
+--
+-- `status IN ('todo','blocked')` est la condition de sortie du seau : reprendre la tâche
+-- (in_progress), la finir ou l'archiver l'en retire. `blocked` y reste parce qu'une tâche que
+-- l'agent avait bloquée LUI-MÊME ne revient pas à `todo` toute seule — on la notifie quand même,
+-- sinon la notification dépendrait de qui a posé le blocage.
+-- name: ListUnblockedTasks :many
+SELECT t.number, t.title, t.priority, t.status,
+       EXISTS (
+           SELECT 1 FROM events e
+           WHERE e.subject_type = 'task' AND e.subject_id = t.id AND e.id > @last_event_id
+       ) AS is_new
+FROM (
+    SELECT dep.task_id, max(dep.released_at) AS released_at
+    FROM task_dependencies dep
+    WHERE dep.project_id = @project_id
+      AND dep.released_at IS NOT NULL
+    GROUP BY dep.task_id
+) d
+JOIN tasks t ON t.id = d.task_id AND t.team_id = @team_id AND t.project_id = @project_id
+WHERE t.archived_at IS NULL
+  AND t.status IN ('todo', 'blocked')
+  AND NOT EXISTS (
+      SELECT 1 FROM task_dependencies pending
+      WHERE pending.task_id = t.id AND pending.released_at IS NULL
+  )
+ORDER BY d.released_at DESC
+LIMIT @max_rows::int;
+
 -- GREATEST empêche le curseur de reculer si deux check_inbox concurrents du même token se
 -- croisent. Aucune transaction n'est nécessaire : le pire cas est un drapeau `new` perdu.
 -- name: AdvanceInboxCursor :exec

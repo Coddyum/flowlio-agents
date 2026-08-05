@@ -299,3 +299,89 @@ func (q *Queries) ListOutgoingAnsweredIssues(ctx context.Context, arg ListOutgoi
 	}
 	return items, nil
 }
+
+const listUnblockedTasks = `-- name: ListUnblockedTasks :many
+SELECT t.number, t.title, t.priority, t.status,
+       EXISTS (
+           SELECT 1 FROM events e
+           WHERE e.subject_type = 'task' AND e.subject_id = t.id AND e.id > $1
+       ) AS is_new
+FROM (
+    SELECT dep.task_id, max(dep.released_at) AS released_at
+    FROM task_dependencies dep
+    WHERE dep.project_id = $2
+      AND dep.released_at IS NOT NULL
+    GROUP BY dep.task_id
+) d
+JOIN tasks t ON t.id = d.task_id AND t.team_id = $3 AND t.project_id = $2
+WHERE t.archived_at IS NULL
+  AND t.status IN ('todo', 'blocked')
+  AND NOT EXISTS (
+      SELECT 1 FROM task_dependencies pending
+      WHERE pending.task_id = t.id AND pending.released_at IS NULL
+  )
+ORDER BY d.released_at DESC
+LIMIT $4::int
+`
+
+type ListUnblockedTasksParams struct {
+	LastEventID int64     `json:"last_event_id"`
+	ProjectID   uuid.UUID `json:"project_id"`
+	TeamID      uuid.UUID `json:"team_id"`
+	MaxRows     int32     `json:"max_rows"`
+}
+
+type ListUnblockedTasksRow struct {
+	Number   int64        `json:"number"`
+	Title    string       `json:"title"`
+	Priority TaskPriority `json:"priority"`
+	Status   TaskStatus   `json:"status"`
+	IsNew    bool         `json:"is_new"`
+}
+
+// Seau 4 — unblocked : j'étais bloquée par une autre tâche du repo, plus maintenant.
+//
+// C'est le seau qui répond au manque d'origine : une tâche débloquée qui ne dit rien ne change
+// rien. Comme les trois autres, il est recalculé et non rejoué — la trace durable est
+// `released_at` sur l'arête, pas un événement à consommer une fois.
+//
+// Le parcours part des ARÊTES du projet et remonte vers les tâches : un repo a peu d'arêtes et
+// beaucoup de tâches, l'inverse scannerait tout le backlog actif à chaque check_inbox.
+//
+// `status IN ('todo','blocked')` est la condition de sortie du seau : reprendre la tâche
+// (in_progress), la finir ou l'archiver l'en retire. `blocked` y reste parce qu'une tâche que
+// l'agent avait bloquée LUI-MÊME ne revient pas à `todo` toute seule — on la notifie quand même,
+// sinon la notification dépendrait de qui a posé le blocage.
+func (q *Queries) ListUnblockedTasks(ctx context.Context, arg ListUnblockedTasksParams) ([]ListUnblockedTasksRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUnblockedTasks,
+		arg.LastEventID,
+		arg.ProjectID,
+		arg.TeamID,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnblockedTasksRow{}
+	for rows.Next() {
+		var i ListUnblockedTasksRow
+		if err := rows.Scan(
+			&i.Number,
+			&i.Title,
+			&i.Priority,
+			&i.Status,
+			&i.IsNew,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

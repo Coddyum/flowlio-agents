@@ -187,6 +187,24 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: task_dependencies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_dependencies (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_id uuid NOT NULL,
+    task_id uuid NOT NULL,
+    blocker_task_id uuid NOT NULL,
+    until_status public.task_status DEFAULT 'done'::public.task_status NOT NULL,
+    set_blocked boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    released_at timestamp with time zone,
+    CONSTRAINT task_dependencies_not_self CHECK ((task_id <> blocker_task_id)),
+    CONSTRAINT task_dependencies_until_is_progress CHECK ((until_status = ANY (ARRAY['in_progress'::public.task_status, 'done'::public.task_status])))
+);
+
+
+--
 -- Name: task_notes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -344,11 +362,27 @@ ALTER TABLE ONLY public.schema_migrations
 
 
 --
+-- Name: task_dependencies task_dependencies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_dependencies
+    ADD CONSTRAINT task_dependencies_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: task_notes task_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.task_notes
     ADD CONSTRAINT task_notes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tasks tasks_id_project_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_id_project_unique UNIQUE (id, project_id);
 
 
 --
@@ -478,6 +512,27 @@ CREATE INDEX projects_team_id_idx ON public.projects USING btree (team_id);
 
 
 --
+-- Name: task_dependencies_blocker_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX task_dependencies_blocker_pending_idx ON public.task_dependencies USING btree (project_id, blocker_task_id, task_id) WHERE (released_at IS NULL);
+
+
+--
+-- Name: task_dependencies_pending_pair_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX task_dependencies_pending_pair_idx ON public.task_dependencies USING btree (task_id, blocker_task_id) WHERE (released_at IS NULL);
+
+
+--
+-- Name: task_dependencies_released_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX task_dependencies_released_idx ON public.task_dependencies USING btree (project_id, task_id, released_at DESC) WHERE (released_at IS NOT NULL);
+
+
+--
 -- Name: task_notes_task_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -591,6 +646,22 @@ ALTER TABLE ONLY public.project_trust
 
 ALTER TABLE ONLY public.projects
     ADD CONSTRAINT projects_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_dependencies task_dependencies_blocker_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_dependencies
+    ADD CONSTRAINT task_dependencies_blocker_fk FOREIGN KEY (blocker_task_id, project_id) REFERENCES public.tasks(id, project_id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_dependencies task_dependencies_task_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_dependencies
+    ADD CONSTRAINT task_dependencies_task_fk FOREIGN KEY (task_id, project_id) REFERENCES public.tasks(id, project_id) ON DELETE CASCADE;
 
 
 --

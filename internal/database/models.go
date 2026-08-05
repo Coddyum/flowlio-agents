@@ -292,6 +292,17 @@ type Task struct {
 	ArchivedAt sql.NullTime `json:"archived_at"`
 }
 
+type TaskDependency struct {
+	ID            uuid.UUID    `json:"id"`
+	ProjectID     uuid.UUID    `json:"project_id"`
+	TaskID        uuid.UUID    `json:"task_id"`
+	BlockerTaskID uuid.UUID    `json:"blocker_task_id"`
+	UntilStatus   TaskStatus   `json:"until_status"`
+	SetBlocked    bool         `json:"set_blocked"`
+	CreatedAt     time.Time    `json:"created_at"`
+	ReleasedAt    sql.NullTime `json:"released_at"`
+}
+
 type TaskNote struct {
 	ID        uuid.UUID `json:"id"`
 	TaskID    uuid.UUID `json:"task_id"`
