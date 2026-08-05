@@ -120,7 +120,7 @@ func TestTrustListSurUnGrapheVideDitQuoiTaper(t *testing.T) {
 	}
 
 	for _, attendu := range []string{
-		"aucune confiance déclarée",
+		"no trust declared",
 		"CORE, FRNT, OPS",
 		"flowlio trust allow CORE FRNT --team acme",
 	} {
@@ -145,7 +145,7 @@ func TestTrustListNeProposeRienSansPairePossible(t *testing.T) {
 	if strings.Contains(out, "trust allow") {
 		t.Errorf("une commande est proposée alors qu'aucune paire n'est possible :\n%s", out)
 	}
-	if !strings.Contains(out, "moins de deux projets") {
+	if !strings.Contains(out, "fewer than two projects") {
 		t.Errorf("la sortie n'explique pas pourquoi il n'y a rien à faire :\n%s", out)
 	}
 }
@@ -169,7 +169,7 @@ func TestTrustListCompteLesPairesPossibles(t *testing.T) {
 		t.Fatalf("trustList: %v", err)
 	}
 
-	for _, attendu := range []string{"CORE ↔ FRNT", "CORE ↔ OPS", "2026-08-04", "2 paire(s) sur 3 possible(s)"} {
+	for _, attendu := range []string{"CORE ↔ FRNT", "CORE ↔ OPS", "2026-08-04", "2 pair(s) out of 3 possible"} {
 		if !strings.Contains(out, attendu) {
 			t.Errorf("la sortie ne contient pas %q :\n%s", attendu, out)
 		}
@@ -189,22 +189,22 @@ func TestTrustAnnonceCeQuiAChange(t *testing.T) {
 		{
 			"allow, première fois", true,
 			func(c *client.Client) error { return trustAllow(context.Background(), c, "acme", "CORE", "FRNT") },
-			"peuvent désormais s'adresser des issues", "déjà autorisés",
+			"can now raise issues to each other", "already allowed",
 		},
 		{
 			"allow, rejeu", false,
 			func(c *client.Client) error { return trustAllow(context.Background(), c, "acme", "CORE", "FRNT") },
-			"déjà autorisés, rien à faire", "désormais",
+			"already allowed, nothing to do", "can now",
 		},
 		{
 			"deny, première fois", true,
 			func(c *client.Client) error { return trustDeny(context.Background(), c, "acme", "CORE", "FRNT") },
-			"confiance retirée", "rien à retirer",
+			"trust withdrawn", "nothing to withdraw",
 		},
 		{
 			"deny, rejeu", false,
 			func(c *client.Client) error { return trustDeny(context.Background(), c, "acme", "CORE", "FRNT") },
-			"aucune confiance déclarée, rien à retirer", "confiance retirée",
+			"no trust declared, nothing to withdraw", "trust withdrawn",
 		},
 	}
 
@@ -244,7 +244,7 @@ func TestTrustDenyNommeLeVraiCoupeCircuit(t *testing.T) {
 	}
 
 	for _, attendu := range []string{
-		"Les fils déjà ouverts restent lisibles et répondables.",
+		"Threads already open stay readable and answerable.",
 		"flowlio token revoke",
 	} {
 		if !strings.Contains(out, attendu) {
@@ -308,7 +308,7 @@ func TestUn403DitQuelTokenUtiliser(t *testing.T) {
 		t.Fatal("aucune erreur alors que l'API a rendu 403")
 	}
 
-	for _, attendu := range []string{"token d'ADMINISTRATION", "credentials.json", "FLOWLIO_TOKEN"} {
+	for _, attendu := range []string{"ADMIN token", "credentials.json", "FLOWLIO_TOKEN"} {
 		if !strings.Contains(err.Error(), attendu) {
 			t.Errorf("le message ne contient pas %q :\n%v", attendu, err)
 		}
@@ -327,7 +327,7 @@ func TestUneAutreErreurNestPasMaquillee(t *testing.T) {
 	if err == nil {
 		t.Fatal("aucune erreur alors que l'API a rendu 404")
 	}
-	if strings.Contains(err.Error(), "token d'ADMINISTRATION") {
+	if strings.Contains(err.Error(), "ADMIN token") {
 		t.Errorf("un 404 est présenté comme un problème de token :\n%v", err)
 	}
 }

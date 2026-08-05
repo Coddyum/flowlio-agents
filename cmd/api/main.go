@@ -2,17 +2,17 @@ package main
 
 // SOMMAIRE (lire en premier, sauter directement au bon passage)
 //
-// | Élément      | Résumé                                                           | Ligne |
-// |--------------|------------------------------------------------------------------|-------|
-// | main         | Charge la config, câble l'infra, monte les modules, sert l'API     | 51    |
-// | buildModules   | Instancie les modules de feature — point d'ajout unique          | 114   |
+// | Élément        | Résumé                                                         | Ligne |
+// |----------------|----------------------------------------------------------------|-------|
+// | main           | Loads config, wires infra, mounts the modules, serves the API    | 51    |
+// | buildModules   | Instantiates the feature modules — the single place to add one   | 114   |
 // | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 132   |
-// | bootstrapLocal | Émet le token admin au tout premier démarrage local              | 164   |
+// | bootstrapLocal | Issues the admin token on the very first local start             | 164   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// SEUL fichier du repo autorisé à appeler log.Fatal.
+// The ONLY file in the repository allowed to call log.Fatal.
 
 import (
 	"context"
@@ -92,13 +92,11 @@ func main() {
 		eng.Mount(m.Key(), m.Routes())
 	}
 
-	// CORS est appliqué ICI, au-dessus du routeur, et non dans la chaîne de l'engine : la liste
-	// d'origines est de la configuration, et l'engine n'en prend pas. Le câblage appartient à
-	// main.go, comme tout le reste.
+	// CORS is applied HERE, above the router, and not inside the engine's chain: the origin list is
+	// configuration, and the engine takes none. Wiring belongs to main.go, like everything else.
 	//
-	// En premier de la chaîne, donc : un preflight de navigateur est tranché avant d'atteindre
-	// quoi que ce soit d'autre, ce qui est nécessaire — il ne porte aucun token, et le middleware
-	// d'auth le refuserait.
+	// First in the chain, therefore: a browser preflight is settled before it reaches anything else,
+	// which it has to be — it carries no token, and the auth middleware would refuse it.
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           engine.CORS(cfg.AllowedOrigins)(eng.Router()),
@@ -109,8 +107,8 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-// buildModules instancie les modules de feature, chacun avec la même ModuleConfig.
-// Ajouter une feature = ajouter une ligne ici, rien d'autre.
+// buildModules instantiates the feature modules, each with the same ModuleConfig.
+// Adding a feature = adding one line here, nothing else.
 func buildModules(cfg module.ModuleConfig) []module.Module {
 	return []module.Module{
 		workspace.NewModule(cfg),

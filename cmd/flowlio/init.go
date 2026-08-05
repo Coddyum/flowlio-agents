@@ -2,14 +2,14 @@ package main
 
 // SOMMAIRE (lire en premier, sauter directement au bon passage)
 //
-// | Élément    | Résumé                                                           | Ligne |
-// |------------|------------------------------------------------------------------|-------|
-// | runInit    | Prépare team, projet et token d'agent en une seule commande        | 35    |
-// | announceTrustIsClosed | Prévient qu'aucune confiance n'est déclarée, au 2ᵉ projet  | 133   |
-// | announceMCPConfig | Écrit la configuration MCP du dépôt et dit ce qui s'est passé | 186   |
-// | ensure     | Exécute une création en tolérant l'existence préalable             | 207   |
-// | splitFlags | Sépare options et arguments positionnels, dans n'importe quel ordre| 224   |
-// | printToken | Affiche un token fraîchement émis, avec l'avertissement qui va avec| 244   |
+// | Élément               | Résumé                                                       | Ligne |
+// |-----------------------|--------------------------------------------------------------|-------|
+// | runInit               | Prepares team, project and agent token in a single command     | 35    |
+// | announceTrustIsClosed | Warns that no trust is declared, on the 2nd project            | 132   |
+// | announceMCPConfig     | Writes the repo's MCP config and says what happened            | 185   |
+// | ensure                | Runs a creation, tolerating that it already exists             | 206   |
+// | splitFlags            | Separates flags from positional arguments, in any order        | 223   |
+// | printToken            | Prints a freshly issued token, with the warning it deserves    | 243   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -27,24 +27,24 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
-// runInit prépare tout ce qu'il faut à un repo pour être suivi : la team si elle manque, le
-// projet si il manque, puis un token d'agent.
+// runInit prepares everything a repo needs in order to be tracked: the team if it is missing, the
+// project if it is missing, then an agent token.
 //
-// La commande est réexécutable : une team ou un projet déjà présents ne sont pas une erreur.
-// Seul le token est systématiquement neuf — un secret ne se relit pas, il se réémet.
+// The command is re-runnable: a team or a project that already exists is not an error. Only the
+// token is always new — a secret is not read back, it is reissued.
 func runInit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
-	team := fs.String("team", "", "slug de la team (ex: omiros)")
-	teamName := fs.String("team-name", "", "nom lisible de la team (défaut: le slug)")
-	project := fs.String("project", "", "clé du projet (ex: CORE)")
-	projectName := fs.String("project-name", "", "nom lisible du projet (défaut: la clé)")
-	tokenName := fs.String("token-name", "agent", "nom du token émis")
+	team := fs.String("team", "", "team slug (e.g. omiros)")
+	teamName := fs.String("team-name", "", "human-readable team name (default: the slug)")
+	project := fs.String("project", "", "project key (e.g. CORE)")
+	projectName := fs.String("project-name", "", "human-readable project name (default: the key)")
+	tokenName := fs.String("token-name", "agent", "name of the issued token")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	if *team == "" || *project == "" {
-		return errors.New("usage: flowlio init --team <slug> --project <KEY> [--team-name <nom>] [--project-name <nom>]")
+		return errors.New("usage: flowlio init --team <slug> --project <KEY> [--team-name <name>] [--project-name <name>]")
 	}
 	if *teamName == "" {
 		*teamName = *team
@@ -89,7 +89,7 @@ func runInit(ctx context.Context, args []string) error {
 	if err := ensure(func() error {
 		in := service.CreateProjectInput{Key: *project, Name: *projectName}
 		return c.Do(ctx, http.MethodPost, workspaceAPI+"/projects"+teamQuery(*team), in, nil)
-	}, "projet "+*project); err != nil {
+	}, "project "+*project); err != nil {
 		return err
 	}
 
@@ -99,14 +99,14 @@ func runInit(ctx context.Context, args []string) error {
 		return err
 	}
 
-	fmt.Printf("team %s et projet %s prêts.\n", *team, *project)
+	fmt.Printf("team %s and project %s are ready.\n", *team, *project)
 
-	// Placé ICI, et pas après printToken : ce qui suit l'affichage d'un secret est ce qu'on lit
-	// le moins. Même raison que pour announceMCPConfig.
+	// Placed HERE rather than after printToken: whatever follows the display of a secret is what
+	// gets read the least. Same reason as announceMCPConfig.
 	announceTrustIsClosed(ctx, c, *team, *project)
 
-	// Le .mcp.json est écrit AVANT l'affichage du token : c'est lui qui rend l'agent
-	// opérationnel, et le token affiché n'a de sens qu'une fois qu'on sait où il sera lu.
+	// The .mcp.json is written BEFORE the token is printed: it is what makes the agent operational,
+	// and the printed token only means something once you know where it will be read from.
 	if err := announceMCPConfig(c.BaseURL()); err != nil {
 		return err
 	}
@@ -115,26 +115,25 @@ func runInit(ctx context.Context, args []string) error {
 	return nil
 }
 
-// announceTrustIsClosed prévient qu'aucune confiance n'est déclarée, AU MOMENT EXACT où ça devient
-// vrai : quand la team compte un second projet.
+// announceTrustIsClosed warns that no trust is declared, AT THE EXACT MOMENT it starts to matter:
+// when the team holds a second project.
 //
-// Le graphe naît vide, donc deux repos frères ne peuvent pas s'adresser d'issue tant qu'un humain
-// ne l'a pas dit. Sans ce bloc, l'humain l'apprend par un `not found` que son agent lui rapporte,
-// des heures plus tard, sans savoir que c'est une politique et pas un bug.
+// The graph is born empty, so two sibling repos cannot raise issues to each other until a human
+// says so. Without this block, the human learns it from a `not found` their agent reports hours
+// later, with no way to tell a policy apart from a bug.
 //
-// Rien n'est affiché sur le PREMIER projet d'une team : une team d'un seul projet n'a aucune paire
-// possible, et le graphe y est structurellement invisible. Un avertissement toujours affiché est
-// un avertissement qu'on cesse de lire.
+// Nothing is printed on a team's FIRST project: a one-project team has no possible pair, and the
+// graph is structurally invisible there. A warning that always shows is a warning people stop
+// reading.
 //
-// Un échec n'interrompt jamais l'init : la team, le projet et le token existent déjà côté serveur,
-// et le token est sur le point d'être affiché pour la seule et unique fois. Avorter ici le
-// perdrait — même raison qu'announceMCPConfig, et c'est aussi pourquoi cette fonction ne rend
-// aucune erreur.
+// A failure never interrupts init: the team, the project and the token already exist server-side,
+// and the token is about to be shown for its one and only time. Aborting here would lose it — same
+// reason as announceMCPConfig, and that is also why this function returns no error.
 func announceTrustIsClosed(ctx context.Context, c *client.Client, team, project string) {
-	// La clé est normalisée AVANT toute comparaison. `flowlio init --project frnt` est légal — le
-	// serveur met la clé en majuscules — donc comparer le drapeau brut à ce que l'API rend ferait
-	// passer le projet qu'on vient de créer pour un frère, et la commande suggérée serait une
-	// AUTO-PAIRE que `trust allow` refuse. Une aide qui ne marche pas est pire qu'aucune aide.
+	// The key is normalised BEFORE any comparison. `flowlio init --project frnt` is legal — the
+	// server upper-cases the key — so comparing the raw flag against what the API returns would
+	// make the project we just created look like a sibling, and the suggested command would be a
+	// SELF-PAIR that `trust allow` refuses. Help that does not work is worse than no help.
 	project = strings.ToUpper(strings.TrimSpace(project))
 
 	var projects []service.Project
@@ -145,21 +144,21 @@ func announceTrustIsClosed(ctx context.Context, c *client.Client, team, project 
 		return
 	}
 
-	// Le graphe est LU avant d'affirmer qu'il est vide. Sans cette lecture, un second `init` sur
-	// une team déjà câblée annonçait « aucune confiance n'est déclarée » alors qu'elle l'était,
-	// et envoyait l'humain retaper une commande déjà passée.
+	// The graph is READ before claiming that it is empty. Without that read, a second `init` on an
+	// already-wired team announced "no trust is declared" when it was, and sent the human off to
+	// retype a command they had already run.
 	var edges []service.TrustEdge
 	if err := c.Do(ctx, http.MethodGet, workspaceAPI+"/trust"+teamQuery(team), nil, &edges); err != nil {
-		// Un token de projet n'a pas le droit de lire le graphe : dans ce cas on se tait plutôt
-		// que d'affirmer quoi que ce soit. Le silence est la seule sortie honnête.
+		// A project token is not allowed to read the graph: in that case we stay quiet rather than
+		// assert anything. Silence is the only honest way out.
 		return
 	}
 	if len(edges) > 0 {
 		return
 	}
 
-	// Nommer un frère concret plutôt que « vos autres projets » : la commande donnée est alors
-	// copiable telle quelle, ce qui est la seule forme d'aide qui survit à la lecture en diagonale.
+	// Naming a concrete sibling rather than "your other projects": the command we give is then
+	// copyable as is, which is the only kind of help that survives being skim-read.
 	sibling := ""
 	for _, p := range projects {
 		if p.Key != project {
@@ -171,56 +170,56 @@ func announceTrustIsClosed(ctx context.Context, c *client.Client, team, project 
 		return
 	}
 
-	fmt.Printf("\n  La team %s compte maintenant %d projets, et aucune confiance n'est déclarée :\n",
+	fmt.Printf("\n  Team %s now holds %d projects, and no trust is declared:\n",
 		team, len(projects))
-	fmt.Printf("  %s et %s ne peuvent pas s'adresser d'issue. Avec le token d'administration :\n\n",
+	fmt.Printf("  %s and %s cannot raise issues to each other. With the admin token:\n\n",
 		project, sibling)
 	fmt.Printf("      flowlio trust allow %s %s --team %s\n\n", sibling, project, team)
 }
 
-// announceMCPConfig écrit la configuration MCP du dépôt courant et dit ce qui s'est passé.
+// announceMCPConfig writes the current repo's MCP configuration and says what happened.
 //
-// Un échec d'écriture N'ANNULE PAS l'init : la team, le projet et le token existent déjà côté
-// serveur, et le token est sur le point d'être affiché pour la seule et unique fois. Avorter ici
-// le perdrait. Le défaut est donc signalé, et la commande continue.
+// A write failure DOES NOT CANCEL the init: the team, the project and the token already exist
+// server-side, and the token is about to be shown for its one and only time. Aborting here would
+// lose it. The fault is therefore reported, and the command carries on.
 func announceMCPConfig(apiURL string) error {
 	dir, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("répertoire courant introuvable: %w", err)
+		return fmt.Errorf("current directory not found: %w", err)
 	}
 
 	path, written, err := writeMCPConfig(dir, apiURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "flowlio: configuration MCP non écrite: %v\n", err)
+		fmt.Fprintf(os.Stderr, "flowlio: MCP configuration not written: %v\n", err)
 		return nil
 	}
 	if written {
-		fmt.Printf("%s écrit — commitable tel quel, il ne contient aucun secret.\n", path)
+		fmt.Printf("%s written — committable as is, it holds no secret.\n", path)
 	} else {
-		fmt.Printf("%s porte déjà une entrée %q, conservée.\n", path, mcpServerKey)
+		fmt.Printf("%s already carries a %q entry, left alone.\n", path, mcpServerKey)
 	}
 	return nil
 }
 
-// ensure exécute une création et tolère un conflit : la ressource existait déjà, ce qui est le
-// résultat voulu. Toute autre erreur remonte.
+// ensure runs a creation and tolerates a conflict: the resource already existed, which is the
+// intended outcome. Any other error propagates.
 func ensure(create func() error, label string) error {
 	err := create()
 	if err == nil {
-		fmt.Printf("%s créé.\n", label)
+		fmt.Printf("%s created.\n", label)
 		return nil
 	}
 
 	var apiErr *client.APIError
 	if errors.As(err, &apiErr) && apiErr.Status == http.StatusConflict {
-		fmt.Printf("%s existe déjà, conservé.\n", label)
+		fmt.Printf("%s already exists, left alone.\n", label)
 		return nil
 	}
 	return err
 }
 
-// splitFlags sépare les options des arguments positionnels, quel que soit leur ordre : un agent
-// ou un humain pressé ne doit pas avoir à deviner que --team se met avant la clé.
+// splitFlags separates flags from positional arguments, whatever their order: neither an agent nor
+// a human in a hurry should have to guess that --team goes before the key.
 func splitFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 	var positional []string
 	rest := args
@@ -239,12 +238,12 @@ func splitFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 	return positional, nil
 }
 
-// printToken affiche un token émis. C'est la seule occasion de le lire : le serveur n'en garde
-// qu'un hash.
+// printToken prints an issued token. This is the only chance to read it: the server keeps nothing
+// but a hash.
 func printToken(created service.CreatedToken) {
-	// La ligne est donnée prête à coller, parce que c'est exactement ce que l'utilisateur va en
-	// faire : le .mcp.json référence ${FLOWLIO_TOKEN}, il faut donc que la variable existe.
-	fmt.Printf("\ntoken %q pour le projet %s — affiché une seule fois, à coller tel quel :\n\n    export FLOWLIO_TOKEN=%s\n\n",
+	// The line is given ready to paste, because that is exactly what the user is about to do with
+	// it: the .mcp.json references ${FLOWLIO_TOKEN}, so the variable has to exist.
+	fmt.Printf("\ntoken %q for project %s — shown once, paste it as is:\n\n    export FLOWLIO_TOKEN=%s\n\n",
 		created.Name, created.ProjectKey, created.Secret)
-	fmt.Println("Jamais dans le dépôt : le .mcp.json ne porte que la référence à cette variable.")
+	fmt.Println("Never in the repository: the .mcp.json carries nothing but a reference to that variable.")
 }
