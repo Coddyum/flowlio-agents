@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// fakeStore substitue la base : les règles d'authentification se testent sans Postgres.
+// fakeStore stands in for the database: the authentication rules are tested without Postgres.
 type fakeStore struct {
 	record  TokenRecord
 	found   bool
@@ -53,19 +53,19 @@ func TestAuthenticate(t *testing.T) {
 	}{
 		{name: "token de projet valide", record: valid, found: true, raw: token.Plain},
 		{
-			name:   "token admin sans team",
+			name:   "admin token without a team",
 			record: TokenRecord{ID: uuid.New(), Scope: ScopeAdmin, SecretHash: token.Hash},
 			found:  true, raw: token.Plain,
 		},
-		{name: "préfixe inconnu", found: false, raw: token.Plain, wantErr: true},
-		{name: "token malformé", record: valid, found: true, raw: "pas-un-token", wantErr: true},
+		{name: "unknown prefix", found: false, raw: token.Plain, wantErr: true},
+		{name: "malformed token", record: valid, found: true, raw: "not-a-token", wantErr: true},
 		{
-			name:   "secret erroné",
+			name:   "wrong secret",
 			record: TokenRecord{ID: uuid.New(), Scope: ScopeProject, TeamID: teamID, ProjectID: projectID, SecretHash: crypto.HashSecret("autre")},
 			found:  true, raw: token.Plain, wantErr: true,
 		},
 		{
-			name: "token révoqué",
+			name: "revoked token",
 			record: TokenRecord{
 				ID: valid.ID, Scope: ScopeProject, TeamID: teamID, ProjectID: projectID,
 				SecretHash: token.Hash, Revoked: true,
@@ -73,7 +73,7 @@ func TestAuthenticate(t *testing.T) {
 			found: true, raw: token.Plain, wantErr: true,
 		},
 		{
-			name: "token de projet sans scope complet",
+			name: "project token without a complete scope",
 			record: TokenRecord{
 				ID: valid.ID, Scope: ScopeProject, SecretHash: token.Hash,
 			},
@@ -93,7 +93,7 @@ func TestAuthenticate(t *testing.T) {
 					t.Fatalf("erreur = %v, attendu ErrUnauthenticated", err)
 				}
 				if principal != (Principal{}) {
-					t.Errorf("principal non vide en cas d'échec: %+v", principal)
+					t.Errorf("non-empty principal on failure: %+v", principal)
 				}
 				return
 			}
@@ -111,7 +111,7 @@ func TestAuthenticate(t *testing.T) {
 	}
 }
 
-// Tous les échecs doivent être indiscernables : c'est ce qui empêche d'énumérer les tokens.
+// Every failure must be indistinguishable: that is what stops the tokens being enumerated.
 func TestAuthenticateFailuresAreIndistinguishable(t *testing.T) {
 	token, err := crypto.NewToken()
 	if err != nil {
@@ -137,7 +137,7 @@ func TestTouchIsThrottled(t *testing.T) {
 		t.Fatalf("NewToken: %v", err)
 	}
 
-	t.Run("usage récent : pas d'écriture", func(t *testing.T) {
+	t.Run("recent use: no write", func(t *testing.T) {
 		store := &fakeStore{found: true, record: TokenRecord{
 			ID: uuid.New(), Scope: ScopeAdmin, SecretHash: token.Hash,
 			LastUsedAt: time.Now(),
@@ -150,7 +150,7 @@ func TestTouchIsThrottled(t *testing.T) {
 		}
 	})
 
-	t.Run("usage ancien : une écriture", func(t *testing.T) {
+	t.Run("old use: one write", func(t *testing.T) {
 		store := &fakeStore{found: true, record: TokenRecord{
 			ID: uuid.New(), Scope: ScopeAdmin, SecretHash: token.Hash,
 			LastUsedAt: time.Now().Add(-time.Hour),

@@ -180,12 +180,12 @@ func scratchDB(t *testing.T) *sql.DB {
 
 	dsn := os.Getenv("FLOWLIO_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("FLOWLIO_TEST_DATABASE_URL non renseigné — test d'intégration ignoré")
+		t.Skip("FLOWLIO_TEST_DATABASE_URL not set — integration test skipped")
 	}
 
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
-		t.Fatalf("ouverture de la base: %v", err)
+		t.Fatalf("opening the database: %v", err)
 	}
 	defer func() { _ = admin.Close() }()
 	if err := admin.Ping(); err != nil {
@@ -196,10 +196,10 @@ func scratchDB(t *testing.T) *sql.DB {
 	// this database is disposable.
 	name := fmt.Sprintf("flowlio_migrate_scratch_%d", os.Getpid())
 	if _, err := admin.Exec(`DROP DATABASE IF EXISTS ` + name); err != nil {
-		t.Fatalf("nettoyage préalable de %s: %v", name, err)
+		t.Fatalf("pre-cleanup of %s: %v", name, err)
 	}
 	if _, err := admin.Exec(`CREATE DATABASE ` + name); err != nil {
-		t.Fatalf("création de %s: %v", name, err)
+		t.Fatalf("creating %s: %v", name, err)
 	}
 
 	db, err := sql.Open("pgx", swapDatabase(dsn, name))
@@ -214,7 +214,7 @@ func scratchDB(t *testing.T) *sql.DB {
 		_ = db.Close()
 		cleanup, err := sql.Open("pgx", dsn)
 		if err != nil {
-			t.Errorf("réouverture pour nettoyage: %v", err)
+			t.Errorf("reopening for cleanup: %v", err)
 			return
 		}
 		defer func() { _ = cleanup.Close() }()

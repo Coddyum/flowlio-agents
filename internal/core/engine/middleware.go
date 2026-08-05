@@ -4,12 +4,12 @@ package engine
 //
 // | Élément        | Résumé                                                       | Ligne |
 // |----------------|--------------------------------------------------------------|-------|
-// | Middleware     | Signature d'un middleware HTTP                                 | 25    |
-// | chain          | Applique les middlewares dans l'ordre de déclaration           | 28    |
-// | Recover        | Transforme un panic en 500 sans tuer le process                | 37    |
-// | Logger         | Trace méthode, chemin, statut et durée de chaque requête       | 50    |
-// | statusRecorder | Capture le code de statut écrit par le handler                 | 62    |
-// | statusRecorder.WriteHeader | Mémorise le statut avant de l'écrire             | 68    |
+// | Middleware     | Signature of an HTTP middleware                               | 25    |
+// | chain          | Applies the middlewares in declaration order                   | 28    |
+// | Recover        | Turns a panic into a 500 without killing the process          | 37    |
+// | Logger         | Traces method, path, status and duration of every request     | 50    |
+// | statusRecorder | Captures the status code written by the handler               | 62    |
+// | statusRecorder.WriteHeader | Records the status before writing it            | 68    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -20,11 +20,11 @@ import (
 	"time"
 )
 
-// Middleware enveloppe un handler. Le middleware global est monté par l'engine, jamais
-// dans les handlers de feature.
+// Middleware wraps a handler. The global middleware is mounted by the engine, never
+// inside the feature handlers.
 type Middleware func(http.Handler) http.Handler
 
-// chain applique les middlewares de telle sorte que le premier déclaré soit le plus externe.
+// chain applies the middlewares so that the first declared is the outermost.
 func chain(h http.Handler, mws ...Middleware) http.Handler {
 	for i := len(mws) - 1; i >= 0; i-- {
 		h = mws[i](h)
@@ -32,8 +32,8 @@ func chain(h http.Handler, mws ...Middleware) http.Handler {
 	return h
 }
 
-// Recover intercepte un panic dans un handler, log la cause et répond 500.
-// Le process ne meurt jamais à cause d'une seule requête.
+// Recover intercepts a panic in a handler, logs the cause and answers 500. The process never dies
+// because of a single request.
 func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -46,7 +46,7 @@ func Recover(next http.Handler) http.Handler {
 	})
 }
 
-// Logger trace chaque requête avec son statut et sa durée, de quoi savoir quoi a échoué et où.
+// Logger traces every request with its status and its duration, enough to know what failed and where.
 func Logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -58,13 +58,13 @@ func Logger(next http.Handler) http.Handler {
 	})
 }
 
-// statusRecorder mémorise le code de statut pour que le Logger puisse le tracer.
+// statusRecorder records the status code so that the Logger can trace it.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
 }
 
-// WriteHeader mémorise le statut puis le transmet au ResponseWriter sous-jacent.
+// WriteHeader records the status then passes it on to the underlying ResponseWriter.
 func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	s.ResponseWriter.WriteHeader(code)

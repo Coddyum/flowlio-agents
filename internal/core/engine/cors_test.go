@@ -1,12 +1,10 @@
 package engine
 
-// Ce que ce fichier verrouille : la liste d'origines est FERMÉE, et elle se compare par égalité
-// stricte.
+// What this file locks down: the origin list is CLOSED, and it is compared by strict equality.
 //
-// Le vrai risque n'est pas d'oublier CORS — la page de pont ne marcherait pas, on le verrait en
-// trente secondes. Il est d'écrire un test de sous-chaîne, ou un `*` « le temps de déboguer »,
-// et de laisser n'importe quel site ouvert dans un onglet voisin parler à l'API locale de
-// l'utilisateur avec son token d'administration.
+// The real risk is not forgetting CORS — the bridge page would not work, and it would show in
+// thirty seconds. It is writing a substring test, or a `*` "just while debugging", and letting any
+// site open in a neighbouring tab talk to the user's local API with their administration token.
 
 import (
 	"net/http"
@@ -14,27 +12,28 @@ import (
 	"testing"
 )
 
-// origines est la liste autorisée des tests. Écrite ici et pas tirée de la config : ce fichier
-// teste le middleware, pas les valeurs par défaut du produit.
-var origines = []string{"https://flowlio.me", "https://www.flowlio.me"}
+// origins is the allow list of the tests. Written here and not taken from the config: this file
+// tests the middleware, not the product's default values.
+var origins = []string{"https://flowlio.me", "https://www.flowlio.me"}
 
-// serveCORS joue une requête à travers le middleware et dit si le handler en aval a été atteint.
+// serveCORS plays a request through the middleware and says whether the downstream handler was
+// reached.
 func serveCORS(t *testing.T, req *http.Request, allowed []string) (*httptest.ResponseRecorder, bool) {
 	t.Helper()
 
-	atteint := false
+	reached := false
 	h := CORS(allowed)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atteint = true
+		reached = true
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	return rec, atteint
+	return rec, reached
 }
 
-// preflight fabrique la requête qu'un navigateur envoie AVANT un appel portant un en-tête
-// `Authorization` — c'est-à-dire avant chaque appel de la page de pont.
+// preflight builds the request a browser sends BEFORE a call carrying an `Authorization` header —
+// that is to say before every call of the bridge page.
 func preflight(origin string) *http.Request {
 	req := httptest.NewRequest(http.MethodOptions, "/api/overview/", nil)
 	req.Header.Set("Origin", origin)
@@ -43,241 +42,242 @@ func preflight(origin string) *http.Request {
 	return req
 }
 
-// Sans `Origin`, la requête n'est pas touchée. C'est le cas de la CLI et du serveur MCP, qui
-// représentent la quasi-totalité du trafic de ce produit.
+// Without an `Origin`, the request is untouched. That is the case of the CLI and of the MCP
+// server, which make up almost all of this product's traffic.
 func TestCORSPassesThroughWithoutOrigin(t *testing.T) {
-	rec, atteint := serveCORS(t, httptest.NewRequest(http.MethodGet, "/api/task/", nil), origines)
+	rec, reached := serveCORS(t, httptest.NewRequest(http.MethodGet, "/api/task/", nil), origins)
 
-	if !atteint {
-		t.Fatal("le handler n'a pas été atteint — CORS bloque un appel qui ne vient pas d'un navigateur")
+	if !reached {
+		t.Fatal("the handler was not reached — CORS blocks a call that does not come from a browser")
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
-		t.Errorf("Access-Control-Allow-Origin = %q sur une requête sans Origin", got)
+		t.Errorf("Access-Control-Allow-Origin = %q on a request without an Origin", got)
 	}
 }
 
-// Une origine listée est renvoyée telle quelle, et `Vary: Origin` est posé.
+// A listed origin is echoed as such, and `Vary: Origin` is set.
 //
-// MUTATION : retirer le `Vary` → ce test rouge. Sans lui, un cache intermédiaire sert à une
-// origine les en-têtes calculés pour une autre, et la liste fermée ne ferme plus rien.
+// MUTATION: removing the `Vary` → this test goes red. Without it, an intermediate cache serves one
+// origin the headers computed for another, and the closed list closes nothing.
 func TestCORSAllowsListedOrigin(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/overview/", nil)
 	req.Header.Set("Origin", "https://flowlio.me")
 
-	rec, atteint := serveCORS(t, req, origines)
+	rec, reached := serveCORS(t, req, origins)
 
-	if !atteint {
-		t.Fatal("le handler n'a pas été atteint pour une origine autorisée")
+	if !reached {
+		t.Fatal("the handler was not reached for an allowed origin")
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://flowlio.me" {
-		t.Errorf("Access-Control-Allow-Origin = %q, attendu l'origine appelante", got)
+		t.Errorf("Access-Control-Allow-Origin = %q, expected the calling origin", got)
 	}
 	if got := rec.Header().Get("Vary"); got != "Origin" {
-		t.Errorf("Vary = %q, attendu Origin", got)
+		t.Errorf("Vary = %q, expected Origin", got)
 	}
 }
 
-// Une origine inconnue n'obtient PAS d'autorisation — mais sa requête est servie : le refus
-// appartient au navigateur, qui refusera de rendre le corps au JavaScript appelant. Le serveur
-// n'a pas à inventer un code d'erreur pour une requête que `curl` fait légitimement tous les
-// jours.
+// An unknown origin gets NO authorisation — but its request is served: the refusal belongs to the
+// browser, which will refuse to hand the body to the calling JavaScript. The server has no
+// business inventing an error code for a request `curl` legitimately makes every day.
 func TestCORSIgnoresUnknownOrigin(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/overview/", nil)
-	req.Header.Set("Origin", "https://exemple.test")
+	req.Header.Set("Origin", "https://example.test")
 
-	rec, atteint := serveCORS(t, req, origines)
+	rec, reached := serveCORS(t, req, origins)
 
-	if !atteint {
-		t.Fatal("le handler n'a pas été atteint : le refus doit venir du navigateur, pas du serveur")
+	if !reached {
+		t.Fatal("the handler was not reached: the refusal must come from the browser, not the server")
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
-		t.Errorf("Access-Control-Allow-Origin = %q pour une origine inconnue", got)
+		t.Errorf("Access-Control-Allow-Origin = %q for an unknown origin", got)
 	}
 	if got := rec.Header().Get("Vary"); got != "Origin" {
-		t.Errorf("Vary = %q, attendu Origin même sur un refus", got)
+		t.Errorf("Vary = %q, expected Origin even on a refusal", got)
 	}
 }
 
-// L'ÉGALITÉ EST STRICTE. Chacune de ces origines passe un test de sous-chaîne, et aucune ne doit
-// être autorisée.
+// EQUALITY IS STRICT. Every one of these origins passes a substring test, and none must be
+// allowed.
 //
-// MUTATION JOUÉE : remplacer l'égalité par `strings.Contains` → cinq de ces lignes rouges. C'est
-// le contournement le plus banal du web, et le principal que ce fichier existe pour interdire.
+// MUTATION PLAYED: replacing the equality with `strings.Contains` → five of these lines go red.
+// That is the most ordinary bypass on the web, and the main one this file exists to forbid.
 //
-// UNE MUTATION VOISINE SURVIT, ET IL VAUT MIEUX DIRE POURQUOI. `strings.HasSuffix(origine,
-// autorisée)` laisse la suite verte, parce que la chaîne comparée porte le SCHÉMA :
-// `https://evil-flowlio.me` ne se termine pas par `https://flowlio.me`. Le suffixe n'est un
-// trou que si l'on compare les hôtes seuls — la faute classique est `HasSuffix(hôte,
-// "flowlio.me")`, une forme que ce code n'a jamais eue puisqu'il ne découpe pas l'origine.
-// La dernière ligne du tableau la tue tout de même : aucun navigateur n'émet cette origine, mais
-// elle garde la comparaison une ÉGALITÉ, ce qui est la propriété annoncée.
+// A NEIGHBOURING MUTATION SURVIVES, AND IT IS BETTER TO SAY WHY. `strings.HasSuffix(origin,
+// allowed)` leaves the suite green, because the compared string carries the SCHEME:
+// `https://evil-flowlio.me` does not end with `https://flowlio.me`. The suffix is only a hole if
+// the hosts alone are compared — the classic mistake is `HasSuffix(host, "flowlio.me")`, a shape
+// this code never had since it does not split the origin. The last row of the table kills it all
+// the same: no browser emits that origin, but it keeps the comparison an EQUALITY, which is the
+// advertised property.
 func TestCORSNeverMatchesLookalikeOrigin(t *testing.T) {
-	sosies := []string{
-		"https://flowlio.me.evil.test",   // suffixe ajouté
-		"https://evil-flowlio.me",        // préfixe ajouté
-		"http://flowlio.me",              // schéma différent
-		"https://flowlio.me:8080",        // port ajouté
-		"https://sous.flowlio.me",        // sous-domaine non listé
-		"null",                           // origine opaque d'une iframe sandboxée
-		"https://flowlio.me/../evil",     // chemin, qu'une origine ne porte jamais
-		"https://www.flowlio.me.evil.co", // le second listé, sosié pareil
-		"xhttps://flowlio.me",            // se TERMINE par l'origine autorisée
+	lookalikes := []string{
+		"https://flowlio.me.evil.test",   // added suffix
+		"https://evil-flowlio.me",        // added prefix
+		"http://flowlio.me",              // different scheme
+		"https://flowlio.me:8080",        // added port
+		"https://sub.flowlio.me",         // unlisted subdomain
+		"null",                           // opaque origin of a sandboxed iframe
+		"https://flowlio.me/../evil",     // a path, which an origin never carries
+		"https://www.flowlio.me.evil.co", // the second listed one, spoofed the same way
+		"xhttps://flowlio.me",            // ENDS with the allowed origin
 	}
 
-	for _, sosie := range sosies {
-		t.Run(sosie, func(t *testing.T) {
+	for _, lookalike := range lookalikes {
+		t.Run(lookalike, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/overview/", nil)
-			req.Header.Set("Origin", sosie)
+			req.Header.Set("Origin", lookalike)
 
-			rec, _ := serveCORS(t, req, origines)
+			rec, _ := serveCORS(t, req, origins)
 
 			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
-				t.Errorf("origine %q autorisée (%q) — la comparaison n'est plus une égalité", sosie, got)
+				t.Errorf("origin %q allowed (%q) — the comparison is no longer an equality", lookalike, got)
 			}
 		})
 	}
 }
 
-// Le preflight est tranché par le middleware et n'atteint JAMAIS le handler.
+// The preflight is settled by the middleware and NEVER reaches the handler.
 //
-// C'est nécessaire, pas optimisant : un navigateur ne joint pas l'`Authorization` à un preflight,
-// donc le middleware d'auth le refuserait en 401, et l'appel réel n'aurait jamais lieu.
+// That is necessary, not an optimisation: a browser does not attach the `Authorization` to a
+// preflight, so the auth middleware would reject it with a 401, and the real call would never
+// happen.
 //
-// MUTATION : laisser le preflight descendre vers `next` → ce test rouge.
+// MUTATION: letting the preflight go down to `next` → this test goes red.
 func TestCORSPreflightIsAnsweredWithoutAuth(t *testing.T) {
-	rec, atteint := serveCORS(t, preflight("https://flowlio.me"), origines)
+	rec, reached := serveCORS(t, preflight("https://flowlio.me"), origins)
 
-	if atteint {
-		t.Error("le preflight a atteint le handler — il sera refusé par le middleware d'auth, " +
-			"qui n'a aucun token à lire dans un preflight")
+	if reached {
+		t.Error("the preflight reached the handler — it will be rejected by the auth middleware, " +
+			"which has no token to read in a preflight")
 	}
 	if rec.Code != http.StatusNoContent {
-		t.Errorf("code = %d, attendu %d", rec.Code, http.StatusNoContent)
+		t.Errorf("code = %d, expected %d", rec.Code, http.StatusNoContent)
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != allowedHeaders {
-		t.Errorf("Access-Control-Allow-Headers = %q, attendu %q", got, allowedHeaders)
+		t.Errorf("Access-Control-Allow-Headers = %q, expected %q", got, allowedHeaders)
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Methods"); got != allowedMethods {
-		t.Errorf("Access-Control-Allow-Methods = %q, attendu %q", got, allowedMethods)
+		t.Errorf("Access-Control-Allow-Methods = %q, expected %q", got, allowedMethods)
 	}
 	if got := rec.Header().Get("Access-Control-Max-Age"); got != "600" {
-		t.Errorf("Access-Control-Max-Age = %q, attendu 600", got)
+		t.Errorf("Access-Control-Max-Age = %q, expected 600", got)
 	}
 }
 
-// PRIVATE NETWORK ACCESS — la permission qui décide si Chrome laisse passer le pont.
+// PRIVATE NETWORK ACCESS — the permission that decides whether Chrome lets the bridge through.
 //
-// Une page servie par flowlio.me qui appelle `http://localhost` sort du réseau public vers le
-// réseau privé de la machine. Chrome traite ce saut à part : il demande la permission dans le
-// preflight, et l'exige en réponse. Sans elle, l'appel échoue alors que tous les en-têtes CORS
-// ordinaires sont corrects — un mode d'échec indébogable depuis l'extérieur, et qui ne touche
-// qu'un navigateur sur trois.
+// A page served by flowlio.me that calls `http://localhost` goes from the public network to the
+// machine's private network. Chrome treats that jump specially: it asks for the permission in the
+// preflight, and demands it in the response. Without it, the call fails although every ordinary
+// CORS header is correct — a failure mode undebuggable from the outside, and one that only affects
+// one browser in three.
 //
-// MUTATION : retirer l'en-tête de réponse → ce test rouge, et le pont ne marche plus sous Chrome.
+// MUTATION: removing the response header → this test goes red, and the bridge stops working under
+// Chrome.
 func TestCORSGrantsPrivateNetworkAccessToAllowedOrigin(t *testing.T) {
 	req := preflight("https://flowlio.me")
 	req.Header.Set("Access-Control-Request-Private-Network", "true")
 
-	rec, _ := serveCORS(t, req, origines)
+	rec, _ := serveCORS(t, req, origins)
 
 	if rec.Code != http.StatusNoContent {
-		t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusNoContent)
+		t.Fatalf("code = %d, expected %d", rec.Code, http.StatusNoContent)
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Private-Network"); got != "true" {
-		t.Errorf("Access-Control-Allow-Private-Network = %q, attendu \"true\" — Chrome refusera "+
-			"l'appel vers localhost alors que tous les autres en-têtes sont bons", got)
+		t.Errorf("Access-Control-Allow-Private-Network = %q, expected \"true\" — Chrome will "+
+			"refuse the call to localhost although every other header is right", got)
 	}
 }
 
-// La permission de réseau privé n'est JAMAIS accordée à une origine inconnue, ni offerte à un
-// preflight qui ne l'a pas demandée.
+// The private-network permission is NEVER granted to an unknown origin, nor offered to a preflight
+// that did not ask for it.
 //
-// Le premier cas est le seul qui compte pour la sécurité : accorder ce saut à n'importe qui
-// reviendrait à laisser un site tiers atteindre les services locaux de la machine.
+// The first case is the only one that matters for security: granting that jump to anybody would
+// amount to letting a third-party site reach the machine's local services.
 func TestCORSNeverGrantsPrivateNetworkAccessUnasked(t *testing.T) {
-	inconnue := preflight("https://exemple.test")
-	inconnue.Header.Set("Access-Control-Request-Private-Network", "true")
+	unknown := preflight("https://example.test")
+	unknown.Header.Set("Access-Control-Request-Private-Network", "true")
 
-	rec, _ := serveCORS(t, inconnue, origines)
+	rec, _ := serveCORS(t, unknown, origins)
 	if got := rec.Header().Get("Access-Control-Allow-Private-Network"); got != "" {
-		t.Errorf("origine inconnue : permission de réseau privé accordée (%q)", got)
+		t.Errorf("unknown origin: private-network permission granted (%q)", got)
 	}
 
-	rec, _ = serveCORS(t, preflight("https://flowlio.me"), origines)
+	rec, _ = serveCORS(t, preflight("https://flowlio.me"), origins)
 	if got := rec.Header().Get("Access-Control-Allow-Private-Network"); got != "" {
-		t.Errorf("permission accordée sans être demandée (%q) — un en-tête qu'on ne comprend "+
-			"pas est un en-tête qu'on n'émet pas", got)
+		t.Errorf("permission granted without being asked for (%q) — a header we do not "+
+			"understand is a header we do not emit", got)
 	}
 }
 
-// Un preflight d'une origine inconnue est refusé côté SERVEUR, en 403.
+// A preflight from an unknown origin is refused SERVER-side, with a 403.
 //
-// C'est la seule asymétrie du fichier, et elle est voulue : un preflight ne sert qu'au
-// navigateur, il n'a aucun usage légitime hors de lui. Le refuser explicitement est ce qui rend
-// une liste d'origines mal configurée diagnosticable — sans ça, le seul symptôme est une erreur
-// dans la console d'un navigateur, côté client.
+// It is the only asymmetry of the file, and it is intended: a preflight serves the browser and
+// nothing else, it has no legitimate use outside it. Refusing it explicitly is what makes a
+// misconfigured origin list diagnosable — without that, the only symptom is an error in a
+// browser's console, on the client side.
 func TestCORSPreflightFromUnknownOriginIsRefused(t *testing.T) {
-	rec, atteint := serveCORS(t, preflight("https://exemple.test"), origines)
+	rec, reached := serveCORS(t, preflight("https://example.test"), origins)
 
-	if atteint {
-		t.Error("le preflight d'une origine inconnue a atteint le handler")
+	if reached {
+		t.Error("the preflight from an unknown origin reached the handler")
 	}
 	if rec.Code != http.StatusForbidden {
-		t.Errorf("code = %d, attendu %d", rec.Code, http.StatusForbidden)
+		t.Errorf("code = %d, expected %d", rec.Code, http.StatusForbidden)
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Methods"); got != "" {
-		t.Errorf("Access-Control-Allow-Methods = %q pour une origine inconnue", got)
+		t.Errorf("Access-Control-Allow-Methods = %q for an unknown origin", got)
 	}
 }
 
-// NI `*`, NI CREDENTIALS. Deux en-têtes qu'il ne faut jamais voir sortir d'ici.
+// NEITHER `*` NOR CREDENTIALS. Two headers that must never be seen leaving this file.
 //
-// `*` ouvrirait l'API à tout site ouvert dans le navigateur de l'utilisateur.
-// `Allow-Credentials` autoriserait un cookie à voyager — ce produit n'en a aucun, et le jour où
-// quelqu'un en ajoutera un, il ne doit pas hériter d'une permission écrite aujourd'hui.
+// `*` would open the API to every site open in the user's browser. `Allow-Credentials` would let a
+// cookie travel — this product has none, and the day somebody adds one, it must not inherit a
+// permission written today.
 func TestCORSNeverAllowsWildcardNorCredentials(t *testing.T) {
-	for _, origin := range []string{"https://flowlio.me", "https://exemple.test"} {
+	for _, origin := range []string{"https://flowlio.me", "https://example.test"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/overview/", nil)
 		req.Header.Set("Origin", origin)
 
-		rec, _ := serveCORS(t, req, origines)
+		rec, _ := serveCORS(t, req, origins)
 
 		if got := rec.Header().Get("Access-Control-Allow-Origin"); got == "*" {
-			t.Errorf("origine %q : Access-Control-Allow-Origin = *", origin)
+			t.Errorf("origin %q: Access-Control-Allow-Origin = *", origin)
 		}
 		if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "" {
-			t.Errorf("origine %q : Access-Control-Allow-Credentials = %q", origin, got)
+			t.Errorf("origin %q: Access-Control-Allow-Credentials = %q", origin, got)
 		}
 	}
 }
 
-// Une liste VIDE ferme complètement la surface au navigateur. C'est la valeur qu'un utilisateur
-// pose s'il ne veut aucun pont web, et elle doit être exprimable.
+// An EMPTY list closes the surface to the browser completely. It is the value a user sets if they
+// want no web bridge at all, and it has to be expressible.
 func TestCORSEmptyListRefusesEveryOrigin(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/overview/", nil)
 	req.Header.Set("Origin", "https://flowlio.me")
 
 	rec, _ := serveCORS(t, req, nil)
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
-		t.Errorf("Access-Control-Allow-Origin = %q avec une liste vide", got)
+		t.Errorf("Access-Control-Allow-Origin = %q with an empty list", got)
 	}
 
 	rec, _ = serveCORS(t, preflight("https://flowlio.me"), nil)
 	if rec.Code != http.StatusForbidden {
-		t.Errorf("preflight = %d avec une liste vide, attendu %d", rec.Code, http.StatusForbidden)
+		t.Errorf("preflight = %d with an empty list, expected %d", rec.Code, http.StatusForbidden)
 	}
 }
 
-// Un OPTIONS SANS `Access-Control-Request-Method` n'est pas un preflight : c'est une requête
-// ordinaire, qui doit descendre. Sans cette distinction, le middleware avalerait un OPTIONS
-// applicatif — le jour où il en existe un.
+// An OPTIONS WITHOUT `Access-Control-Request-Method` is not a preflight: it is an ordinary
+// request, which must go down. Without that distinction, the middleware would swallow an
+// application-level OPTIONS — the day one exists.
 func TestCORSPlainOptionsIsNotAPreflight(t *testing.T) {
 	req := httptest.NewRequest(http.MethodOptions, "/api/overview/", nil)
 	req.Header.Set("Origin", "https://flowlio.me")
 
-	_, atteint := serveCORS(t, req, origines)
+	_, reached := serveCORS(t, req, origins)
 
-	if !atteint {
-		t.Error("un OPTIONS sans Access-Control-Request-Method a été avalé par le middleware")
+	if !reached {
+		t.Error("an OPTIONS without Access-Control-Request-Method was swallowed by the middleware")
 	}
 }

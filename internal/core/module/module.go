@@ -4,10 +4,10 @@ package module
 //
 // | Élément         | Résumé                                                         | Ligne |
 // |-----------------|----------------------------------------------------------------|-------|
-// | Module          | Contrat implémenté par chaque module de feature                  | 35    |
-// | CoreServices    | Services partagés transverses exposés à tous les modules         | 44    |
-// | FeatureRegistry | Résolution lazy d'un module par un autre, sans import direct     | 52    |
-// | ModuleConfig    | Infra partagée passée en un seul paramètre à chaque NewModule    | 59    |
+// | Module          | Contract implemented by every feature module                     | 35    |
+// | CoreServices    | Shared cross-cutting services exposed to every module            | 44    |
+// | FeatureRegistry | Lazy resolution of one module by another, with no direct import  | 52    |
+// | ModuleConfig    | Shared infra passed as a single parameter to every NewModule     | 59    |
 // | RefScope        | The tenancy pair a reference is resolved under                   | 100   |
 // | TaskRefResolver | Implemented by task: resolves a reference to a task              | 110   |
 // | IssueRefResolver| Implemented by issue: resolves a reference to an issue           | 119   |
@@ -15,7 +15,7 @@ package module
 // Fin du sommaire.
 // =====================================================================
 //
-// FICHIER CRITIQUE — toute modification de ces interfaces se valide avec l'humain.
+// CRITICAL FILE — any change to these interfaces is validated with the human.
 
 import (
 	"context"
@@ -31,34 +31,34 @@ import (
 	"github.com/google/uuid"
 )
 
-// Module est le contrat que tout module de feature implémente. L'engine ne connaît que ça.
+// Module is the contract every feature module implements. The engine knows nothing else.
 type Module interface {
-	// Key renvoie la clé unique du module dans le FeatureRegistry et le préfixe de ses routes.
+	// Key yields the module's unique key in the FeatureRegistry and the prefix of its routes.
 	Key() string
-	// Routes renvoie le sous-routeur de la feature, monté par l'engine sous sa clé.
+	// Routes yields the feature's sub-router, mounted by the engine under its key.
 	Routes() http.Handler
 }
 
-// CoreServices expose les services partagés transverses (auth, billing…) à tous les modules.
+// CoreServices exposes the shared cross-cutting services (auth, billing…) to every module.
 // Jamais de service feature-specific ici.
 type CoreServices interface {
-	// Auth authentifie les requêtes et fournit le middleware lié dans chaque module.go.
+	// Auth authenticates the requests and provides the middleware bound in each module.go.
 	Auth() auth.Service
 }
 
-// FeatureRegistry permet à une feature d'en consommer une autre sans l'importer :
-// le fournisseur s'enregistre sous sa clé, le consommateur résout lazily et type-assert
-// sur une interface qu'il déclare de son côté.
+// FeatureRegistry lets one feature consume another without importing it: the provider registers
+// itself under its key, the consumer resolves lazily and type-asserts on an interface it declares
+// on its own side.
 type FeatureRegistry interface {
 	Get(key string) (any, bool)
 	Register(key string, provider any)
 }
 
-// ModuleConfig regroupe TOUTE l'infra partagée. Chaque NewModule reçoit cette struct
-// et rien d'autre — jamais de dépendances en vrac en paramètres.
+// ModuleConfig gathers ALL the shared infra. Every NewModule receives this struct and nothing
+// else — never loose dependencies as parameters.
 type ModuleConfig struct {
-	DB       *database.Queries // handle des queries générées par sqlc
-	RawDB    *sql.DB           // uniquement pour les transactions, via le Transactor du store
+	DB       *database.Queries // handle on the sqlc-generated queries
+	RawDB    *sql.DB           // for transactions only, through the store's Transactor
 	Config   *config.Config
 	Ctx      context.Context
 	Cache    cache.Cache

@@ -4,18 +4,17 @@ package auth
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | Scope              | Portée d'un token : administration ou projet unique          | 38    |
-// | Principal          | Identité authentifiée portée par une requête                 | 50    |
-// | Principal.IsAdmin  | Vrai si le principal peut administrer la team                | 58    |
-// | Service            | Contrat d'authentification exposé via CoreServices           | 63    |
-// | service            | Implémentation, dépendante de l'interface Store              | 73    |
-// | New                | Crée le service d'authentification                           | 83    |
+// | Scope              | Scope of a token: administration or a single project         | 38    |
+// | Principal          | Authenticated identity carried by a request                  | 50    |
+// | Principal.IsAdmin  | True if the principal may administer the team                | 58    |
+// | Service            | Authentication contract exposed through CoreServices         | 63    |
+// | service            | Implementation, depending on the Store interface             | 73    |
+// | New                | Creates the authentication service                           | 83    |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// CONTRAT UNIQUEMENT — l'implémentation est dans authenticate.go, middleware.go et
-// rate_limit.go.
+// CONTRACT ONLY — the implementation lives in authenticate.go, middleware.go and rate_limit.go.
 
 import (
 	"context"
@@ -26,27 +25,27 @@ import (
 	"github.com/google/uuid"
 )
 
-// ErrUnauthenticated couvre TOUS les échecs d'authentification : préfixe inconnu, secret faux,
-// token révoqué ou malformé. Un appelant ne doit jamais pouvoir distinguer ces cas — ce serait
-// un oracle permettant d'énumérer les tokens valides.
+// ErrUnauthenticated covers EVERY authentication failure: unknown prefix, wrong secret, revoked
+// or malformed token. A caller must never be able to tell those cases apart — that would be an
+// oracle letting the valid tokens be enumerated.
 var ErrUnauthenticated = errors.New("auth: unauthenticated")
 
-// ErrForbidden signale un principal authentifié dont la portée ne couvre pas la ressource.
+// ErrForbidden signals an authenticated principal whose scope does not cover the resource.
 var ErrForbidden = errors.New("auth: forbidden")
 
-// Scope décrit ce qu'un token a le droit de faire.
+// Scope describes what a token is allowed to do.
 type Scope string
 
 const (
-	// ScopeAdmin administre les teams et les projets. Émis au bootstrap en mode local.
+	// ScopeAdmin administers the teams and the projects. Issued at bootstrap in local mode.
 	ScopeAdmin Scope = "admin"
-	// ScopeProject est le token d'un agent : un seul projet, dans une seule team.
+	// ScopeProject is an agent's token: one single project, within one single team.
 	ScopeProject Scope = "project"
 )
 
-// Principal est l'identité authentifiée d'une requête. TeamID et ProjectID sont vides pour un
-// token admin ; ils sont toujours renseignés pour un token de projet, et c'est cette paire qui
-// scope chaque query du store.
+// Principal is the authenticated identity of a request. TeamID and ProjectID are empty for an
+// admin token; they are always set for a project token, and it is that pair which scopes every
+// query of the store.
 type Principal struct {
 	TokenID   uuid.UUID
 	Scope     Scope
@@ -54,32 +53,32 @@ type Principal struct {
 	ProjectID uuid.UUID
 }
 
-// IsAdmin indique si le principal peut créer des teams, des projets et des tokens.
+// IsAdmin says whether the principal can create teams, projects and tokens.
 func (p Principal) IsAdmin() bool {
 	return p.Scope == ScopeAdmin
 }
 
-// Service authentifie les requêtes. Exposé à tous les modules via CoreServices.Auth().
+// Service authenticates the requests. Exposed to every module through CoreServices.Auth().
 type Service interface {
-	// Authenticate résout un token présenté en Principal, ou renvoie ErrUnauthenticated.
+	// Authenticate resolves a presented token into a Principal, or yields ErrUnauthenticated.
 	Authenticate(ctx context.Context, rawToken string) (Principal, error)
-	// Middleware exige un token valide et dépose le Principal dans le contexte de la requête.
+	// Middleware requires a valid token and puts the Principal into the request context.
 	Middleware(next http.Handler) http.Handler
-	// AdminOnly exige en plus un token de portée admin.
+	// AdminOnly additionally requires a token of admin scope.
 	AdminOnly(next http.Handler) http.Handler
 }
 
-// service dépend de l'interface Store, jamais de sqlc.
+// service depends on the Store interface, never on sqlc.
 type service struct {
 	store Store
-	// touchInterval limite la fréquence d'écriture de last_used_at : sans ça, chaque requête
-	// authentifiée déclencherait un UPDATE.
+	// touchInterval bounds how often last_used_at is written: without it, every authenticated
+	// request would trigger an UPDATE.
 	touchInterval time.Duration
-	// limiter freine le balayage de préfixes. Détail et arbitrages : rate_limit.go.
+	// limiter slows prefix sweeping down. Detail and trade-offs: rate_limit.go.
 	limiter *attemptLimiter
 }
 
-// New crée le service d'authentification.
+// New creates the authentication service.
 func New(store Store) Service {
 	return &service{
 		store:         store,

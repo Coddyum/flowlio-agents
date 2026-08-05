@@ -4,53 +4,52 @@ package auth
 //
 // | Élément                   | Résumé                                                    | Ligne |
 // |---------------------------|-----------------------------------------------------------|-------|
-// | attemptLimiter.isTrusted  | Dit si ce token exact a déjà prouvé sa validité             | 71    |
-// | attemptLimiter.trust      | Marque le token comme authentifié, donc exempté de quota    | 81    |
-// | attemptLimiter.distrust   | Retire la confiance dès qu'un token de confiance est refusé | 90    |
-// | trustKey                  | Compose la clé de cache d'un token de confiance             | 96    |
-// | tokenFingerprint          | Empreinte d'un token présenté, jamais le token lui-même     | 106   |
+// | attemptLimiter.isTrusted  | Says whether this exact token already proved its validity  | 70    |
+// | attemptLimiter.trust      | Marks the token authenticated, hence exempt from quota     | 80    |
+// | attemptLimiter.distrust   | Withdraws trust as soon as a trusted token is refused      | 89    |
+// | trustKey                  | Composes the cache key of a trusted token                  | 95    |
+// | tokenFingerprint          | Fingerprint of a presented token, never the token itself   | 105   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// POURQUOI — un token qui s'est déjà authentifié ne consomme plus aucun quota.
+// WHY — a token that already authenticated consumes no quota any more.
 //
-// Cette exemption est née pour neutraliser un seau par préfixe qui coupait les agents légitimes.
-// Ce seau a depuis été SUPPRIMÉ (voir rate_limit.go), et l'exemption a survécu parce qu'elle
-// achète autre chose : derrière une IP partagée — NAT, conteneur, machine de CI — un voisin
-// bruyant sature le seau commun, et un agent qui s'est déjà authentifié doit continuer à passer.
-// Un correctif de sécurité qui casse les clients légitimes est un échec, pas un compromis.
+// This exemption was born to neutralise a per-prefix bucket that was cutting legitimate agents
+// off. That bucket has since been REMOVED (see rate_limit.go), and the exemption survived because
+// it buys something else: behind a shared IP — NAT, container, CI machine — a noisy neighbour
+// saturates the common bucket, and an agent that already authenticated must keep getting through.
+// A security fix that breaks legitimate clients is a failure, not a trade-off.
 //
-// Un agent à FROID derrière cette même IP, lui, est bien refusé : c'est la limite connue du
-// modèle par source, écrite comme telle dans docs/DESIGN-V1.md.
+// An agent starting COLD behind that same IP is indeed refused: that is the known limit of the
+// per-source model, written as such in docs/DESIGN-V1.md.
 //
-// CE QUI EST INDEXÉ — l'empreinte du TOKEN COMPLET, jamais le préfixe. Un attaquant qui ne
-// connaît que le préfixe ne peut donc pas se glisser dans l'exemption : il lui faudrait le
-// secret, c'est-à-dire précisément ce que le limiteur protège. La confiance n'est jamais
-// accordée sur une tentative échouée, donc l'attaquant ne peut pas non plus peupler ce cache.
+// WHAT IS INDEXED — the fingerprint of the WHOLE TOKEN, never the prefix. An attacker who knows
+// only the prefix therefore cannot slip into the exemption: they would need the secret, that is to
+// say precisely what the limiter protects. Trust is never granted on a failed attempt, so the
+// attacker cannot populate this cache either.
 //
-// CE QUE ÇA NE FAIT PAS — ce n'est pas un cache d'authentification. Le token de confiance
-// contourne le LIMITEUR, pas la vérification : chaque requête va quand même jusqu'au store et
-// compare le secret. Un token révoqué reste refusé à la milliseconde près.
+// WHAT IT DOES NOT DO — it is not an authentication cache. A trusted token bypasses the LIMITER,
+// not the verification: every request still goes all the way to the store and compares the secret.
+// A revoked token stays refused to the millisecond.
 //
-// RÉVOCATION — un token révoqué garde sa marque de confiance jusqu'à sa prochaine utilisation,
-// où le refus la fait tomber (distrust). Le porteur d'un token fraîchement révoqué obtient donc
-// une salve non comptée avant de repasser sous quota.
+// REVOCATION — a revoked token keeps its trust mark until its next use, where the refusal drops it
+// (distrust). The bearer of a freshly revoked token therefore gets one uncounted burst before
+// falling back under quota.
 //
-// Ce retour sous quota n'était PAS garanti : la confiance ne tombant que sur un refus AVÉRÉ, il
-// suffisait de couper la connexion avant la réponse du store pour n'en produire aucun et rester
-// exempté jusqu'au TTL. Fermé en facturant toute tentative exemptée qui finit sans verdict
-// (release, rate_limit.go). Une revue a mesuré la portée réelle de ce défaut contre un vrai
-// Postgres : une requête au contexte DÉJÀ annulé n'émet aucune transaction, donc la version
-// fiable de l'attaque ne coûtait rien à la base ; la version coûteuse suppose de viser une
-// fenêtre de 183 µs des milliers de fois sans un seul raté, un raté suffisant à faire tomber la
-// confiance. Le défaut était donc mineur — il est corrigé quand même, parce qu'une issue que
-// l'attaquant choisit ne doit jamais être gratuite.
+// That fall back under quota was NOT guaranteed: trust only dropping on a PROVEN refusal, it was
+// enough to cut the connection before the store's answer to produce none and stay exempt until the
+// TTL. Closed by charging every exempt attempt that ends without a verdict (release,
+// rate_limit.go). A review measured the real reach of that flaw against a real Postgres: a request
+// on an ALREADY cancelled context emits no transaction, so the reliable version of the attack cost
+// the database nothing; the costly version supposes hitting a 183 µs window thousands of times
+// without a single miss, one miss being enough to drop the trust. The flaw was therefore minor —
+// it is fixed all the same, because an outcome the attacker chooses must never be free.
 //
-// TTL — largement plus long que la fenêtre de comptage, à dessein. Un TTL court rouvrirait la
-// fenêtre de blocage décrite plus haut pour tout agent resté silencieux quelques minutes, ce qui
-// est le cas normal d'un agent entre deux sessions. La révocation ne dépend pas de ce TTL, elle
-// est portée par le store à chaque requête.
+// TTL — far longer than the counting window, by design. A short TTL would reopen the blocking
+// window described above for any agent that stayed silent for a few minutes, which is the normal
+// state of an agent between two sessions. Revocation does not depend on this TTL, it is carried by
+// the store on every request.
 
 import (
 	"time"
@@ -59,15 +58,15 @@ import (
 )
 
 const (
-	// trustTTL est la durée pendant laquelle un token authentifié reste exempté de quota. Ce
-	// n'est pas une durée de session : la validité du token est revérifiée à chaque requête.
+	// trustTTL is how long an authenticated token stays exempt from quota. It is not a session
+	// duration: the validity of the token is re-checked on every request.
 	trustTTL = 24 * time.Hour
 
-	// bucketTrusted sépare les marques de confiance des compteurs dans le même cache.
+	// bucketTrusted separates the trust marks from the counters inside the same cache.
 	bucketTrusted = "ok"
 )
 
-// isTrusted dit si ce token exact s'est déjà authentifié avec succès. Appelé sous l.mu.
+// isTrusted says whether this exact token already authenticated successfully. Called under l.mu.
 func (l *attemptLimiter) isTrusted(fingerprint string) bool {
 	if fingerprint == "" {
 		return false
@@ -76,8 +75,8 @@ func (l *attemptLimiter) isTrusted(fingerprint string) bool {
 	return found
 }
 
-// trust marque le token comme authentifié : ses prochaines requêtes ne consommeront plus de
-// quota. Appelé sous l.mu, uniquement sur un succès avéré.
+// trust marks the token as authenticated: its next requests will consume no more quota. Called
+// under l.mu, only on a proven success.
 func (l *attemptLimiter) trust(fingerprint string) {
 	if fingerprint == "" {
 		return
@@ -85,24 +84,24 @@ func (l *attemptLimiter) trust(fingerprint string) {
 	l.counters.Set(trustKey(fingerprint), true, trustTTL)
 }
 
-// distrust retire la confiance : appelé sur tout refus, c'est ce qui fait qu'un token révoqué
-// cesse d'être exempté dès sa première utilisation après révocation. Appelé sous l.mu.
+// distrust withdraws the trust: called on every refusal, it is what makes a revoked token stop
+// being exempt from its first use after revocation. Called under l.mu.
 func (l *attemptLimiter) distrust(fingerprint string) {
 	l.counters.Delete(trustKey(fingerprint))
 }
 
-// trustKey compose la clé de cache. Pas d'index de fenêtre ici, contrairement aux compteurs : la
-// confiance n'est pas remise à zéro à chaque minute, c'est tout son intérêt.
+// trustKey composes the cache key. No window index here, unlike the counters: trust is not reset
+// every minute, and that is its whole point.
 func trustKey(fingerprint string) string {
 	return bucketTrusted + ":" + fingerprint
 }
 
-// tokenFingerprint réduit un token présenté à une empreinte utilisable comme clé.
+// tokenFingerprint reduces a presented token to a fingerprint usable as a key.
 //
-// Le token brut n'est JAMAIS employé comme clé de cache ni comme identifiant de groupe : une clé
-// se retrouve dans un dump mémoire, un profil, un message d'erreur. SHA-256 est la même
-// primitive que celle qui protège le secret en base, appliquée ici au token entier — préfixe
-// compris — pour que deux tokens partageant un préfixe ne se confondent pas.
+// The raw token is NEVER used as a cache key nor as a group identifier: a key ends up in a memory
+// dump, a profile, an error message. SHA-256 is the same primitive as the one protecting the
+// secret in the database, applied here to the whole token — prefix included — so that two tokens
+// sharing a prefix are not confused.
 func tokenFingerprint(rawToken string) string {
 	return crypto.HashSecret(rawToken)
 }

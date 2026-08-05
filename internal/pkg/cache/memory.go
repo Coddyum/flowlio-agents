@@ -4,11 +4,11 @@ package cache
 //
 // | Élément       | Résumé                                                        | Ligne |
 // |---------------|---------------------------------------------------------------|-------|
-// | memory        | Cache en mémoire process, adossé à go-cache                     | 24    |
-// | NewMemory     | Crée le cache mémoire avec TTL par défaut et purge périodique   | 30    |
-// | memory.Get    | Lit une clé si elle est présente et non expirée                 | 35    |
-// | memory.Set    | Écrit une clé avec son TTL (0 = TTL par défaut)                 | 40    |
-// | memory.Delete | Supprime une clé                                                | 48    |
+// | memory        | Process-memory cache, backed by go-cache                        | 24    |
+// | NewMemory     | Creates the memory cache with a default TTL and periodic purge  | 30    |
+// | memory.Get    | Reads a key if it is present and unexpired                      | 35    |
+// | memory.Set    | Writes a key with its TTL (0 = default TTL)                     | 40    |
+// | memory.Delete | Removes a key                                                   | 48    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -19,24 +19,24 @@ import (
 	gocache "github.com/patrickmn/go-cache"
 )
 
-// memory est un cache local au process : pas de partage entre instances. Suffisant tant que
-// l'API tourne en instance unique ; à remplacer par une implémentation distribuée sinon.
+// memory is a process-local cache: no sharing between instances. Enough for as long as
+// the API runs as a single instance; to be replaced by a distributed implementation otherwise.
 type memory struct {
 	c *gocache.Cache
 }
 
-// NewMemory crée le cache mémoire. defaultTTL s'applique aux Set sans TTL explicite,
-// cleanupInterval règle la fréquence de purge des entrées expirées.
+// NewMemory creates the memory cache. defaultTTL applies to Set calls without an explicit TTL,
+// cleanupInterval sets how often expired entries are purged.
 func NewMemory(defaultTTL, cleanupInterval time.Duration) Cache {
 	return &memory{c: gocache.New(defaultTTL, cleanupInterval)}
 }
 
-// Get lit une clé si elle est présente et non expirée.
+// Get reads a key if it is present and unexpired.
 func (m *memory) Get(key string) (any, bool) {
 	return m.c.Get(key)
 }
 
-// Set écrit la valeur avec son TTL ; un ttl de 0 retombe sur le TTL par défaut du cache.
+// Set writes the value with its TTL; a ttl of 0 falls back on the cache's default TTL.
 func (m *memory) Set(key string, value any, ttl time.Duration) {
 	if ttl == 0 {
 		ttl = gocache.DefaultExpiration
@@ -44,7 +44,7 @@ func (m *memory) Set(key string, value any, ttl time.Duration) {
 	m.c.Set(key, value, ttl)
 }
 
-// Delete supprime la clé, qu'elle existe ou non.
+// Delete removes the key, whether it exists or not.
 func (m *memory) Delete(key string) {
 	m.c.Delete(key)
 }

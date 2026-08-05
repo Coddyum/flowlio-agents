@@ -4,12 +4,12 @@ package config
 //
 // | Élément  | Résumé                                                            | Ligne |
 // |----------|-------------------------------------------------------------------|-------|
-// | Config   | Configuration du process, lue une fois au démarrage                 | 41    |
-// | Config.IsLocal | Indique si le process tourne en mode local, sans comptes      | 60    |
-// | Load     | Lit l'environnement et échoue immédiatement si une clé manque       | 66    |
-// | required | Renvoie une variable d'environnement ou une erreur si absente/vide  | 87    |
-// | list     | Découpe une variable d'environnement en liste, sur les virgules      | 98    |
-// | optional | Renvoie une variable d'environnement ou la valeur par défaut        | 111   |
+// | Config   | Configuration of the process, read once at start-up                 | 41    |
+// | Config.IsLocal | Says whether the process runs in local mode, without accounts | 60    |
+// | Load     | Reads the environment and fails at once if a key is missing         | 66    |
+// | required | Yields an environment variable, or an error if missing or empty     | 87    |
+// | list     | Splits an environment variable into a list, on the commas           | 98    |
+// | optional | Yields an environment variable or the default value                 | 111   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -24,45 +24,45 @@ const (
 	defaultAddr = ":8080"
 	defaultEnv  = "dev"
 	defaultMode = ModeLocal
-	// defaultAllowedOrigins est l'origine de la page de pont, et elle seule. Le navigateur de
-	// l'utilisateur y charge une page servie par flowlio.me qui appelle son API locale ; aucune
-	// autre origine n'a de raison de parler à ce process.
+	// defaultAllowedOrigins is the origin of the bridge page, and it alone. The user's browser
+	// loads there a page served by flowlio.me that calls their local API; no other origin has any
+	// reason to talk to this process.
 	defaultAllowedOrigins = "https://flowlio.me,https://www.flowlio.me"
 )
 
-// Modes de déploiement. Local : aucun compte, amorçage par token admin écrit sur disque.
-// Hosted : comptes et facturation, amorçage désactivé.
+// Deployment modes. Local: no account, bootstrap through an admin token written to disk.
+// Hosted: accounts and billing, bootstrap disabled.
 const (
 	ModeLocal  = "local"
 	ModeHosted = "hosted"
 )
 
-// Config porte la configuration du process. Immuable après Load : aucune feature ne l'écrit.
+// Config carries the configuration of the process. Immutable after Load: no feature writes it.
 type Config struct {
-	// Addr est l'adresse d'écoute du serveur HTTP (ex: ":8080").
+	// Addr is the listen address of the HTTP server (e.g. ":8080").
 	Addr string
-	// DatabaseURL est le DSN Postgres complet.
+	// DatabaseURL is the full Postgres DSN.
 	DatabaseURL string
-	// Env vaut "dev", "staging" ou "prod".
+	// Env is "dev", "staging" or "prod".
 	Env string
-	// Mode vaut ModeLocal ou ModeHosted et décide de l'amorçage et des modules montés.
+	// Mode is ModeLocal or ModeHosted and decides the bootstrap and the modules mounted.
 	Mode string
-	// AllowedOrigins liste les origines web autorisées à appeler l'API depuis un navigateur.
+	// AllowedOrigins lists the web origins allowed to call the API from a browser.
 	//
-	// Vide par défaut serait plus sûr encore, mais rendrait la page de pont inutilisable sans
-	// configuration, c'est-à-dire pour tout le monde. Le défaut est donc l'origine du produit et
-	// rien d'autre : `*` n'est jamais une valeur acceptable ici, y compris en dev — cette API
-	// répond à un token admin qui vit sur la machine de l'utilisateur.
+	// Empty by default would be safer still, but would make the bridge page unusable without
+	// configuration, that is to say for everybody. The default is therefore the product's origin
+	// and nothing else: `*` is never an acceptable value here, dev included — this API answers to
+	// an admin token that lives on the user's machine.
 	AllowedOrigins []string
 }
 
-// IsLocal indique si le process tourne en mode local, sans comptes.
+// IsLocal says whether the process runs in local mode, without accounts.
 func (c *Config) IsLocal() bool {
 	return c.Mode == ModeLocal
 }
 
-// Load lit la configuration depuis l'environnement. Fail fast : une clé requise manquante
-// renvoie une erreur, le process ne démarre pas dans un état partiel.
+// Load reads the configuration from the environment. Fail fast: a missing required key yields an
+// error, the process does not start in a partial state.
 func Load() (*Config, error) {
 	dbURL, err := required("DATABASE_URL")
 	if err != nil {
@@ -71,7 +71,7 @@ func Load() (*Config, error) {
 
 	mode := optional("MODE", defaultMode)
 	if mode != ModeLocal && mode != ModeHosted {
-		return nil, fmt.Errorf("config: MODE=%q inconnu (attendu %q ou %q)", mode, ModeLocal, ModeHosted)
+		return nil, fmt.Errorf("config: unknown MODE=%q (expected %q or %q)", mode, ModeLocal, ModeHosted)
 	}
 
 	return &Config{
@@ -83,18 +83,18 @@ func Load() (*Config, error) {
 	}, nil
 }
 
-// required renvoie la variable d'environnement key, ou une erreur si elle est absente ou vide.
+// required yields the environment variable key, or an error if it is missing or empty.
 func required(key string) (string, error) {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
-		return "", fmt.Errorf("variable d'environnement %s manquante", key)
+		return "", fmt.Errorf("missing environment variable %s", key)
 	}
 	return v, nil
 }
 
-// list découpe une variable d'environnement en liste, sur les virgules, en jetant les entrées
-// vides. Une valeur explicitement vide rend une liste vide : c'est ainsi qu'on ferme complètement
-// une surface, et il faut que ce soit exprimable.
+// list splits an environment variable into a list, on the commas, throwing away the empty
+// entries. An explicitly empty value yields an empty list: that is how a surface is closed
+// completely, and it has to be expressible.
 func list(key, def string) []string {
 	raw := optional(key, def)
 
@@ -107,7 +107,7 @@ func list(key, def string) []string {
 	return out
 }
 
-// optional renvoie la variable d'environnement key, ou def si elle est absente ou vide.
+// optional yields the environment variable key, or def if it is missing or empty.
 func optional(key, def string) string {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {

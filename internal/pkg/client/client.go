@@ -4,22 +4,22 @@ package client
 //
 // | Élément     | Résumé                                                            | Ligne |
 // |-------------|-------------------------------------------------------------------|-------|
-// | APIError    | Erreur renvoyée par l'API, avec son code HTTP                       | 46    |
-// | APIError.Error | Message lisible de l'erreur API                                  | 52    |
+// | APIError    | Error yielded by the API, with its HTTP code                        | 46    |
+// | APIError.Error | Readable message of the API error                                | 52    |
 // | TransportError | An address left unanswered, with the provenance of that address  | 64    |
 // | TransportError.Error | Names the dead address and where it was read from           | 77    |
 // | TransportError.Unwrap | Exposes the underlying network error                       | 87    |
-// | Client      | Client HTTP de l'API flowlio, partagé par la CLI et le serveur MCP  | 90    |
-// | New         | Crée un client vers une API et un token donnés                      | 99    |
-// | Client.BaseURL | Adresse de l'API, sans slash final                               | 109   |
-// | FromCredentials | Crée un client à partir des identifiants locaux                 | 125   |
-// | Client.Do   | Exécute une requête JSON et décode la réponse                       | 162   |
+// | Client      | HTTP client of the flowlio API, shared by the CLI and the MCP server| 90    |
+// | New         | Creates a client towards a given API and token                      | 99    |
+// | Client.BaseURL | Address of the API, without a trailing slash                     | 109   |
+// | FromCredentials | Creates a client from the local credentials                     | 125   |
+// | Client.Do   | Runs a JSON request and decodes the response                        | 162   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Un seul client pour la CLI et pour le serveur MCP : local et hosted empruntent exactement le
-// même chemin d'authentification, donc un bug d'auth se voit dans les deux à la fois.
+// One single client for the CLI and for the MCP server: local and hosted take exactly the same
+// authentication path, so an auth bug shows in both at once.
 
 import (
 	"bytes"
@@ -42,13 +42,13 @@ const (
 	envURLVar = "$FLOWLIO_API_URL"
 )
 
-// APIError porte le code HTTP et le message renvoyés par l'API.
+// APIError carries the HTTP code and the message yielded by the API.
 type APIError struct {
 	Status  int
 	Message string
 }
 
-// Error rend l'erreur lisible en sortie de CLI.
+// Error renders the error readable in CLI output.
 func (e *APIError) Error() string {
 	if e.Message == "" {
 		return fmt.Sprintf("api: %s", http.StatusText(e.Status))
@@ -86,7 +86,7 @@ func (e *TransportError) Error() string {
 // working through this type.
 func (e *TransportError) Unwrap() error { return e.Err }
 
-// Client parle à l'API flowlio avec un token donné.
+// Client talks to the flowlio API with a given token.
 type Client struct {
 	baseURL string
 	token   string
@@ -95,7 +95,7 @@ type Client struct {
 	http      *http.Client
 }
 
-// New crée un client vers baseURL, authentifié par token.
+// New creates a client towards baseURL, authenticated by token.
 func New(baseURL, token string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -104,8 +104,8 @@ func New(baseURL, token string) *Client {
 	}
 }
 
-// BaseURL renvoie l'adresse de l'API, sans slash final. Le token, lui, n'est jamais exposé :
-// c'est un secret, et rien hors de ce paquet n'a de raison de le relire.
+// BaseURL yields the address of the API, without a trailing slash. The token itself is never
+// exposed: it is a secret, and nothing outside this package has any reason to read it back.
 func (c *Client) BaseURL() string {
 	return c.baseURL
 }
@@ -157,21 +157,21 @@ func FromCredentials(envURL, envToken string) (*Client, error) {
 	return c, nil
 }
 
-// Do exécute une requête JSON. body et out peuvent être nils. Une réponse non 2xx devient une
-// *APIError, jamais une valeur partiellement décodée.
+// Do runs a JSON request. body and out may be nil. A non-2xx response becomes an *APIError,
+// never a partially decoded value.
 func (c *Client) Do(ctx context.Context, method, path string, body, out any) error {
 	var payload io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("client: encodage de la requête: %w", err)
+			return fmt.Errorf("client: encoding the request: %w", err)
 		}
 		payload = bytes.NewReader(raw)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, payload)
 	if err != nil {
-		return fmt.Errorf("client: requête %s %s: %w", method, path, err)
+		return fmt.Errorf("client: request %s %s: %w", method, path, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	if body != nil {
@@ -196,7 +196,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 		return nil
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("client: réponse illisible de %s %s: %w", method, path, err)
+		return fmt.Errorf("client: unreadable response from %s %s: %w", method, path, err)
 	}
 	return nil
 }

@@ -4,55 +4,55 @@ package auth
 //
 // | Élément               | Résumé                                                        | Ligne |
 // |-----------------------|---------------------------------------------------------------|-------|
-// | countsAgainstIPBucket | Dit si l'IP source doit être comptée du tout                    | 37    |
-// | sourceKey             | Ramène une source à son unité de comptage (/64 en IPv6)         | 52    |
-// | clientIP              | Extrait l'IP client de r.RemoteAddr, sans faire confiance       | 73    |
+// | countsAgainstIPBucket | Says whether the source IP must be counted at all               | 37    |
+// | sourceKey             | Reduces a source to its counting unit (/64 in IPv6)             | 52    |
+// | clientIP              | Extracts the client IP from r.RemoteAddr, trusting nothing else | 73    |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Ce que le limiteur lit dans une requête pour en tirer sa clé de comptage. Séparé de
-// rate_limit.go parce que ce sont des décisions sur les ENTRÉES — à qui attribuer une tentative
-// — et pas sur le comptage lui-même.
+// What the limiter reads in a request to derive its counting key. Kept apart from rate_limit.go
+// because these are decisions about the INPUTS — whom to attribute an attempt to — and not about
+// the counting itself.
 
 import (
 	"net"
 	"net/http"
 )
 
-// countsAgainstIPBucket exclut la boucle locale du seau par IP. CHOIX DE SÉCURITÉ DÉLIBÉRÉ.
+// countsAgainstIPBucket excludes the loopback from the per-IP bucket. DELIBERATE SECURITY CHOICE.
 //
-// En mode local — le mode par défaut et open source — la CLI et le serveur MCP de toutes les
-// instances d'agent parlent à l'API via 127.0.0.1. Le seau ip:127.0.0.1 y est donc un quota
-// GLOBAL et non un quota par source : un seul agent dont le token est révoqué, en boucle de
-// retry, consomme la fenêtre en quelques secondes et fait refuser les tokens VALIDES de toutes
-// les autres instances jusqu'à la fin de la fenêtre. Ce n'est pas un cas théorique, c'est le
-// fonctionnement normal du produit.
+// In local mode — the default, open-source mode — the CLI and the MCP server of every agent
+// instance talk to the API through 127.0.0.1. The ip:127.0.0.1 bucket is therefore a GLOBAL quota
+// and not a per-source one: a single agent whose token is revoked, in a retry loop, consumes the
+// window in a few seconds and gets the VALID tokens of every other instance rejected until the
+// window ends. That is not a theoretical case, it is the
+// normal running of the product.
 //
-// CONSÉQUENCE ASSUMÉE, ÉCRITE SANS DÉTOUR : le seau par IP étant le seul qui reste, le limiteur
-// ne freine RIEN depuis la boucle locale. C'est cohérent avec le modèle de menace et non avec un
-// oubli — un attaquant capable d'émettre depuis 127.0.0.1 lit déjà le fichier de credentials,
-// donc il n'a aucune raison de deviner un token. Ce limiteur défend le mode hosted, où la source
-// d'une requête est une information ; en local, c'est le système de fichiers qui protège.
+// ACCEPTED CONSEQUENCE, WRITTEN PLAINLY: the per-IP bucket being the only one left, the limiter
+// slows NOTHING down from the loopback. That is consistent with the threat model and not with an
+// oversight — an attacker able to emit from 127.0.0.1 already reads the credentials file, so they
+// have no reason to guess a token. This limiter defends the hosted mode, where the source of a
+// request is a piece of information; locally, it is the filesystem that protects.
 func countsAgainstIPBucket(ip string) bool {
 	return !net.ParseIP(ip).IsLoopback()
 }
 
-// sourceKey ramène une adresse source à l'unité de comptage : l'adresse telle quelle en IPv4,
-// le PRÉFIXE /64 en IPv6.
+// sourceKey reduces a source address to the counting unit: the address as such in IPv4, the /64
+// PREFIX in IPv6.
 //
-// Compter une adresse IPv6 exacte revient à ne rien compter. Le plus petit bloc que reçoit un
-// client résidentiel ou une instance cloud est un /64, soit 2^64 adresses : un attaquant change
-// d'adresse à chaque requête sans quitter sa machine, et chaque tentative ouvre un compteur neuf
-// — le plafond ne mord jamais, et la famille de clés devient fabricable en masse. Le /64 est la
-// plus petite unité qui corresponde à « une source ».
+// Counting an exact IPv6 address amounts to counting nothing. The smallest block a residential
+// client or a cloud instance receives is a /64, that is 2^64 addresses: an attacker changes
+// address on every request without leaving their machine, and every attempt opens a fresh counter
+// — the ceiling never bites, and the family of keys becomes mass-producible. The /64 is the
+// smallest unit that corresponds to "one source".
 //
-// La normalisation intervient APRÈS l'exemption de la boucle locale : ::1 réduit à son /64
-// donnerait ::, qui n'est plus reconnu comme loopback.
+// The normalisation happens AFTER the loopback exemption: ::1 reduced to its /64 would give ::,
+// which is no longer recognised as loopback.
 func sourceKey(ip string) string {
 	parsed := net.ParseIP(ip)
 	if parsed == nil {
-		// Fail-closed : une adresse illisible est comptée telle quelle plutôt qu'ignorée.
+		// Fail-closed: an unreadable address is counted as such rather than ignored.
 		return ip
 	}
 	if parsed.To4() != nil {
@@ -63,13 +63,12 @@ func sourceKey(ip string) string {
 	return prefix.String() + "/64"
 }
 
-// clientIP renvoie l'IP source de la connexion, port retiré.
+// clientIP yields the source IP of the connection, port stripped.
 //
-// r.RemoteAddr est la SEULE source fiable par défaut : c'est le serveur qui l'écrit, pas le
-// client. X-Forwarded-For et consorts sont des en-têtes librement forgés — s'y fier ici
-// offrirait à l'attaquant une limite par IP qu'il contourne en changeant une chaîne de
-// caractères. Le jour où l'API tourne derrière un proxy de confiance, la liste des proxys
-// devient de la configuration explicite ; tant qu'elle n'existe pas, on ne devine pas.
+// r.RemoteAddr is the ONLY reliable source by default: the server writes it, not the client.
+// X-Forwarded-For and its kind are freely forged headers — trusting them here would hand the
+// attacker a per-IP limit they bypass by changing a string. The day the API runs behind a trusted
+// proxy, the list of proxies becomes explicit configuration; until it exists, we do not guess.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

@@ -1,15 +1,15 @@
 package main
 
-// Ce que ce fichier verrouille : ce que la couche MCP et la CLI **envoient**, pas ce qu'elles rendent.
+// What this file locks down: what the MCP layer and the CLI **send**, not what they yield.
 //
-// Jusqu'ici, aucun test du dépôt ne lisait le corps d'une requête sortante — le double d'API de
-// mcp_test.go répondait la même charge en ignorant la requête (`func(w, _ *http.Request)`). Toute
-// la surface MCP était donc vérifiée sur son retour, jamais sur son envoi : un outil pouvait
-// omettre un champ en silence, et trois mutations le prouvaient en restant vertes sur la suite
-// entière, `golangci-lint` compris.
+// Until now, no test in the repo read the body of an outgoing request — the API double of
+// mcp_test.go answered the same payload while ignoring the request (`func(w, _ *http.Request)`).
+// The whole MCP surface was therefore checked on its return, never on what it sent: a tool could
+// omit a field silently, and three mutations proved it by staying green across the whole suite,
+// `golangci-lint` included.
 //
-// Le double enregistre maintenant méthode, chemin et corps. `newAPIServer` passe par lui : il
-// n'existe plus, dans ce paquet, de façon de monter une API factice qui ignore ce qu'on lui dit.
+// The double now records method, path and body. `newAPIServer` goes through it: there is no longer,
+// in this package, a way to mount a fake API that ignores what it is told.
 
 import (
 	"bytes"
@@ -24,7 +24,7 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
-// recordedRequest est ce qu'un appelant a réellement mis sur le fil.
+// recordedRequest is what a caller actually put on the wire.
 type recordedRequest struct {
 	Method string
 	Path   string
@@ -32,10 +32,10 @@ type recordedRequest struct {
 	Body   string
 }
 
-// apiRecorder collecte les requêtes reçues par le double d'API.
+// apiRecorder collects the requests received by the API double.
 //
-// Le mutex n'est pas décoratif : httptest sert chaque requête dans sa propre goroutine, et le
-// détecteur de course fait échouer la suite sans lui.
+// The mutex is not decorative: httptest serves every request in its own goroutine, and the race
+// detector fails the suite without it.
 type apiRecorder struct {
 	mu       sync.Mutex
 	requests []recordedRequest
@@ -47,26 +47,26 @@ func (r *apiRecorder) record(req recordedRequest) {
 	r.requests = append(r.requests, req)
 }
 
-// all rend une copie des requêtes reçues, dans l'ordre d'arrivée.
+// all yields a copy of the requests received, in arrival order.
 func (r *apiRecorder) all() []recordedRequest {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]recordedRequest(nil), r.requests...)
 }
 
-// only exige qu'une seule requête ait été émise et la rend. Le compte fait partie de l'assertion :
-// un outil qui envoie deux requêtes là où une suffit est un aller-retour payé à chaque tour.
+// only requires that exactly one request was emitted, and yields it. The count is part of the
+// assertion: a tool sending two requests where one suffices is a round trip paid on every turn.
 func (r *apiRecorder) only(t *testing.T) recordedRequest {
 	t.Helper()
 
 	got := r.all()
 	if len(got) != 1 {
-		t.Fatalf("%d requêtes émises, attendu 1: %+v", len(got), got)
+		t.Fatalf("%d requests emitted, expected 1: %+v", len(got), got)
 	}
 	return got[0]
 }
 
-// fields décode le corps JSON d'une requête en carte, pour asserter champ par champ.
+// fields decodes the JSON body of a request into a map, to assert field by field.
 func (req recordedRequest) fields(t *testing.T) map[string]any {
 	t.Helper()
 
@@ -75,13 +75,13 @@ func (req recordedRequest) fields(t *testing.T) map[string]any {
 	}
 	var out map[string]any
 	if err := json.Unmarshal([]byte(req.Body), &out); err != nil {
-		t.Fatalf("corps illisible %q: %v", req.Body, err)
+		t.Fatalf("unreadable body %q: %v", req.Body, err)
 	}
 	return out
 }
 
-// newRecordingAPI monte une API factice qui répond toujours la même charge ET enregistre ce
-// qu'elle reçoit.
+// newRecordingAPI mounts a fake API that always answers the same payload AND records what it
+// receives.
 func newRecordingAPI(t *testing.T, reply string) (*client.Client, *apiRecorder) {
 	t.Helper()
 
@@ -89,7 +89,7 @@ func newRecordingAPI(t *testing.T, reply string) (*client.Client, *apiRecorder) 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			t.Errorf("lecture du corps reçu: %v", err)
+			t.Errorf("reading the received body: %v", err)
 		}
 		rec.record(recordedRequest{
 			Method: r.Method,
@@ -106,7 +106,7 @@ func newRecordingAPI(t *testing.T, reply string) (*client.Client, *apiRecorder) 
 	return client.New(ts.URL, "flw_test"), rec
 }
 
-// newRecordingServer monte un serveur MCP branché sur l'API enregistreuse.
+// newRecordingServer mounts an MCP server plugged into the recording API.
 func newRecordingServer(t *testing.T, reply string) (*mcpServer, *apiRecorder) {
 	t.Helper()
 
@@ -119,98 +119,98 @@ func newRecordingServer(t *testing.T, reply string) (*mcpServer, *apiRecorder) {
 	}, rec
 }
 
-// taskAPIReply est la charge que l'API factice rend pour une tâche : le retour n'est pas le sujet
-// de ce fichier, il doit seulement être décodable.
+// taskAPIReply is the payload the fake API yields for a task: the return is not the subject of
+// this file, it only has to be decodable.
 const taskAPIReply = `{"number":34,"title":"x","status":"todo","priority":"normal",` +
 	`"created_at":"2026-08-02T10:00:00Z","updated_at":"2026-08-02T10:00:00Z"}`
 
-// update_task envoie la note DANS le patch — c'est toute la garantie de FLWL-15 : « statut changé,
-// motif perdu » n'est pas un état atteignable parce que les deux voyagent ensemble.
+// update_task sends the note INSIDE the patch — that is the whole guarantee of FLWL-15: "status
+// changed, reason lost" is not a reachable state because the two travel together.
 //
-// MUTATION : retirer `Note: in.Note,` du payload de updateTask fait tomber ce test. Avant lui,
-// cette mutation traversait la suite entière au vert : l'outil jetait la note et rendait quand
-// même la tâche, donc rien ne le voyait.
+// MUTATION: removing `Note: in.Note,` from the updateTask payload makes this test fall over. Before
+// it, that mutation crossed the whole suite green: the tool threw the note away and yielded the
+// task all the same, so nothing saw it.
 func TestUpdateTaskSendsTheNoteInsideThePatch(t *testing.T) {
 	srv, rec := newRecordingServer(t, taskAPIReply)
 
 	if _, err := srv.updateTask(context.Background(),
-		json.RawMessage(`{"ref":"CORE-34","status":"done","note":"livré"}`)); err != nil {
+		json.RawMessage(`{"ref":"CORE-34","status":"done","note":"shipped"}`)); err != nil {
 		t.Fatalf("update_task: %v", err)
 	}
 
 	req := rec.only(t)
 	if req.Method != http.MethodPatch || req.Path != "/api/task/34" {
-		t.Fatalf("requête = %s %s, attendu PATCH /api/task/34", req.Method, req.Path)
+		t.Fatalf("request = %s %s, expected PATCH /api/task/34", req.Method, req.Path)
 	}
 
 	fields := req.fields(t)
-	if fields["note"] != "livré" {
-		t.Errorf("note envoyée = %v, attendu \"livré\" — la note n'atteint pas l'API", fields["note"])
+	if fields["note"] != "shipped" {
+		t.Errorf("note sent = %v, expected \"shipped\" — the note does not reach the API", fields["note"])
 	}
 	if fields["status"] != "done" {
-		t.Errorf("status envoyé = %v, attendu \"done\"", fields["status"])
+		t.Errorf("status sent = %v, expected \"done\"", fields["status"])
 	}
 }
 
-// Une note SEULE est un appel valide : c'est le remplaçant direct d'add_task_note, supprimé par
-// FLWL-15, et le chemin le moins testé du commit.
+// A note ALONE is a valid call: it is the direct replacement of add_task_note, removed by FLWL-15,
+// and the least tested path of that commit.
 //
-// MUTATION : retirer `|| in.Note != nil` du garde fait tomber ce test — l'outil rend alors
-// « aucune modification demandée » et n'émet AUCUNE requête, sur un appel que l'agent croit
-// avoir réussi.
+// MUTATION: removing `|| in.Note != nil` from the guard makes this test fall over — the tool then
+// yields "no change requested" and emits NO request at all, on a call the agent believes
+// succeeded.
 func TestUpdateTaskWithOnlyANoteReachesTheAPI(t *testing.T) {
 	srv, rec := newRecordingServer(t, taskAPIReply)
 
 	if _, err := srv.updateTask(context.Background(),
-		json.RawMessage(`{"ref":"CORE-34","note":"j'avance"}`)); err != nil {
-		t.Fatalf("update_task avec la seule note: %v", err)
+		json.RawMessage(`{"ref":"CORE-34","note":"making progress"}`)); err != nil {
+		t.Fatalf("update_task with the note alone: %v", err)
 	}
 
 	req := rec.only(t)
 	if req.Method != http.MethodPatch || req.Path != "/api/task/34" {
-		t.Fatalf("requête = %s %s, attendu PATCH /api/task/34", req.Method, req.Path)
+		t.Fatalf("request = %s %s, expected PATCH /api/task/34", req.Method, req.Path)
 	}
-	if got := req.fields(t)["note"]; got != "j'avance" {
-		t.Errorf("note envoyée = %v, attendu \"j'avance\"", got)
+	if got := req.fields(t)["note"]; got != "making progress" {
+		t.Errorf("note sent = %v, expected \"making progress\"", got)
 	}
 }
 
-// Un appel vide n'écrit rien : le garde doit couper AVANT le réseau, pas après.
+// An empty call writes nothing: the guard must cut BEFORE the network, not after.
 //
-// Le cas de l'échéance faite de BLANCS est le même appel vide, écrit autrement. Il franchissait
-// le garde (`in.Deadline != ""` est vrai pour trois espaces) pour être ignoré juste après par
-// parseDeadline (`TrimSpace(...) == ""`) : le PATCH partait avec TOUS les champs à nil, l'API
-// rendait la tâche inchangée, et l'agent lisait un SUCCÈS en croyant avoir posé une échéance.
-// Le même appel sans `deadline` rendait, lui, « aucune modification demandée ».
+// The case of a deadline made of BLANKS is the same empty call, written differently. It got past
+// the guard (`in.Deadline != ""` is true for three spaces) only to be ignored right after by
+// parseDeadline (`TrimSpace(...) == ""`): the PATCH left with ALL fields nil, the API yielded the
+// task unchanged, and the agent read a SUCCESS believing it had set a deadline. The same call
+// without `deadline` yielded "no change requested".
 //
-// MUTATION : rétablir `in.Deadline != ""` dans le garde de updateTask fait tomber ce test.
+// MUTATION: restoring `in.Deadline != ""` in the updateTask guard makes this test fall over.
 func TestUpdateTaskWithNothingToChangeSendsNoRequest(t *testing.T) {
-	cas := map[string]string{
-		"aucun champ":            `{"ref":"CORE-34"}`,
-		"échéance vide":          `{"ref":"CORE-34","deadline":""}`,
-		"échéance de blancs":     `{"ref":"CORE-34","deadline":"   "}`,
-		"échéance de tabulation": `{"ref":"CORE-34","deadline":"\t\n"}`,
+	cases := map[string]string{
+		"no field":           `{"ref":"CORE-34"}`,
+		"empty deadline":     `{"ref":"CORE-34","deadline":""}`,
+		"deadline of blanks": `{"ref":"CORE-34","deadline":"   "}`,
+		"deadline of tabs":   `{"ref":"CORE-34","deadline":"\t\n"}`,
 	}
 
-	for name, args := range cas {
+	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
 			srv, rec := newRecordingServer(t, taskAPIReply)
 
 			_, err := srv.updateTask(context.Background(), json.RawMessage(args))
 			if err == nil {
-				t.Fatal("un appel qui ne demande aucun changement doit être une erreur, pas un succès")
+				t.Fatal("a call requesting no change must be an error, not a success")
 			}
 			if err.Error() != "no change requested" {
-				t.Errorf("message = %q, attendu \"no change requested\"", err)
+				t.Errorf("message = %q, expected \"no change requested\"", err)
 			}
 			if got := rec.all(); len(got) != 0 {
-				t.Errorf("%d requêtes émises: %+v", len(got), got)
+				t.Errorf("%d requests emitted: %+v", len(got), got)
 			}
 		})
 	}
 }
 
-// Une échéance renseignée, elle, part bien — le garde ne doit pas devenir un filtre trop large.
+// A deadline that is actually set does leave — the guard must not become too broad a filter.
 func TestUpdateTaskSendsARealDeadline(t *testing.T) {
 	srv, rec := newRecordingServer(t, taskAPIReply)
 
@@ -219,43 +219,44 @@ func TestUpdateTaskSendsARealDeadline(t *testing.T) {
 		t.Fatalf("update_task: %v", err)
 	}
 	if got := rec.only(t).fields(t)["deadline"]; got != "2027-01-02T03:04:05Z" {
-		t.Errorf("échéance envoyée = %v, attendu 2027-01-02T03:04:05Z", got)
+		t.Errorf("deadline sent = %v, expected 2027-01-02T03:04:05Z", got)
 	}
 }
 
-// La fin de vie d'une tâche tient dans UNE requête : statut, note et archivage ensemble.
+// The end of a task's life fits in ONE request: status, note and archiving together.
 //
-// Ce test a d'abord figé l'inverse — deux requêtes, un PATCH puis un POST /archive — parce que
-// c'était l'état du code. Il est tombé quand l'archivage a été replié (FLWL-24), et c'est
-// exactement ce qu'on lui demandait : rendre le changement visible au lieu de silencieux.
+// This test first froze the opposite — two requests, a PATCH then a POST /archive — because that
+// was the state of the code. It fell over when archiving was folded in (FLWL-24), and that is
+// exactly what was asked of it: making the change visible instead of silent.
 //
-// Ce que la seconde requête coûtait : une panne entre les deux commitait la note sans archiver,
-// l'agent lisait `api: internal error` et rejouait — ce qui écrivait la note une SECONDE fois.
+// What the second request cost: a failure between the two committed the note without archiving,
+// the agent read `api: internal error` and replayed — which wrote the note a SECOND time.
 //
-// MUTATION : ressortir l'archivage en `POST .../archive` fait tomber ce test sur le compte.
+// MUTATION: pulling archiving back out as `POST .../archive` makes this test fall over on the
+// count.
 func TestUpdateTaskArchivesInTheSameRequest(t *testing.T) {
 	srv, rec := newRecordingServer(t, taskAPIReply)
 
 	if _, err := srv.updateTask(context.Background(),
-		json.RawMessage(`{"ref":"CORE-34","status":"done","note":"livré","archive":true}`)); err != nil {
+		json.RawMessage(`{"ref":"CORE-34","status":"done","note":"shipped","archive":true}`)); err != nil {
 		t.Fatalf("update_task: %v", err)
 	}
 
 	req := rec.only(t)
 	if req.Method != http.MethodPatch || req.Path != "/api/task/34" {
-		t.Fatalf("requête = %s %s, attendu PATCH /api/task/34", req.Method, req.Path)
+		t.Fatalf("request = %s %s, expected PATCH /api/task/34", req.Method, req.Path)
 	}
 
 	fields := req.fields(t)
-	for key, want := range map[string]any{"status": "done", "note": "livré", "archive": true} {
+	for key, want := range map[string]any{"status": "done", "note": "shipped", "archive": true} {
 		if fields[key] != want {
-			t.Errorf("%s envoyé = %v, attendu %v : les trois doivent voyager ensemble",
+			t.Errorf("%s sent = %v, expected %v: the three must travel together",
 				key, fields[key], want)
 		}
 	}
 }
 
-// L'archivage SEUL est un appel valide, et reste une seule requête.
+// Archiving ALONE is a valid call, and stays one single request.
 func TestUpdateTaskArchiveOnlyIsOneRequest(t *testing.T) {
 	srv, rec := newRecordingServer(t, taskAPIReply)
 
@@ -266,17 +267,17 @@ func TestUpdateTaskArchiveOnlyIsOneRequest(t *testing.T) {
 
 	req := rec.only(t)
 	if req.Method != http.MethodPatch || req.Path != "/api/task/34" {
-		t.Fatalf("requête = %s %s, attendu PATCH /api/task/34", req.Method, req.Path)
+		t.Fatalf("request = %s %s, expected PATCH /api/task/34", req.Method, req.Path)
 	}
 	if got := req.fields(t)["archive"]; got != true {
-		t.Errorf("archive envoyé = %v, attendu true", got)
+		t.Errorf("archive sent = %v, expected true", got)
 	}
 }
 
-// La CLI `flowlio task archive` emprunte le même chemin unique que l'agent.
+// The `flowlio task archive` CLI takes the same single path as the agent.
 //
-// MUTATION : la renvoyer sur `POST /api/task/34/archive` fait tomber ce test sur la méthode, le
-// chemin et le corps.
+// MUTATION: sending it back to `POST /api/task/34/archive` makes this test fall over on the
+// method, the path and the body.
 func TestTaskArchiveCLIPatchesTheTask(t *testing.T) {
 	api, rec := newRecordingAPI(t, taskAPIReply)
 
@@ -286,48 +287,48 @@ func TestTaskArchiveCLIPatchesTheTask(t *testing.T) {
 
 	req := rec.only(t)
 	if req.Method != http.MethodPatch {
-		t.Errorf("méthode = %s, attendu PATCH", req.Method)
+		t.Errorf("method = %s, expected PATCH", req.Method)
 	}
 	if req.Path != "/api/task/34" {
-		t.Errorf("chemin = %s, attendu /api/task/34", req.Path)
+		t.Errorf("path = %s, expected /api/task/34", req.Path)
 	}
 	if got := req.fields(t)["archive"]; got != true {
-		t.Errorf("archive envoyé = %v, attendu true", got)
+		t.Errorf("archive sent = %v, expected true", got)
 	}
 }
 
-// La CLI `flowlio task note` emprunte le MÊME chemin d'écriture que l'agent : un PATCH portant la
-// seule note. FLWL-15 l'a réécrite vers une autre route et une autre méthode sans un seul test.
+// The `flowlio task note` CLI takes the SAME write path as the agent: a PATCH carrying the note
+// alone. FLWL-15 rewrote it towards another route and another method without a single test.
 //
-// MUTATION : la renvoyer sur `POST /api/task/34/notes` avec un corps vide — son état d'avant —
-// fait tomber ce test sur la méthode, le chemin et le corps à la fois.
+// MUTATION: sending it back to `POST /api/task/34/notes` with an empty body — its previous state —
+// makes this test fall over on the method, the path and the body at once.
 func TestTaskNoteCLIPatchesTheTaskWithTheNote(t *testing.T) {
 	api, rec := newRecordingAPI(t, taskAPIReply)
 
-	if err := taskNote(context.Background(), api, []string{"CORE-34", "texte", "en", "plusieurs", "mots"}); err != nil {
+	if err := taskNote(context.Background(), api, []string{"CORE-34", "text", "over", "several", "words"}); err != nil {
 		t.Fatalf("task note: %v", err)
 	}
 
 	req := rec.only(t)
 	if req.Method != http.MethodPatch {
-		t.Errorf("méthode = %s, attendu PATCH", req.Method)
+		t.Errorf("method = %s, expected PATCH", req.Method)
 	}
 	if req.Path != "/api/task/34" {
-		t.Errorf("chemin = %s, attendu /api/task/34", req.Path)
+		t.Errorf("path = %s, expected /api/task/34", req.Path)
 	}
 
 	fields := req.fields(t)
-	if fields["note"] != "texte en plusieurs mots" {
-		t.Errorf("note envoyée = %v, attendu la phrase complète — les mots suivants sont perdus", fields["note"])
+	if fields["note"] != "text over several words" {
+		t.Errorf("note sent = %v, expected the whole sentence — the following words are lost", fields["note"])
 	}
 	if fields["title"] != nil || fields["status"] != nil || fields["priority"] != nil {
-		t.Errorf("la CLI patche autre chose que la note: %v", fields)
+		t.Errorf("the CLI patches something other than the note: %v", fields)
 	}
 }
 
-// create_task envoie bien ce que l'agent a écrit, y compris les champs facultatifs.
+// create_task does send what the agent wrote, optional fields included.
 //
-// Même classe de défaut que la note : c'est un outil d'écriture dont seul le RETOUR était vérifié.
+// Same class of flaw as the note: it is a write tool of which only the RETURN was checked.
 func TestCreateTaskSendsEveryFieldItAccepts(t *testing.T) {
 	srv, rec := newRecordingServer(t, taskAPIReply)
 
@@ -339,7 +340,7 @@ func TestCreateTaskSendsEveryFieldItAccepts(t *testing.T) {
 
 	req := rec.only(t)
 	if req.Method != http.MethodPost || req.Path != "/api/task/" {
-		t.Fatalf("requête = %s %s, attendu POST /api/task/", req.Method, req.Path)
+		t.Fatalf("request = %s %s, expected POST /api/task/", req.Method, req.Path)
 	}
 
 	fields := req.fields(t)
@@ -351,31 +352,31 @@ func TestCreateTaskSendsEveryFieldItAccepts(t *testing.T) {
 		"deadline": "2027-01-02T03:04:05Z",
 	} {
 		if fields[key] != want {
-			t.Errorf("%s envoyé = %v, attendu %v", key, fields[key], want)
+			t.Errorf("%s sent = %v, expected %v", key, fields[key], want)
 		}
 	}
 }
 
-// refIssueReply et refTaskReply sont les deux formes que /api/ref rend, selon ce que la référence
-// désigne. Écrites en dur : ce fichier vérifie ce que la CLI ENVOIE, le retour doit seulement être
-// décodable.
+// refIssueReply and refTaskReply are the two shapes /api/ref yields, depending on what the
+// reference designates. Hard-coded: this file checks what the CLI SENDS, the return only has to be
+// decodable.
 const refIssueReply = `{"kind":"issue","ref":"CORE-12","issue":{"ref":"CORE-12",` +
-	`"title":"panne de login","state":"open","role":"incoming","peer":"FRNT",` +
+	`"title":"login outage","state":"open","role":"incoming","peer":"FRNT",` +
 	`"updated_at":"2026-08-02T10:00:00Z","messages":[],"messages_total":0}}`
 
 const refTaskReply = `{"kind":"task","ref":"CORE-34","task":{"number":34,"title":"x",` +
 	`"status":"todo","priority":"normal","created_at":"2026-08-02T10:00:00Z",` +
 	`"updated_at":"2026-08-02T10:00:00Z","notes":[],"notes_total":0}}`
 
-// LE COMPTE EST L'ASSERTION — c'est l'énoncé même de FLWL-16.
+// THE COUNT IS THE ASSERTION — it is the very statement of FLWL-16.
 //
-// get(ref) sur une issue faisait DEUX allers-retours : la route de tâche, son 404, puis la route
-// d'issue. Le coût portait exactement sur les issues ENTRANTES — celles dont la clé est la mienne,
-// c'est-à-dire précisément ce que check_inbox vient de rendre à l'agent, donc le chemin de lecture
-// le plus appelé du produit. Le choix entre les deux se fait désormais DANS l'API.
+// get(ref) on an issue made TWO round trips: the task route, its 404, then the issue route. The
+// cost fell exactly on INCOMING issues — the ones whose key is mine, that is to say precisely what
+// check_inbox just handed the agent, hence the most-called read path of the product. The choice
+// between the two is now made INSIDE the API.
 //
-// MUTATION : rétablir dans get() la tentative sur /api/task puis la bascule sur /api/issue. Le
-// retour serait identique au champ près, et rec.only ferait rougir sur le compte, seul.
+// MUTATION: restore in get() the attempt on /api/task then the switch to /api/issue. The return
+// would be identical field for field, and rec.only would go red on the count, alone.
 func TestGetIssueMakesExactlyOneRequest(t *testing.T) {
 	srv, rec := newRecordingServer(t, refIssueReply)
 
@@ -384,17 +385,17 @@ func TestGetIssueMakesExactlyOneRequest(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 	if _, ok := value.(getIssueResult); !ok {
-		t.Fatalf("get rend un %T, attendu getIssueResult", value)
+		t.Fatalf("get yields a %T, expected getIssueResult", value)
 	}
 
 	req := rec.only(t)
 	if req.Method != http.MethodGet || req.Path != "/api/ref/CORE/12" {
-		t.Fatalf("requête = %s %s, attendu GET /api/ref/CORE/12", req.Method, req.Path)
+		t.Fatalf("request = %s %s, expected GET /api/ref/CORE/12", req.Method, req.Path)
 	}
 }
 
-// Le même compte sur une tâche. La branche tâche n'a JAMAIS coûté deux appels — ce test existe
-// pour qu'elle n'en coûte pas davantage maintenant que les deux passent par la même route.
+// The same count on a task. The task branch NEVER cost two calls — this test exists so that it
+// does not start to, now that both go through the same route.
 func TestGetTaskMakesExactlyOneRequest(t *testing.T) {
 	srv, rec := newRecordingServer(t, refTaskReply)
 
@@ -403,20 +404,20 @@ func TestGetTaskMakesExactlyOneRequest(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 	if _, ok := value.(getTaskResult); !ok {
-		t.Fatalf("get rend un %T, attendu getTaskResult", value)
+		t.Fatalf("get yields a %T, expected getTaskResult", value)
 	}
 
 	req := rec.only(t)
 	if req.Path != "/api/ref/CORE/34" {
-		t.Fatalf("chemin = %s, attendu /api/ref/CORE/34", req.Path)
+		t.Fatalf("path = %s, expected /api/ref/CORE/34", req.Path)
 	}
 }
 
-// Un numéro NU part avec la clé de l'appelant, jamais nu : c'est elle que l'API compare au projet
-// du token pour décider si une tâche est seulement envisageable.
+// A BARE number leaves with the caller's key, never bare: it is that key the API compares to the
+// token's project to decide whether a task is even conceivable.
 //
-// MUTATION : composer le chemin sans la clé (`/api/ref/34`). La route ne correspondrait plus, et
-// la référence d'un agent qui écrit simplement « 34 » deviendrait introuvable.
+// MUTATION: compose the path without the key (`/api/ref/34`). The route would no longer match, and
+// the reference of an agent that simply writes "34" would become impossible to find.
 func TestGetSendsTheCallerKeyForABareNumber(t *testing.T) {
 	srv, rec := newRecordingServer(t, refTaskReply)
 
@@ -425,7 +426,7 @@ func TestGetSendsTheCallerKeyForABareNumber(t *testing.T) {
 	}
 
 	if req := rec.only(t); req.Path != "/api/ref/CORE/34" {
-		t.Fatalf("chemin = %s, attendu /api/ref/CORE/34 — la clé de l'appelant doit être "+
-			"substituée avant l'envoi", req.Path)
+		t.Fatalf("path = %s, expected /api/ref/CORE/34 — the caller's key must be substituted "+
+			"before sending", req.Path)
 	}
 }

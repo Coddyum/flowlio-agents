@@ -4,12 +4,12 @@ package main
 //
 // | Élément     | Résumé                                                          | Ligne |
 // |-------------|-----------------------------------------------------------------|-------|
-// | teamFlag    | Ajoute l'option --team commune aux commandes admin                | 32    |
-// | teamQuery   | Construit le paramètre ?team=<slug> quand il est renseigné        | 37    |
-// | runWhoami   | Affiche l'identité du token courant                               | 45    |
-// | runTeam     | Sous-commandes de gestion des teams                               | 71    |
-// | runProject  | Sous-commandes de gestion des projets                             | 110   |
-// | runToken    | Sous-commandes de gestion des tokens d'agent                      | 159   |
+// | teamFlag    | Adds the --team option shared by the admin commands               | 32    |
+// | teamQuery   | Builds the ?team=<slug> parameter when one is given               | 37    |
+// | runWhoami   | Prints the identity of the current token                          | 45    |
+// | runTeam     | Subcommands for managing teams                                    | 71    |
+// | runProject  | Subcommands for managing projects                                 | 110   |
+// | runToken    | Subcommands for managing agent tokens                             | 159   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -27,13 +27,13 @@ import (
 
 const workspaceAPI = "/api/workspace"
 
-// teamFlag déclare l'option --team, obligatoire avec un token admin, ignorée avec un token de
-// projet qui est de toute façon enfermé dans sa team.
+// teamFlag declares the --team option, mandatory with an admin token, ignored with a project
+// token, which is locked into its team anyway.
 func teamFlag(fs *flag.FlagSet) *string {
 	return fs.String("team", "", "target team slug (required with an admin token)")
 }
 
-// teamQuery construit le paramètre de requête correspondant.
+// teamQuery builds the matching query parameter.
 func teamQuery(slug string) string {
 	if slug == "" {
 		return ""
@@ -41,7 +41,7 @@ func teamQuery(slug string) string {
 	return "?team=" + url.QueryEscape(slug)
 }
 
-// runWhoami affiche l'identité du token courant : la première chose qu'un agent demande.
+// runWhoami prints the identity of the current token: the first thing an agent asks for.
 func runWhoami(ctx context.Context, _ []string) error {
 	c, err := newClient()
 	if err != nil {
@@ -67,7 +67,7 @@ func runWhoami(ctx context.Context, _ []string) error {
 	return nil
 }
 
-// runTeam gère la création et le listing des teams.
+// runTeam handles creating and listing teams.
 func runTeam(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: flowlio team create <slug> <name> | flowlio team list")
@@ -106,7 +106,7 @@ func runTeam(ctx context.Context, args []string) error {
 	}
 }
 
-// runProject gère la création et le listing des projets d'une team.
+// runProject handles creating and listing the projects of a team.
 func runProject(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: flowlio project create <KEY> <name> | flowlio project list")
@@ -155,7 +155,7 @@ func runProject(ctx context.Context, args []string) error {
 	}
 }
 
-// runToken gère l'émission, le listing et la révocation des tokens d'agent.
+// runToken handles issuing, listing and revoking agent tokens.
 func runToken(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: flowlio token create <KEY> <name> | list <KEY> | revoke <id>")

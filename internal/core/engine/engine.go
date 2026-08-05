@@ -4,10 +4,10 @@ package engine
 //
 // | Élément       | Résumé                                                        | Ligne |
 // |---------------|---------------------------------------------------------------|-------|
-// | Engine        | Routeur racine : monte les modules et applique le middleware    | 22    |
-// | New           | Crée l'engine avec la chaîne de middleware globale par défaut   | 29    |
-// | Engine.Mount  | Monte le sous-routeur d'un module sous /api/<clé>/               | 38    |
-// | Engine.Router | Renvoie le handler racine, middleware global appliqué            | 44    |
+// | Engine        | Root router: mounts the modules and applies the middleware      | 22    |
+// | New           | Creates the engine with the default global middleware chain      | 29    |
+// | Engine.Mount  | Mounts a module's sub-router under /api/<key>/                   | 38    |
+// | Engine.Router | Yields the root handler, with the global middleware applied      | 44    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -17,15 +17,15 @@ import (
 	"strings"
 )
 
-// Engine est le routeur racine de l'API. Il ne connaît que l'interface Module :
-// aucune feature n'est importée ici.
+// Engine is the root router of the API. It knows nothing but the Module interface: no feature is
+// imported here.
 type Engine struct {
 	mux         *http.ServeMux
 	middlewares []Middleware
 }
 
-// New crée l'engine avec le middleware global appliqué à toutes les routes.
-// Le middleware feature-specific reste dans le module.go de la feature concernée.
+// New creates the engine with the global middleware applied to every route. Feature-specific
+// middleware stays in the module.go of the feature concerned.
 func New() *Engine {
 	return &Engine{
 		mux:         http.NewServeMux(),
@@ -33,14 +33,14 @@ func New() *Engine {
 	}
 }
 
-// Mount monte le sous-routeur d'un module sous /api/<clé>/ et retire le préfixe :
-// la feature déclare ses routes relativement à elle-même.
+// Mount mounts a module's sub-router under /api/<key>/ and strips the prefix: the feature declares
+// its routes relative to itself.
 func (e *Engine) Mount(key string, h http.Handler) {
 	prefix := "/api/" + strings.Trim(key, "/")
 	e.mux.Handle(prefix+"/", http.StripPrefix(prefix, h))
 }
 
-// Router renvoie le handler racine à passer au http.Server, middleware global inclus.
+// Router yields the root handler to pass to the http.Server, global middleware included.
 func (e *Engine) Router() http.Handler {
 	return chain(e.mux, e.middlewares...)
 }

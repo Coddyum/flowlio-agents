@@ -1,55 +1,96 @@
-## Flowlio-Ia concepte
+## Flowlio-Ia concept
 
-### Historique
+> Translation of the original note, written in French by Maxence before any line of code existed.
+> It is kept as a primary source: the rough register, the hesitations and the open questions are
+> deliberate, and it has not been tidied into a specification. What was actually decided lives in
+> `DESIGN-V1.md` and `decisions.md`.
 
-Flowlio est une application que j'ai conçu lors d'un project d'apprentisage
-type linear like, donc un project manager qui étais divisé en (team => project => board) un board contenant columsn + task donc un kanban classique
-donc tu pouvais avoir une team backend qui avais plusieur project, une team comptabilité avec ces project ect c'étais vraiment pensé comme une entreprise manager enfaite.
-Côté task tu avasi plusieurs information
+### Background
 
-- card id (identifian reconnaissable pas le uuid de la card ex FRNT-34)
+Flowlio is an application I designed during a learning project, a Linear-like one, so a project
+manager split into (team => project => board), a board holding columns + tasks, so a classic
+kanban. You could have a backend team with several projects, an accounting team with its own
+projects and so on — it was really thought of as a company manager, really.
+
+On the task side you had several pieces of information:
+
+- card id (a recognisable identifier, not the card's uuid, e.g. FRNT-34)
 - title
-- description (la description étais particulière car on a un view lors de l'open du task qui t'offrais un editeur markdown et donc les task avais des descrtiption extemement riche avec H-\*, tableau, block code, tag user ect)
-- assign_to (permettais de d'assigner uniquement au user qui avais access a ce board)
+- description (the description was special, because when you opened a task there was a view giving
+  you a markdown editor, so tasks had extremely rich descriptions with H-\*, tables, code blocks,
+  user tags and so on)
+- assign_to (only let you assign to a user who had access to that board)
 - deadline
-  ect ect
+  and so on
 
-Archivage des task ect
+Task archiving and so on.
 
-Flowlio a récement intégrer un mcp ce qui me permetais a mes code car je travaille sur des project multi repo et pour éviter de devoir remplir des .md d'un repo a l'autre pour partager des question, demande, intégration, changement de contrat d'api ect entre mes session claude code, claude avais un des reglère un workflow très preci sur comment utilisé ce mcp efficacement pour travaille sur mon project ect
+Flowlio recently gained an MCP, which let my code — because I work on multi-repo projects, and to
+avoid having to fill in .md files from one repo to the next to share questions, requests,
+integrations, API contract changes and so on between my Claude Code sessions — Claude had a very
+precise workflow set of rules on how to use that MCP efficiently to work on my project and so on.
 
-mais cela est pas optimal car flowlio a l'origine a été conçu pour des humain pas des ia, et donc même si l'interface est très agréable c'est que du bricolage pour faire utilisé mes ia lors de mes session suivie de task ect
+But that is not optimal, because Flowlio was originally designed for humans, not for AIs, so even
+though the interface is very pleasant it is all makeshift when it comes to getting my AIs to use it
+during my sessions, task tracking and so on.
 
-### Concepte + idée
+### Concept + idea
 
-Mon idée serais de crée un project manager pour ia (claude, codex, opencode ect), l'objectif serais un peu pareil crée une team (ton project exemple Omiros) dedans t'as des project (= repo) donc dans mon cas t'aurais le repo (omiros-core (backend)) et omiros-web(frontend).
+My idea would be to build a project manager for AIs (Claude, Codex, OpenCode and so on). The goal
+would be roughly the same: create a team (your project, Omiros for instance), inside it you have
+projects (= repos), so in my case you would have the repo omiros-core (backend) and omiros-web
+(frontend).
 
-chaque project serais divisé en 2 partie, une parti project work, et une paris other project question, l'idée serais donc
+Every project would be split in two parts, a project work part and an other-project question part.
+The idea would be:
 
-parti 1 = l'endroit pour le claude d'une session gère les tache a faire, il auto gère ça documentation pour chaque task les priorité ect
+part 1 = the place where the Claude of a session manages the tasks to do, it manages its
+documentation for each task by itself, the priorities and so on
 
-parti 2 serais un espace pour que les autre project puisse intéroger ce project exempoe project A (ia agent) ce demande si le backend (project B) a changer le contract d'api de X features car elle ne réponds plus, alors la du coup project A pourrais ouvrir un ticket sur project B dans un espace dédié isolé des task de project B un peu comme un issues github, et donc project A verais les ticket pareil et pourrais simplement répondre après une vérification du code
+part 2 would be a space for the other projects to question this project. For instance project A (an
+AI agent) wonders whether the backend (project B) changed the API contract of feature X, because it
+no longer answers. Project A could then open a ticket on project B in a dedicated space, isolated
+from project B's tasks, a bit like GitHub issues, and so project A would see the tickets the same
+way and could simply answer after checking the code.
 
-et inversement, après l'idée serais quand même que les ia ne sois quantoné (isolé) a leur team pour éviter de posé des question / task sur des project qui ne les concerne pas
+And the other way round. Beyond that, the idea would still be that the AIs stay confined (isolated)
+to their team, to avoid asking questions or filing tasks on projects that are none of their
+business.
 
-l'autre point que je voudrais implémenter c'est la mémory d'un project, car on le sait un des défaut de l'ia c'est leur mémoire elle sont toujours obligé de relire masse chose alors évidement on met en place souvent des outils obsidian, mempalace, .claude/memory ect ect mais donc y'a pas vraiment de suivie propre et j'ai aucun idée de comment mettre ça en place mais voila une des features que je veux mettre en place
+The other point I would like to implement is a project's memory, because as we know one of the
+flaws of AIs is their memory — they are always forced to re-read masses of things. So of course we
+often set up tools like Obsidian, mempalace, .claude/memory and so on, but there is no proper
+tracking really, and I have no idea how to put that in place. Still, there is one of the features I
+want to build.
 
-un autre point que j'aimerais bien faire a voir comment mais lors ce que un des agent a répondu a une issues (ticket) ça serais cool de automatiquement relancer la session claude, codex ect qui a posé la question automatiquement.
+Another point I would quite like to do, to be seen how, is that when one of the agents has answered
+an issue (ticket), it would be nice to automatically restart the Claude, Codex and so on session
+that asked the question.
 
-l'idée étonnament même si c'est une app pour des ia j'ai pas envie d'intégrer d'ia dans le project car je pense que on peu faire du determinisme sur la plus part des choses,
+Surprisingly, even though it is an app for AIs, the idea is that I do not want to put any AI into
+the project, because I think most things can be done deterministically.
 
-### Interface utilisateur
+### User interface
 
-Pas de frontend, pas d'application desktop,
-je voudrais qu'on crée un outils full cli + mcp
-donc pas d'interface visuelle pure type page web ou autre, sauf peut-être pour l'inscription ou payment car oui je sais pas trop comment on pourrais faire ça
+No frontend, no desktop application. I would like us to build a full CLI + MCP tool, so no pure
+visual interface of the web-page kind or anything, except maybe for sign-up or payment, because
+yes, I am not too sure how we could do that.
 
-mais j'aimerais que l'app tourne sois en local en free open source type n8n, ou alors en hosted par nous même et dans ces cas la abonnement par mois via stripe,
+But I would like the app to run either locally as free open source, n8n style, or hosted by us, and
+in that case a monthly subscription through Stripe.
 
-donc usage local = pas de compte direct on crée un faut compte utilisateur pas besoin d'email ou password, mais en hosted par nous faut un compte logique
+So local usage = no account, we directly create a fake user account, no need for an email or a
+password. But hosted by us, an account is needed, logically.
 
-### pensé
+### Thoughts
 
-tu vois aujourd'hui il existe plein d'outils incroyable comme superset qui permet de lancer plein de session d'ia en parallel dans des workspace isolé, des outils de mémoir ect mais j'ai rien vu qui permet de gérer efficacement la mémoire + tasking inter repo, project session ia, alors peut-être que ma vision de team => project => board avec task + issues n'est pas la bonne faut encore y réfléchir, j'ai donner ça comme idée car cela reprendre ce que j'avais déjà crée pour flowlio, mais c'est pas forcément la meilleurs des idée
+You see, today there are plenty of incredible tools like Superset that let you run lots of AI
+sessions in parallel in isolated workspaces, memory tools and so on, but I have seen nothing that
+handles memory + cross-repo tasking, project, AI session efficiently. So maybe my vision of team =>
+project => board with tasks + issues is not the right one, it still needs thinking about. I gave
+that as an idea because it reuses what I had already built for Flowlio, but it is not necessarily
+the best of ideas.
 
-ah oui et point le plus important dans ce project tu dois être absolument irréprochable sur l'usage des secret ect car ce project sera open source du moins pour le self hosting
+Oh yes, and the most important point in this project: you must be absolutely beyond reproach on the
+handling of secrets and so on, because this project will be open source, at least for
+self-hosting.

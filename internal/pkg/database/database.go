@@ -4,14 +4,14 @@ package database
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | Connect            | Ouvre le pool et vérifie que la base répond                  | 46    |
-// | checkPooledDSN     | Refuse un endpoint mutualisé sans mode d'exécution compatible| 78    |
+// | Connect            | Opens the pool and checks that the database answers          | 46    |
+// | checkPooledDSN     | Rejects a pooled endpoint without a compatible exec mode     | 78    |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Le driver pgx est enregistré via son adaptateur database/sql : le code applicatif ne manipule
-// que *sql.DB, conformément au pattern Transactor des stores.
+// The pgx driver is registered through its database/sql adapter: the application code handles
+// nothing but *sql.DB, in keeping with the Transactor pattern of the stores.
 
 import (
 	"context"
@@ -20,29 +20,29 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib" // driver "pgx" pour database/sql
+	_ "github.com/jackc/pgx/v5/stdlib" // the "pgx" driver for database/sql
 )
 
 const (
 	maxOpenConns    = 25
 	maxIdleConns    = 25
 	connMaxLifetime = 5 * time.Minute
-	// pingTimeout est large : un Postgres serverless (Neon) qui s'est mis en veille met
-	// quelques secondes à se réveiller sur la première connexion.
+	// pingTimeout is generous: a serverless Postgres (Neon) that went to sleep takes a few
+	// seconds to wake up on the first connection.
 	pingTimeout = 15 * time.Second
 )
 
 const (
-	// pooledHostMarker identifie l'endpoint mutualisé de Neon, servi par PgBouncer.
+	// pooledHostMarker identifies Neon's pooled endpoint, served by PgBouncer.
 	pooledHostMarker = "-pooler"
-	// execModeParam désactive le cache de requêtes préparées côté pgx.
+	// execModeParam disables the prepared-statement cache on the pgx side.
 	execModeParam = "default_query_exec_mode"
 )
 
-// Connect ouvre le pool avec le DSN fourni et échoue si la base ne répond pas.
+// Connect opens the pool with the given DSN and fails if the database does not answer.
 //
-// Échec immédiat plutôt que dégradé : une base injoignable au démarrage doit empêcher le
-// process de servir des requêtes, pas produire des erreurs à la première requête utilisateur.
+// Immediate failure rather than degraded: a database unreachable at start-up must stop the process
+// from serving requests at all, not produce errors on the first user request.
 func Connect(dsn string) (*sql.DB, error) {
 	if err := checkPooledDSN(dsn); err != nil {
 		return nil, err
@@ -68,20 +68,20 @@ func Connect(dsn string) (*sql.DB, error) {
 	return db, nil
 }
 
-// checkPooledDSN refuse de démarrer sur un endpoint mutualisé si le cache de requêtes préparées
-// est encore actif.
+// checkPooledDSN refuses to start on a pooled endpoint if the prepared-statement cache is still
+// active.
 //
-// PgBouncer en mode transaction ne garantit pas qu'une requête préparée sur une connexion soit
-// retrouvée sur la suivante : pgx échoue alors par intermittence, sous charge, avec des
-// « prepared statement already exists ». Le symptôme n'apparaît jamais en dev sur une base
-// directe — donc c'est au démarrage qu'il faut l'attraper, pas en production.
+// PgBouncer in transaction mode does not guarantee that a statement prepared on one connection is
+// found again on the next: pgx then fails intermittently, under load, with "prepared statement
+// already exists". The symptom never shows in dev on a direct database — so it has to be caught at
+// start-up, not in production.
 func checkPooledDSN(dsn string) error {
 	if !strings.Contains(dsn, pooledHostMarker) || strings.Contains(dsn, execModeParam) {
 		return nil
 	}
 	return fmt.Errorf(
-		"database: DSN sur un endpoint mutualisé (%s) sans %s : ajouter « %s=exec » au DSN, "+
-			"ou utiliser l'endpoint direct (sans %s)",
+		"database: DSN on a pooled endpoint (%s) without %s: add \"%s=exec\" to the DSN, "+
+			"or use the direct endpoint (without %s)",
 		pooledHostMarker, execModeParam, execModeParam, pooledHostMarker,
 	)
 }

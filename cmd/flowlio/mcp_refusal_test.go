@@ -1,19 +1,20 @@
 package main
 
-// T1, second volet — CE QUE LA SURFACE MCP REND D'UN REFUS.
+// T1, second half — WHAT THE MCP SURFACE YIELDS OF A REFUSAL.
 //
-// `docs/DESIGN-TRUST.md` § Le refus indiscernable, canal 2 : un `create_issue` refusé arrive à
-// l'agent sous la forme `not found` (9 octets), `isError: true`, AUCUN autre champ.
+// `docs/DESIGN-TRUST.md` § Le refus indiscernable, channel 2: a refused `create_issue` reaches the
+// agent in the form `not found` (9 bytes), `isError: true`, NO other field.
 //
-// CE QUE CE FICHIER GARDE, ET RIEN DE PLUS. Il garde le RENDU : que l'emballage MCP n'ajoute pas
-// de canal que l'API n'a pas ouvert (un statut recopié, un champ de diagnostic, un préfixe). Il ne
-// garde PAS la forme du refus côté serveur — ça, c'est `internal/feature/issue/module_integration_test.go`,
-// qui monte la vraie API sur la vraie base.
+// WHAT THIS FILE GUARDS, AND NOTHING MORE. It guards the RENDERING: that the MCP wrapping adds no
+// channel the API did not open (a copied status, a diagnostic field, a prefix). It does NOT guard
+// the shape of the refusal on the server side — that is
+// `internal/feature/issue/module_integration_test.go`, which mounts the real API on the real
+// database.
 //
-// Les deux tiennent ensemble par le second test de ce fichier : le texte rendu à l'agent est une
-// fonction FIDÈLE de ce que l'API a répondu. Un handler qui distinguerait le refus de confiance
-// (mutation M3) serait donc restitué tel quel à l'agent — la couche MCP ne le masque pas, et ne
-// peut pas le masquer sans faire virer ce test au rouge.
+// The two hold together through the second test of this file: the text yielded to the agent is a
+// FAITHFUL function of what the API answered. A handler that told the trust refusal apart
+// (mutation M3) would therefore be restored as such to the agent — the MCP layer does not mask it,
+// and cannot mask it without turning this test red.
 
 import (
 	"context"
@@ -26,11 +27,11 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
-// newServerAnswering monte un serveur MCP dont l'API répond toujours le même couple statut/corps.
+// newServerAnswering mounts an MCP server whose API always answers the same status/body pair.
 //
-// Écrit ici plutôt que dérivé de newRoutedServer : ce qui est sous test est précisément le couple
-// (statut, corps) que l'API rend, donc le test doit le poser lui-même, pas hériter du repli d'un
-// autre harnais.
+// Written here rather than derived from newRoutedServer: what is under test is precisely the
+// (status, body) pair the API yields, so the test must lay it down itself, not inherit the
+// fallback of another harness.
 func newServerAnswering(t *testing.T, status int, body string) *mcpServer {
 	t.Helper()
 
@@ -49,87 +50,87 @@ func newServerAnswering(t *testing.T, status int, body string) *mcpServer {
 	}
 }
 
-// callCreateIssue joue l'outil create_issue par le chemin de production — callTool, pas
-// l'implémentation — pour que l'emballage d'erreur soit celui que l'agent reçoit.
+// callCreateIssue plays the create_issue tool through the production path — callTool, not the
+// implementation — so that the error wrapping is the one the agent receives.
 func callCreateIssue(t *testing.T, s *mcpServer, toProject string) map[string]any {
 	t.Helper()
 
 	raw := json.RawMessage(`{"name":"create_issue","arguments":{` +
-		`"to_project":"` + toProject + `","title":"contrat modifié ?","body":"le endpoint ne répond plus"}}`)
+		`"to_project":"` + toProject + `","title":"contract changed?","body":"the endpoint no longer answers"}}`)
 
 	result, err := s.callTool(context.Background(), raw)
 	if err != nil {
-		t.Fatalf("callTool: erreur JSON-RPC %v — une erreur d'outil doit revenir dans le résultat", err)
+		t.Fatalf("callTool: JSON-RPC error %v — a tool error must come back in the result", err)
 	}
 	return result
 }
 
-// textOf extrait le texte rendu à l'agent, en vérifiant au passage que le contenu n'a pas d'autre
-// entrée ni d'autre champ que ceux du contrat.
+// textOf extracts the text yielded to the agent, checking along the way that the content has no
+// other entry and no other field than the contract's.
 func textOf(t *testing.T, result map[string]any) string {
 	t.Helper()
 
 	content, ok := result["content"].([]map[string]any)
 	if !ok {
-		t.Fatalf("content mal typé: %T", result["content"])
+		t.Fatalf("badly typed content: %T", result["content"])
 	}
 	if len(content) != 1 {
-		t.Fatalf("content = %d entrées, attendu 1 : une entrée de plus est un canal de plus", len(content))
+		t.Fatalf("content = %d entries, expected 1: one more entry is one more channel", len(content))
 	}
 	if len(content[0]) != 2 {
-		t.Fatalf("entrée de content = %v, attendu exactement type et text", content[0])
+		t.Fatalf("content entry = %v, expected exactly type and text", content[0])
 	}
 	if content[0]["type"] != "text" {
-		t.Fatalf("type = %v, attendu \"text\"", content[0]["type"])
+		t.Fatalf("type = %v, expected \"text\"", content[0]["type"])
 	}
 
 	text, ok := content[0]["text"].(string)
 	if !ok {
-		t.Fatalf("text mal typé: %T", content[0]["text"])
+		t.Fatalf("badly typed text: %T", content[0]["text"])
 	}
 	return text
 }
 
-// TestRefusedCreateIssueRendersNotFoundAndNothingElse vérifie le canal 2 sur le refus canonique.
+// TestRefusedCreateIssueRendersNotFoundAndNothingElse checks channel 2 on the canonical refusal.
 func TestRefusedCreateIssueRendersNotFoundAndNothingElse(t *testing.T) {
 	s := newServerAnswering(t, http.StatusNotFound, `{"error":"not found"}`)
 
 	result := callCreateIssue(t, s, "OPS")
 
-	// Exactement deux clés. Un champ de plus — un statut, un code, un diagnostic — serait
-	// précisément le canal que le refus indiscernable existe pour fermer.
+	// Exactly two keys. One field more — a status, a code, a diagnostic — would be precisely the
+	// channel the indistinguishable refusal exists to close.
 	if len(result) != 2 {
-		t.Errorf("résultat = %v, attendu exactement content et isError", result)
+		t.Errorf("result = %v, expected exactly content and isError", result)
 	}
 	if isError, _ := result["isError"].(bool); !isError {
-		t.Errorf("isError = %v, attendu true : un refus muet passerait pour un succès", result["isError"])
+		t.Errorf("isError = %v, expected true: a silent refusal would pass for a success", result["isError"])
 	}
 
 	text := textOf(t, result)
 	if text != "not found" {
-		t.Errorf("texte = %q, attendu %q", text, "not found")
+		t.Errorf("text = %q, expected %q", text, "not found")
 	}
 	if len(text) != 9 {
-		t.Errorf("texte = %d octets, attendu 9 — la longueur est elle-même un canal", len(text))
+		t.Errorf("text = %d bytes, expected 9 — the length is itself a channel", len(text))
 	}
 }
 
-// TestMCPTextIsAFaithfulFunctionOfTheAPIResponse est le test qui relie les deux volets.
+// TestMCPTextIsAFaithfulFunctionOfTheAPIResponse is the test that ties the two halves together.
 //
-// Il ne dit pas ce que l'API DOIT répondre — c'est le rôle du test d'intégration côté feature. Il
-// dit que la couche MCP ne peut pas rendre `not found` à un agent quand l'API a répondu autre
-// chose. Sans lui, on pourrait faire passer le volet MCP en écrivant `not found` en dur dans
-// errText, et la garantie ne tiendrait plus qu'à la lecture du code.
+// It does not say what the API MUST answer — that is the job of the integration test on the
+// feature side. It says the MCP layer cannot yield `not found` to an agent when the API answered
+// something else. Without it, the MCP half could be passed by hard-coding `not found` in errText,
+// and the guarantee would rest on reading the code alone.
 func TestMCPTextIsAFaithfulFunctionOfTheAPIResponse(t *testing.T) {
 	s := newServerAnswering(t, http.StatusForbidden, `{"error":"forbidden"}`)
 
 	result := callCreateIssue(t, s, "OPS")
 
 	if isError, _ := result["isError"].(bool); !isError {
-		t.Fatalf("isError = %v, attendu true", result["isError"])
+		t.Fatalf("isError = %v, expected true", result["isError"])
 	}
 	if text := textOf(t, result); text != "forbidden" {
-		t.Errorf("texte = %q, attendu %q : la couche MCP masque ce que l'API a répondu, "+
-			"donc elle masquerait aussi un refus de confiance distinguable", text, "forbidden")
+		t.Errorf("text = %q, expected %q: the MCP layer masks what the API answered, so it would "+
+			"also mask a distinguishable trust refusal", text, "forbidden")
 	}
 }

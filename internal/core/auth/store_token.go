@@ -4,8 +4,8 @@ package auth
 //
 // | Élément             | Résumé                                                    | Ligne |
 // |---------------------|-----------------------------------------------------------|-------|
-// | store.TokenByPrefix | Lit un token par sa partie publique et le projette         | 24    |
-// | store.TouchToken    | Note la date de dernier usage d'un token                   | 46    |
+// | store.TokenByPrefix | Reads a token by its public part and projects it           | 24    |
+// | store.TouchToken    | Records the last-use date of a token                       | 46    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -19,8 +19,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// TokenByPrefix lit le token correspondant au préfixe présenté, révoqué ou non : c'est le
-// service qui décide, pour que tous les échecs coûtent le même temps.
+// TokenByPrefix reads the token matching the presented prefix, revoked or not: the service is
+// what decides, so that every failure costs the same time.
 func (s *store) TokenByPrefix(ctx context.Context, prefix string) (TokenRecord, error) {
 	row, err := s.q.GetTokenByPrefix(ctx, prefix)
 	if err != nil {
@@ -41,8 +41,8 @@ func (s *store) TokenByPrefix(ctx context.Context, prefix string) (TokenRecord, 
 	}, nil
 }
 
-// TouchToken note la date de dernier usage. Best effort : l'échec ne doit pas refuser une
-// requête par ailleurs authentifiée.
+// TouchToken records the last-use date. Best effort: its failure must not reject an otherwise
+// authenticated request.
 func (s *store) TouchToken(ctx context.Context, id uuid.UUID) error {
 	if err := s.q.TouchToken(ctx, id); err != nil {
 		return fmt.Errorf("auth store: touch token %s: %w", id, err)

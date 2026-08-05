@@ -1,19 +1,19 @@
 package cache
 
-// Cache est le port de cache exposé aux modules via ModuleConfig. L'implémentation est
-// interchangeable (mémoire process aujourd'hui) sans toucher aux features.
+// Cache is the cache port exposed to the modules through ModuleConfig. The implementation is
+// interchangeable (process memory today) without touching the features.
 //
-// `any` est assumé ici : un cache est par nature agnostique du type stocké. Les appelants
-// type-assert au retour, côté store.
+// `any` is accepted here: a cache is by nature agnostic of the type it stores. The callers
+// type-assert on the way back, on the store side.
 
 import "time"
 
-// Cache est le contrat de cache consommé par les features.
+// Cache is the cache contract consumed by the features.
 type Cache interface {
-	// Get renvoie la valeur associée à key et si elle était présente et non expirée.
+	// Get yields the value associated with key, and whether it was present and unexpired.
 	Get(key string) (any, bool)
-	// Set écrit la valeur avec un TTL. Un ttl de 0 utilise le TTL par défaut de l'implémentation.
+	// Set writes the value with a TTL. A ttl of 0 uses the implementation's default TTL.
 	Set(key string, value any, ttl time.Duration)
-	// Delete supprime la clé, qu'elle existe ou non.
+	// Delete removes the key, whether it exists or not.
 	Delete(key string)
 }

@@ -8,27 +8,27 @@ import (
 	"testing"
 )
 
-// readConfig relit le fichier écrit, brut et décodé : les deux servent, l'un pour chercher un
-// secret dans le texte, l'autre pour vérifier la structure.
+// readConfig reads the written file back, raw and decoded: both are used, one to look for a secret
+// in the text, the other to check the structure.
 func readConfig(t *testing.T, path string) (string, map[string]any) {
 	t.Helper()
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("lecture de %s : %v", path, err)
+		t.Fatalf("reading %s: %v", path, err)
 	}
 	var decoded map[string]any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		t.Fatalf("%s n'est pas un JSON valide : %v\n%s", path, err, raw)
+		t.Fatalf("%s is not valid JSON: %v\n%s", path, err, raw)
 	}
 	return string(raw), decoded
 }
 
-// LA GARANTIE QUI COMPTE. Le .mcp.json est fait pour être commité : y écrire un token
-// reviendrait à publier des identifiants sur GitHub à l'échelle de tous les utilisateurs.
+// THE GUARANTEE THAT COUNTS. The .mcp.json is meant to be committed: writing a token into it would
+// amount to publishing credentials on GitHub, for every user at once.
 //
-// Le test cherche le secret dans le TEXTE du fichier, pas dans une structure : c'est la seule
-// façon de couvrir aussi une fuite par un champ auquel personne n'a pensé.
+// The test looks for the secret in the TEXT of the file, not in a structure: that is the only way
+// to also cover a leak through a field nobody thought of.
 func TestMCPConfigNeverContainsASecret(t *testing.T) {
 	dir := t.TempDir()
 
@@ -37,20 +37,20 @@ func TestMCPConfigNeverContainsASecret(t *testing.T) {
 		t.Fatalf("writeMCPConfig: %v", err)
 	}
 	if !written {
-		t.Fatal("le fichier n'a pas été écrit alors que le répertoire était vide")
+		t.Fatal("the file was not written although the directory was empty")
 	}
 
 	raw, _ := readConfig(t, path)
 	if strings.Contains(raw, "flw_") {
-		t.Errorf("le fichier contient ce qui ressemble à un token :\n%s", raw)
+		t.Errorf("the file contains what looks like a token:\n%s", raw)
 	}
 	if !strings.Contains(raw, tokenReference) {
-		t.Errorf("le fichier ne référence pas %s :\n%s", tokenReference, raw)
+		t.Errorf("the file does not reference %s:\n%s", tokenReference, raw)
 	}
 }
 
-// L'entrée écrite doit être celle qu'un agent sait lancer : la commande, ses arguments, et les
-// deux variables d'environnement.
+// The written entry must be the one an agent knows how to launch: the command, its arguments, and
+// the two environment variables.
 func TestMCPConfigDeclaresARunnableServer(t *testing.T) {
 	dir := t.TempDir()
 	const apiURL = "http://localhost:42058"
@@ -60,36 +60,36 @@ func TestMCPConfigDeclaresARunnableServer(t *testing.T) {
 		t.Fatalf("writeMCPConfig: %v", err)
 	}
 	if filepath.Base(path) != mcpConfigName {
-		t.Errorf("fichier écrit = %s, attendu %s", filepath.Base(path), mcpConfigName)
+		t.Errorf("written file = %s, expected %s", filepath.Base(path), mcpConfigName)
 	}
 
 	_, decoded := readConfig(t, path)
 	servers, ok := decoded["mcpServers"].(map[string]any)
 	if !ok {
-		t.Fatalf("mcpServers absent ou de mauvaise forme : %v", decoded)
+		t.Fatalf("mcpServers missing or badly shaped: %v", decoded)
 	}
 	entry, ok := servers[mcpServerKey].(map[string]any)
 	if !ok {
-		t.Fatalf("entrée %q absente : %v", mcpServerKey, servers)
+		t.Fatalf("entry %q missing: %v", mcpServerKey, servers)
 	}
 
 	if entry["command"] != "flowlio" {
-		t.Errorf("command = %v, attendu flowlio", entry["command"])
+		t.Errorf("command = %v, expected flowlio", entry["command"])
 	}
 	env, ok := entry["env"].(map[string]any)
 	if !ok {
-		t.Fatalf("env absent : %v", entry)
+		t.Fatalf("env missing: %v", entry)
 	}
 	if env["FLOWLIO_API_URL"] != apiURL {
-		t.Errorf("FLOWLIO_API_URL = %v, attendu %s", env["FLOWLIO_API_URL"], apiURL)
+		t.Errorf("FLOWLIO_API_URL = %v, expected %s", env["FLOWLIO_API_URL"], apiURL)
 	}
 	if env["FLOWLIO_TOKEN"] != tokenReference {
-		t.Errorf("FLOWLIO_TOKEN = %v, attendu %s", env["FLOWLIO_TOKEN"], tokenReference)
+		t.Errorf("FLOWLIO_TOKEN = %v, expected %s", env["FLOWLIO_TOKEN"], tokenReference)
 	}
 }
 
-// Un dépôt a souvent déjà des serveurs MCP déclarés. Les écraser pour installer le nôtre serait
-// un dégât silencieux : les autres entrées, et les clés de premier niveau inconnues, survivent.
+// A repo often already has MCP servers declared. Overwriting them to install ours would be silent
+// damage: the other entries, and the unknown top-level keys, survive.
 func TestMCPConfigPreservesWhatItDoesNotOwn(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, mcpConfigName)
@@ -98,10 +98,10 @@ func TestMCPConfigPreservesWhatItDoesNotOwn(t *testing.T) {
   "mcpServers": {
     "github": {"command": "gh-mcp", "args": ["serve"]}
   },
-  "uneCléInconnue": {"gardée": true}
+  "someUnknownKey": {"kept": true}
 }`
 	if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
-		t.Fatalf("écriture du fichier existant : %v", err)
+		t.Fatalf("writing the existing file: %v", err)
 	}
 
 	if _, written, err := writeMCPConfig(dir, "http://localhost:42058"); err != nil || !written {
@@ -111,25 +111,25 @@ func TestMCPConfigPreservesWhatItDoesNotOwn(t *testing.T) {
 	_, decoded := readConfig(t, path)
 	servers := decoded["mcpServers"].(map[string]any)
 	if _, found := servers["github"]; !found {
-		t.Error("le serveur github préexistant a disparu")
+		t.Error("the pre-existing github server disappeared")
 	}
 	if _, found := servers[mcpServerKey]; !found {
-		t.Error("notre entrée n'a pas été ajoutée")
+		t.Error("our entry was not added")
 	}
-	if _, found := decoded["uneCléInconnue"]; !found {
-		t.Error("une clé de premier niveau inconnue a été perdue")
+	if _, found := decoded["someUnknownKey"]; !found {
+		t.Error("an unknown top-level key was lost")
 	}
 }
 
-// Une entrée flowlio déjà présente a pu être ajustée à la main — un port différent, une commande
-// dans un chemin absolu. La réécrire effacerait ce réglage sans rien dire.
+// An already-present flowlio entry may have been adjusted by hand — a different port, a command in
+// an absolute path. Rewriting it would erase that setting without saying anything.
 func TestMCPConfigLeavesAnExistingEntryAlone(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, mcpConfigName)
 
 	existing := `{"mcpServers": {"flowlio": {"command": "/opt/flowlio", "args": ["mcp"]}}}`
 	if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
-		t.Fatalf("écriture du fichier existant : %v", err)
+		t.Fatalf("writing the existing file: %v", err)
 	}
 
 	_, written, err := writeMCPConfig(dir, "http://localhost:42058")
@@ -137,35 +137,35 @@ func TestMCPConfigLeavesAnExistingEntryAlone(t *testing.T) {
 		t.Fatalf("writeMCPConfig: %v", err)
 	}
 	if written {
-		t.Error("une entrée existante a été réécrite")
+		t.Error("an existing entry was rewritten")
 	}
 
 	raw, _ := readConfig(t, path)
 	if !strings.Contains(raw, "/opt/flowlio") {
-		t.Errorf("le réglage manuel a été perdu :\n%s", raw)
+		t.Errorf("the manual setting was lost:\n%s", raw)
 	}
 }
 
-// Un fichier illisible n'est pas écrasé : on préfère échouer et le dire plutôt que détruire un
-// fichier que l'utilisateur est en train d'éditer.
+// An unreadable file is not overwritten: we would rather fail and say so than destroy a file the
+// user is in the middle of editing.
 func TestMCPConfigRefusesToOverwriteBrokenJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, mcpConfigName)
 
-	const broken = "{ ceci n'est pas du JSON"
+	const broken = "{ this is not JSON"
 	if err := os.WriteFile(path, []byte(broken), 0o644); err != nil {
-		t.Fatalf("écriture du fichier cassé : %v", err)
+		t.Fatalf("writing the broken file: %v", err)
 	}
 
 	if _, _, err := writeMCPConfig(dir, "http://localhost:42058"); err == nil {
-		t.Fatal("un fichier illisible a été accepté")
+		t.Fatal("an unreadable file was accepted")
 	}
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("relecture : %v", err)
+		t.Fatalf("reading back: %v", err)
 	}
 	if string(raw) != broken {
-		t.Errorf("le fichier illisible a été modifié :\n%s", raw)
+		t.Errorf("the unreadable file was modified:\n%s", raw)
 	}
 }

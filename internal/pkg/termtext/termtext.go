@@ -1,60 +1,59 @@
-// Package termtext est l'ÉVIER UNIQUE par lequel passe tout texte qui atteint un terminal humain.
+// Package termtext is the SINGLE SINK through which all text reaching a human terminal passes.
 //
-// Le pendant terminal de ce que fait `mcp_untrusted.go` pour le contexte d'un agent : le contenu
-// écrit par un tiers est une donnée, jamais une consigne — y compris pour un émulateur de
-// terminal, qui obéit à ce qu'on lui écrit sans jamais se demander qui l'a écrit.
+// It is the terminal counterpart of what `mcp_untrusted.go` does for an agent's context: content
+// written by a third party is data, never an instruction — including for a terminal emulator,
+// which obeys what is written to it without ever asking who wrote it.
 //
-// UN TITRE D'ISSUE EST DU TEXTE HOSTILE. Il est écrit par l'agent d'un autre repo, que personne
-// n'a relu, et il finit dans le terminal d'un humain qui supervise. Une séquence d'échappement y
-// fait ce qu'elle veut : repeindre l'écran (donc mentir sur l'état de la team), écrire le
-// presse-papier système via OSC 52, ou faire ÉCRIRE le terminal sur son propre stdin via DSR —
-// que le programme relit comme des frappes.
+// AN ISSUE TITLE IS HOSTILE TEXT. It is written by the agent of another repo, which nobody
+// reviewed, and it ends up in the terminal of a supervising human. An escape sequence does
+// whatever it likes there: repainting the screen (hence lying about the state of the team),
+// writing the system clipboard through OSC 52, or making the terminal WRITE to its own stdin
+// through DSR — which the program reads back as keystrokes.
 //
-// LISTE BLANCHE, JAMAIS LISTE NOIRE. Un rune est conservé si et seulement si `unicode.IsGraphic`.
-// Ce prédicat couvre L, M, N, P, S et Zs ; il exclut donc d'un coup C0, C1, DEL, les Cf (contrôles
-// bidi de Trojan Source, ZWJ) et les Co. Une liste noire écrite à la main sur cet espace — CSI,
-// OSC, DCS, DSR, C1 huit bits, `\r` nu sans ESC — finit toujours par avoir un trou, et le trou ne
-// se voit qu'une fois exploité.
+// ALLOW LIST, NEVER DENY LIST. A rune is kept if and only if `unicode.IsGraphic`. That predicate
+// covers L, M, N, P, S and Zs; it therefore excludes in one move C0, C1, DEL, the Cf (Trojan
+// Source bidi controls, ZWJ) and the Co. A deny list written by hand over that space — CSI, OSC,
+// DCS, DSR, eight-bit C1, a bare `\r` without ESC — always ends up with a hole, and the hole only
+// shows once exploited.
 //
-// ORDRE : NEUTRALISER, PUIS TRONQUER, PUIS STYLER.
+// ORDER: NEUTRALISE, THEN TRUNCATE, THEN STYLE.
 //
-// CE QUE CET ORDRE ACHÈTE, ET CE QU'IL N'ACHÈTE PAS — vérifié par mutation, parce que la première
-// rédaction de ce commentaire se trompait. Il n'achète RIEN sur la sûreté : la liste blanche
-// s'applique de toute façon, donc aucun rune actif ne survit, quel que soit l'ordre. Ce qu'il
-// achète est la FIDÉLITÉ DU BUDGET D'AFFICHAGE. Tronquer d'abord fait payer des cellules à des
-// caractères qui vont être supprimés — et trente caractères de largeur nulle en tête d'un titre
-// suffisent alors à consommer la colonne entière et à repousser le texte réel hors du champ. Le
-// filtre reste correct ; l'écran, lui, est vide.
+// WHAT THAT ORDER BUYS, AND WHAT IT DOES NOT — checked by mutation, because the first draft of
+// this comment got it wrong. It buys NOTHING on safety: the allow list applies anyway, so no
+// active rune survives, whatever the order. What it buys is the FIDELITY OF THE DISPLAY BUDGET.
+// Truncating first makes characters that are about to be removed pay for cells — and thirty
+// zero-width characters at the head of a title are then enough to consume the whole column and
+// push the real text out of the field. The filter stays correct; the screen is empty.
 //
-// Le troisième temps — styler — vient après pour la raison inverse : une séquence de couleur que
-// NOUS émettons ne doit pas être comptée dans la largeur, ni relue par le filtre.
+// The third step — styling — comes after for the opposite reason: a colour sequence WE emit must
+// not be counted in the width, nor read back by the filter.
 //
-// CE QUE CE PAQUET NE COUVRE PAS, écrit plutôt que tu :
+// WHAT THIS PACKAGE DOES NOT COVER, written down rather than killed:
 //
-//   - LES HOMOGLYPHES PURS. « СORE » avec un С cyrillique est graphique, de largeur normale, et
-//     visuellement identique à CORE. La seule parade serait une liste blanche de scripts Unicode,
-//     qu'on refuse d'imposer à des titres d'issues écrits en français.
+//   - PURE HOMOGLYPHS. "СORE" with a Cyrillic С is graphic, of normal width, and visually
+//     identical to CORE. The only defence would be an allow list of Unicode scripts, which we
+//     refuse to impose on issue titles written in French.
 //
-//   - LE RÉSIDU TEXTUEL D'UNE SÉQUENCE. `\x1b[2J` perd son ESC et laisse « [2J » à l'écran. Ce
-//     résidu est INERTE — sans son introducteur, le terminal l'affiche comme n'importe quel
-//     texte — mais il est visible, et une charge assez longue peut consommer la largeur d'une
-//     colonne et repousser le titre réel hors du champ. C'est une atteinte à la LISIBILITÉ, jamais
-//     au contrôle du terminal. Le retirer demanderait de reconnaître les formes de séquences,
-//     c'est-à-dire une liste noire — ce que ce paquet refuse d'être, et qui mangerait au passage
-//     un rapport de bug parlant de séquences d'échappement.
+//   - THE TEXTUAL RESIDUE OF A SEQUENCE. `\x1b[2J` loses its ESC and leaves "[2J" on screen. That
+//     residue is INERT — without its introducer, the terminal displays it like any other text —
+//     but it is visible, and a long enough payload can consume the width of a column and push the
+//     real title out of the field. It is an attack on LEGIBILITY, never on control of the
+//     terminal. Removing it would require recognising sequence shapes, that is to say a deny list
+//     — which this package refuses to be, and which would eat a bug report about escape sequences
+//     along the way.
 //
-// Les deux sont des risques connus, non couverts, et assumés comme tels.
+// Both are known risks, not covered, and accepted as such.
 package termtext
 
 // SOMMAIRE (lire en premier, sauter directement au bon passage)
 //
 // | Élément  | Résumé                                                                | Ligne |
 // |----------|-----------------------------------------------------------------------|-------|
-// | Line     | Neutralise un champ d'une ligne et le borne en cellules d'affichage     | 73    |
-// | Block    | Neutralise un corps multi-lignes, en conservant ses retours à la ligne  | 108   |
-// | Cells    | Mesure la largeur d'AFFICHAGE, pas le nombre de runes                   | 132   |
-// | runeCells| Largeur d'affichage d'un seul rune                                      | 148   |
-// | truncate | Coupe à n cellules, en posant une ellipse quand il reste du texte       | 168   |
+// | Line     | Neutralises a one-line field and bounds it in display cells             | 80    |
+// | Block    | Neutralises a multi-line body, keeping its line breaks                  | 115   |
+// | Cells    | Measures the DISPLAY width, not the number of runes                     | 139   |
+// | runeCells| Display width of a single rune                                          | 155   |
+// | truncate | Cuts at n cells, laying an ellipsis when text is left over              | 175   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -66,25 +65,24 @@ import (
 	"golang.org/x/text/width"
 )
 
-// ellipsis marque une troncature. Un caractère, une cellule.
+// ellipsis marks a truncation. One character, one cell.
 const ellipsis = '…'
 
-// Line neutralise un champ destiné à tenir sur UNE ligne — titre, clé, nom d'auteur — et le borne
-// à cells cellules d'affichage.
+// Line neutralises a field meant to fit on ONE line — title, key, author name — and bounds it to
+// cells display cells.
 //
-// Les retours à la ligne sont supprimés comme tout le reste : un `\n` dans un titre insère une
-// fausse rangée dans un tableau, ce qui décale tout ce qui suit et fabrique une ligne dont
-// personne n'a écrit le contenu.
+// Line breaks are removed like everything else: a `\n` inside a title inserts a fake row into a
+// table, which shifts everything that follows and fabricates a line whose content nobody wrote.
 //
-// cells <= 0 signifie « pas de borne » : le texte est neutralisé, pas tronqué. C'est le cas d'un
-// champ dont la colonne s'adapte, jamais celui d'un champ qu'on aurait oublié de borner — les
-// deux se distinguent à la lecture de l'appelant.
+// cells <= 0 means "no bound": the text is neutralised, not truncated. That is the case of a field
+// whose column adapts, never that of a field somebody forgot to bound — the two are told apart by
+// reading the caller.
 func Line(s string, cells int) string {
 	var b strings.Builder
 	b.Grow(len(s))
 
-	// Neutraliser D'ABORD : tronquer avant filtrerait une séquence coupée en deux, dont la moitié
-	// restante peut rester active.
+	// Neutralise FIRST: truncating before would filter a sequence cut in two, the remaining half
+	// of which can stay active.
 	for _, r := range s {
 		if !unicode.IsGraphic(r) {
 			continue
@@ -92,8 +90,8 @@ func Line(s string, cells int) string {
 		b.WriteRune(r)
 	}
 
-	// Les espaces de bord sont retirés APRÈS le filtre : une séquence supprimée laisse derrière
-	// elle des espaces qui ne venaient de rien.
+	// Edge spaces are removed AFTER the filter: a removed sequence leaves behind spaces that came
+	// from nothing.
 	clean := strings.TrimSpace(b.String())
 	if cells <= 0 {
 		return clean
@@ -101,19 +99,19 @@ func Line(s string, cells int) string {
 	return truncate(clean, cells)
 }
 
-// Block neutralise un corps multi-lignes.
+// Block neutralises a multi-line body.
 //
-// Deux exceptions à la liste blanche, et deux seulement :
+// Two exceptions to the allow list, and two only:
 //
-//   - `\n` est CONSERVÉ. Un corps de message est structuré par ses lignes ; les supprimer rendrait
-//     illisible ce que ce paquet existe pour rendre lisible.
-//   - `\t` devient DEUX ESPACES. Une tabulation déplace le curseur à un taquet dont la position
-//     dépend du terminal : elle ne peut pas repeindre l'écran, mais elle casse tout alignement
-//     calculé en cellules. La convertir garde l'intention (l'indentation) sans l'effet.
+//   - `\n` is KEPT. A message body is structured by its lines; removing them would make illegible
+//     what this package exists to make legible.
+//   - `\t` becomes TWO SPACES. A tabulation moves the cursor to a stop whose position depends on
+//     the terminal: it cannot repaint the screen, but it breaks any alignment computed in cells.
+//     Converting it keeps the intent (the indentation) without the effect.
 //
-// Le `\r` n'est PAS conservé, et c'est le cas qui compte : « tout va bien\rALERTE » ne contient
-// aucun ESC, donc il traverse tout filtre qui ne cherche que `0x1b`, et il réécrit la ligne
-// depuis son début.
+// The `\r` is NOT kept, and that is the case that counts: "all is well\rALERT" contains no ESC at
+// all, so it crosses any filter that only looks for `0x1b`, and it rewrites the line from its
+// start.
 func Block(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -131,13 +129,13 @@ func Block(s string) string {
 	return b.String()
 }
 
-// Cells mesure la largeur d'AFFICHAGE d'une chaîne, en colonnes de terminal.
+// Cells measures the DISPLAY width of a string, in terminal columns.
 //
-// Compter des runes donnerait un alignement faux dès qu'un titre contient du CJK ou un emoji —
-// deux colonnes chacun — ou une marque combinante, qui n'en occupe aucune. Un tableau dont les
-// colonnes se décalent est un tableau qu'on cesse de lire.
+// Counting runes would give a wrong alignment as soon as a title contains CJK or an emoji — two
+// columns each — or a combining mark, which occupies none. A table whose columns shift is a table
+// people stop reading.
 //
-// La chaîne est supposée déjà neutralisée : Cells ne filtre pas, il mesure.
+// The string is assumed to be neutralised already: Cells does not filter, it measures.
 func Cells(s string) int {
 	total := 0
 	for _, r := range s {
@@ -146,14 +144,14 @@ func Cells(s string) int {
 	return total
 }
 
-// runeCells rend la largeur d'affichage d'un rune : 0, 1 ou 2.
+// runeCells yields the display width of a rune: 0, 1 or 2.
 //
-// Les marques combinantes (Mn, Me) se posent SUR le caractère précédent et n'occupent aucune
-// colonne — les compter décalerait toute ligne contenant un accent décomposé.
+// Combining marks (Mn, Me) sit ON the preceding character and occupy no column — counting them
+// would shift every line containing a decomposed accent.
 //
-// `width.LookupRune` distingue les formes East Asian Wide et Fullwidth, qui valent deux colonnes.
-// Ambiguous vaut 1 : sa largeur dépend de la locale du terminal, et supposer 2 casserait
-// l'alignement du cas courant pour protéger un cas rare.
+// `width.LookupRune` tells apart the East Asian Wide and Fullwidth forms, which are worth two
+// columns. Ambiguous is worth 1: its width depends on the terminal locale, and assuming 2 would
+// break the alignment of the common case to protect a rare one.
 func runeCells(r rune) int {
 	if unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) {
 		return 0
@@ -166,14 +164,14 @@ func runeCells(r rune) int {
 	}
 }
 
-// truncate coupe une chaîne DÉJÀ NEUTRALISÉE à n cellules d'affichage.
+// truncate cuts an ALREADY NEUTRALISED string at n display cells.
 //
-// Quand il reste du texte, la dernière cellule porte une ellipse : sans elle, un titre coupé se
-// lit comme un titre complet, et l'humain croit avoir tout lu. L'ellipse fait partie du budget,
-// elle ne s'y ajoute pas.
+// When text is left over, the last cell carries an ellipsis: without it, a cut title reads like a
+// complete title, and the human believes they read everything. The ellipsis is part of the budget,
+// it is not added to it.
 //
-// Un rune de deux cellules qui ne tient pas dans la place restante est écarté entièrement : en
-// couper la moitié n'a aucun sens, un rune n'a pas de moitié.
+// A two-cell rune that does not fit in the remaining room is dropped entirely: cutting it in half
+// makes no sense, a rune has no half.
 func truncate(s string, n int) string {
 	if Cells(s) <= n {
 		return s

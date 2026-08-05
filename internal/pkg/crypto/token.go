@@ -4,23 +4,23 @@ package crypto
 //
 // | Élément      | Résumé                                                          | Ligne |
 // |--------------|-----------------------------------------------------------------|-------|
-// | Token        | Un token fraîchement émis : partie publique, secret, hash         | 52    |
-// | NewToken     | Génère un token aléatoire et son hash de stockage                 | 63    |
-// | ParseToken   | Découpe un token présenté en préfixe + secret, sans le valider    | 84    |
-// | HashSecret   | Hashe le secret pour comparaison avec la valeur stockée           | 103   |
-// | VerifySecret | Compare secret présenté et hash stocké, en temps constant         | 110   |
-// | randomPrefix | Tire une partie publique aléatoire, sans biais modulo             | 117   |
+// | Token        | A freshly issued token: public part, secret, hash                 | 52    |
+// | NewToken     | Generates a random token and its storage hash                     | 63    |
+// | ParseToken   | Splits a presented token into prefix + secret, without validating | 84    |
+// | HashSecret   | Hashes the secret for comparison with the stored value            | 103   |
+// | VerifySecret | Compares presented secret and stored hash, in constant time       | 110   |
+// | randomPrefix | Draws a random public part, with no modulo bias                   | 117   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Choix de primitive : SHA-256, pas argon2id.
-// Un token est un secret à HAUTE entropie (256 bits de hasard cryptographique) : il n'existe
-// aucune attaque par dictionnaire à ralentir, et la vérification est sur le chemin chaud de
-// chaque requête authentifiée. Un KDF à coût mémoire y serait un vecteur de déni de service
-// (RAM et CPU offerts à l'attaquant à chaque token invalide) sans gain de sécurité.
-// argon2id reste le bon choix pour les mots de passe des comptes hosted — entropie faible,
-// vérification rare.
+// Choice of primitive: SHA-256, not argon2id.
+// A token is a HIGH-entropy secret (256 bits of cryptographic randomness): there is no dictionary
+// attack to slow down, and the verification is on the hot path of every authenticated request. A
+// memory-hard KDF would be a denial-of-service vector there (RAM and CPU offered to the attacker
+// on every invalid token) with no security gain.
+// argon2id stays the right choice for the passwords of hosted accounts — low entropy, rare
+// verification.
 
 import (
 	"crypto/rand"
@@ -33,33 +33,33 @@ import (
 )
 
 const (
-	// namespace préfixe tout token émis : reconnaissable dans un log ou un fichier de config,
-	// et scannable par les outils de détection de secrets.
+	// namespace prefixes every issued token: recognisable in a log or a config file, and
+	// scannable by secret-detection tools.
 	namespace = "flw"
-	// prefixLen est la taille de la partie publique, qui sert de clé de lookup en base.
+	// prefixLen is the size of the public part, which serves as the lookup key in the database.
 	prefixLen = 12
-	// secretBytes est l'entropie du secret lui-même.
+	// secretBytes is the entropy of the secret itself.
 	secretBytes = 32
 
 	prefixAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 )
 
-// ErrMalformedToken signale un token dont la forme est invalide, avant toute vérification.
+// ErrMalformedToken signals a token whose shape is invalid, before any verification.
 var ErrMalformedToken = errors.New("crypto: malformed token")
 
-// Token porte les trois formes d'un token émis. Plain n'est affiché qu'une fois, à la création,
-// et n'est jamais persisté ni journalisé.
+// Token carries the three forms of an issued token. Plain is shown once, at creation, and is
+// never persisted nor logged.
 type Token struct {
-	// Plain est la valeur complète remise à l'utilisateur : flw_<prefix>_<secret>.
+	// Plain is the whole value handed to the user: flw_<prefix>_<secret>.
 	Plain string
-	// Prefix est la partie publique, stockée en clair et indexée.
+	// Prefix is the public part, stored in clear and indexed.
 	Prefix string
-	// Hash est le SHA-256 du secret, seule valeur persistée.
+	// Hash is the SHA-256 of the secret, the only persisted value.
 	Hash string
 }
 
-// NewToken génère un token aléatoire. L'appelant persiste Prefix et Hash, affiche Plain une
-// seule fois, puis l'oublie.
+// NewToken generates a random token. The caller persists Prefix and Hash, shows Plain once, then
+// forgets it.
 func NewToken() (Token, error) {
 	prefix, err := randomPrefix()
 	if err != nil {
@@ -79,11 +79,11 @@ func NewToken() (Token, error) {
 	}, nil
 }
 
-// ParseToken découpe un token présenté. Il ne prouve rien : la validité se décide en comparant
-// le secret au hash stocké, via VerifySecret.
+// ParseToken splits a presented token. It proves nothing: validity is decided by comparing the
+// secret to the stored hash, through VerifySecret.
 func ParseToken(raw string) (prefix, secret string, err error) {
-	// SplitN et non Split : l'alphabet base64url du secret contient « _ », qui est aussi le
-	// séparateur. Découper sans limite casserait un token sur deux.
+	// SplitN and not Split: the base64url alphabet of the secret contains "_", which is also the
+	// separator. Splitting without a limit would break every other token.
 	parts := strings.SplitN(strings.TrimSpace(raw), "_", 3)
 	if len(parts) != 3 {
 		return "", "", ErrMalformedToken
@@ -99,23 +99,23 @@ func ParseToken(raw string) (prefix, secret string, err error) {
 	return parts[1], parts[2], nil
 }
 
-// HashSecret renvoie le hash hexadécimal du secret, sous la forme stockée en base.
+// HashSecret yields the hexadecimal hash of the secret, in the form stored in the database.
 func HashSecret(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
 }
 
-// VerifySecret compare le secret présenté au hash stocké en temps constant : la durée de la
-// comparaison ne révèle pas combien de caractères étaient corrects.
+// VerifySecret compares the presented secret to the stored hash in constant time: the duration of
+// the comparison does not reveal how many characters were correct.
 func VerifySecret(secret, storedHash string) bool {
 	computed := HashSecret(secret)
 	return subtle.ConstantTimeCompare([]byte(computed), []byte(storedHash)) == 1
 }
 
-// randomPrefix tire une partie publique dans un alphabet sans ambiguïté visuelle, en évitant le
-// biais modulo grâce au rejet des octets hors plage.
+// randomPrefix draws a public part from an alphabet with no visual ambiguity, avoiding the modulo
+// bias by rejecting out-of-range bytes.
 func randomPrefix() (string, error) {
-	const maxUnbiased = 252 // plus grand multiple de 36 sous 256
+	const maxUnbiased = 252 // largest multiple of 36 under 256
 
 	out := make([]byte, 0, prefixLen)
 	buf := make([]byte, prefixLen)

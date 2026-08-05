@@ -13,19 +13,19 @@ func TestNewTokenShape(t *testing.T) {
 
 	prefix, secret, err := ParseToken(token.Plain)
 	if err != nil {
-		t.Fatalf("le token émis doit être parsable: %v", err)
+		t.Fatalf("the issued token must be parsable: %v", err)
 	}
 	if prefix != token.Prefix {
-		t.Errorf("préfixe = %q, attendu %q", prefix, token.Prefix)
+		t.Errorf("prefix = %q, expected %q", prefix, token.Prefix)
 	}
 	if !VerifySecret(secret, token.Hash) {
-		t.Error("le secret émis doit valider son propre hash")
+		t.Error("the issued secret must validate its own hash")
 	}
 	if strings.Contains(token.Hash, secret) {
-		t.Error("le hash ne doit pas contenir le secret en clair")
+		t.Error("the hash must not contain the secret in clear")
 	}
 	if len(token.Prefix) != prefixLen {
-		t.Errorf("longueur du préfixe = %d, attendu %d", len(token.Prefix), prefixLen)
+		t.Errorf("prefix length = %d, expected %d", len(token.Prefix), prefixLen)
 	}
 }
 
@@ -37,7 +37,7 @@ func TestNewTokenIsUnique(t *testing.T) {
 			t.Fatalf("NewToken: %v", err)
 		}
 		if seen[token.Prefix] {
-			t.Fatalf("préfixe déjà émis: %s", token.Prefix)
+			t.Fatalf("prefix already issued: %s", token.Prefix)
 		}
 		seen[token.Prefix] = true
 	}
@@ -57,19 +57,19 @@ func TestParseToken(t *testing.T) {
 		{name: "token valide", raw: valid.Plain},
 		{name: "vide", raw: "", wantErr: true},
 		{name: "mauvais namespace", raw: "xxx_abcdefghijkl_secret", wantErr: true},
-		{name: "préfixe trop court", raw: "flw_abc_secret", wantErr: true},
-		{name: "préfixe en majuscules", raw: "flw_ABCDEFGHIJKL_secret", wantErr: true},
+		{name: "prefix too short", raw: "flw_abc_secret", wantErr: true},
+		{name: "uppercase prefix", raw: "flw_ABCDEFGHIJKL_secret", wantErr: true},
 		{name: "secret vide", raw: "flw_abcdefghijkl_", wantErr: true},
-		{name: "séparateurs manquants", raw: "flwabcdefghijklsecret", wantErr: true},
-		// L'alphabet base64url contient « _ » : un secret peut légitimement en contenir.
-		{name: "underscore dans le secret", raw: "flw_abcdefghijkl_sec_ret"},
+		{name: "missing separators", raw: "flwabcdefghijklsecret", wantErr: true},
+		// The base64url alphabet contains "_": a secret can legitimately hold one.
+		{name: "underscore inside the secret", raw: "flw_abcdefghijkl_sec_ret"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := ParseToken(tc.raw)
 			if tc.wantErr && err == nil {
-				t.Fatal("erreur attendue, aucune reçue")
+				t.Fatal("error expected, none received")
 			}
 			if !tc.wantErr && err != nil {
 				t.Fatalf("erreur inattendue: %v", err)
@@ -85,12 +85,12 @@ func TestVerifySecretRejectsWrongSecret(t *testing.T) {
 	}
 
 	if VerifySecret("mauvais-secret", token.Hash) {
-		t.Error("un secret erroné ne doit jamais valider")
+		t.Error("a wrong secret must never validate")
 	}
 	if VerifySecret("", token.Hash) {
-		t.Error("un secret vide ne doit jamais valider")
+		t.Error("an empty secret must never validate")
 	}
 	if VerifySecret("mauvais-secret", "") {
-		t.Error("un hash vide ne doit jamais valider")
+		t.Error("an empty hash must never validate")
 	}
 }

@@ -1,12 +1,12 @@
 package termtext
 
-// Ce que ce fichier verrouille : chaque famille de séquence hostile est neutralisée, et l'ordre
-// neutraliser → tronquer est respecté.
+// What this file locks down: every family of hostile sequence is neutralised, and the order
+// neutralise → truncate is respected.
 //
-// Ce n'est PAS le contrôle réel du produit. Le contrôle réel est le test qui prouvera qu'aucune
-// vue n'oublie d'appeler ce paquet — un filtre parfait qu'une seule ligne de rendu contourne ne
-// protège rien. Ces tests garantissent que le filtre fait ce qu'il annonce ; le garde-fou de
-// couverture viendra avec le premier renderer.
+// This is NOT the real control of the product. The real control is the test that will prove no
+// view forgets to call this package — a perfect filter that a single rendering line bypasses
+// protects nothing. These tests guarantee the filter does what it claims; the coverage guardrail
+// will come with the first renderer.
 
 import (
 	"strings"
@@ -14,247 +14,251 @@ import (
 	"unicode"
 )
 
-// famille décrit une charge hostile et ce qui ne doit pas survivre.
-type famille struct {
-	nom string
-	// charge est le texte tel qu'un agent d'un autre repo pourrait l'écrire dans un titre.
-	charge string
-	// interdit énumère ce qui ne doit PAS ressortir. On y met les CARACTÈRES DE CONTRÔLE, jamais
-	// le résidu textuel d'une séquence : privé de son introducteur ESC, « [2J » n'est plus qu'un
-	// texte inerte que le terminal affiche sans l'interpréter. Exiger sa disparition demanderait
-	// une liste noire — ce que ce paquet refuse d'être — et mangerait un rapport de bug qui parle
-	// de séquences d'échappement.
-	interdit []string
-	// garde énumère ce qui doit ressortir : on encadre le risque, on ne mutile pas le texte.
-	garde string
+// family describes a hostile payload and what must not survive it.
+type family struct {
+	name string
+	// payload is the text as an agent of another repo could write it into a title.
+	payload string
+	// forbidden lists what must NOT come back out. CONTROL CHARACTERS go there, never the textual
+	// residue of a sequence: deprived of its ESC introducer, "[2J" is nothing but inert text the
+	// terminal displays without interpreting. Requiring it to disappear would take a deny list —
+	// which this package refuses to be — and would eat a bug report talking about escape
+	// sequences.
+	forbidden []string
+	// keeps lists what must come back out: we frame the risk, we do not mutilate the text.
+	keeps string
 }
 
-var familles = []famille{
+var families = []family{
 	{
-		nom:      "CSI — repeindre l'écran, donc mentir sur l'état de la team",
-		charge:   "\x1b[2J\x1b[Htout va bien",
-		interdit: []string{"\x1b"},
-		garde:    "tout va bien",
+		name:      "CSI — repainting the screen, hence lying about the state of the team",
+		payload:   "\x1b[2J\x1b[Hall is well",
+		forbidden: []string{"\x1b"},
+		keeps:     "all is well",
 	},
 	{
-		nom:      "OSC 52 — écrit le presse-papier système",
-		charge:   "panne\x1b]52;c;ZXhmaWx0cmF0aW9u\x07 de login",
-		interdit: []string{"\x1b", "\x07"},
-		garde:    "panne",
+		name:      "OSC 52 — writes the system clipboard",
+		payload:   "login\x1b]52;c;ZXhmaWx0cmF0aW9u\x07 outage",
+		forbidden: []string{"\x1b", "\x07"},
+		keeps:     "login",
 	},
 	{
-		nom:      "OSC 8 — hyperlien cliquable vers une adresse que personne n'a écrite",
-		charge:   "\x1b]8;;http://evil.example\x1b\\cliquez ici\x1b]8;;\x1b\\",
-		interdit: []string{"\x1b", "\x1b\\"},
-		garde:    "cliquez ici",
+		name:      "OSC 8 — clickable hyperlink to an address nobody wrote",
+		payload:   "\x1b]8;;http://evil.example\x1b\\click here\x1b]8;;\x1b\\",
+		forbidden: []string{"\x1b", "\x1b\\"},
+		keeps:     "click here",
 	},
 	{
-		nom: "DSR — fait ÉCRIRE le terminal sur son propre stdin, que le TUI relit comme des touches",
-		// La seule famille du lot qui va jusqu'à l'exécution.
-		charge:   "état ?\x1b[6n",
-		interdit: []string{"\x1b"},
-		garde:    "état ?",
+		name: "DSR — makes the terminal WRITE to its own stdin, which the TUI reads back as keys",
+		// The only family of the lot that goes all the way to execution.
+		payload:   "status?\x1b[6n",
+		forbidden: []string{"\x1b"},
+		keeps:     "status?",
 	},
 	{
-		nom: "C0 nu — AUCUN ESC, donc invisible à tout filtre qui ne cherche que 0x1b",
-		// Le retour chariot réécrit la ligne depuis son début : l'humain ne lit jamais « tout va
-		// bien », seulement « ALERTE ».
-		charge:   "tout va bien\rALERTE",
-		interdit: []string{"\r"},
-		garde:    "ALERTE",
+		name: "bare C0 — NO ESC at all, hence invisible to any filter that only looks for 0x1b",
+		// The carriage return rewrites the line from its start: the human never reads "all is
+		// well", only "ALERT".
+		payload:   "all is well\rALERT",
+		forbidden: []string{"\r"},
+		keeps:     "ALERT",
 	},
 	{
-		nom:      "C1 huit bits — introducteur CSI mono-octet",
-		charge:   "avant\u009b2Kaprès",
-		interdit: []string{"\u009b"},
-		garde:    "après",
+		name:      "eight-bit C1 — single-byte CSI introducer",
+		payload:   "before\u009b2Kafter",
+		forbidden: []string{"\u009b"},
+		keeps:     "after",
 	},
 	{
-		nom:      "retour à la ligne dans un titre — insère une fausse rangée dans le tableau",
-		charge:   "ligne vraie\nligne fabriquée",
-		interdit: []string{"\n"},
-		garde:    "ligne fabriquée",
+		name:      "line break inside a title — inserts a fake row into the table",
+		payload:   "real line\nfabricated line",
+		forbidden: []string{"\n"},
+		keeps:     "fabricated line",
 	},
 	{
-		nom: "contrôles bidi — Trojan Source : l'affiché ne dit pas ce que le titre contient",
+		name: "bidi controls — Trojan Source: what is displayed is not what the title contains",
 		// U+202E RIGHT-TO-LEFT OVERRIDE.
-		charge:   "corrige \u202eeitros al ne stnedifnoc sel",
-		interdit: []string{"\u202e"},
-		garde:    "corrige",
+		payload:   "fix \u202esaisiaton ni slaitnederc eht",
+		forbidden: []string{"\u202e"},
+		keeps:     "fix",
 	},
 	{
-		nom:      "largeur nulle — sépare visuellement rien, casse une comparaison de clés",
-		charge:   "CO\u200bRE",
-		interdit: []string{"\u200b"},
-		garde:    "CORE",
+		name:      "zero width — visually separates nothing, breaks a key comparison",
+		payload:   "CO\u200bRE",
+		forbidden: []string{"\u200b"},
+		keeps:     "CORE",
 	},
 	{
-		nom:      "DEL",
-		charge:   "avant\x7faprès",
-		interdit: []string{"\x7f"},
-		garde:    "aprè",
+		name:      "DEL",
+		payload:   "before\x7fafter",
+		forbidden: []string{"\x7f"},
+		keeps:     "afte",
 	},
 }
 
-// Chaque famille est neutralisée, et ce qui restait de légitime survit.
+// Every family is neutralised, and what was legitimate survives.
 //
-// MUTATIONS : ne filtrer que 0x1b → la ligne « C0 nu » rouge. Ignorer les C1 → la ligne C1 rouge.
-// Garder les Cf → la ligne bidi rouge.
+// MUTATIONS: filtering only 0x1b → the "bare C0" line goes red. Ignoring the C1 → the C1 line goes
+// red. Keeping the Cf → the bidi line goes red.
 func TestLineNeutralisesHostileText(t *testing.T) {
-	for _, f := range familles {
-		t.Run(f.nom, func(t *testing.T) {
-			got := Line(f.charge, 0)
+	for _, f := range families {
+		t.Run(f.name, func(t *testing.T) {
+			got := Line(f.payload, 0)
 
-			for _, mauvais := range f.interdit {
-				if strings.Contains(got, mauvais) {
-					t.Errorf("la séquence %q survit dans %q", mauvais, got)
+			for _, bad := range f.forbidden {
+				if strings.Contains(got, bad) {
+					t.Errorf("the sequence %q survives in %q", bad, got)
 				}
 			}
-			if f.garde != "" && !strings.Contains(got, f.garde) {
-				t.Errorf("le texte légitime %q a disparu de %q — on encadre le risque, "+
-					"on ne mutile pas le contenu", f.garde, got)
+			if f.keeps != "" && !strings.Contains(got, f.keeps) {
+				t.Errorf("the legitimate text %q disappeared from %q — we frame the risk, "+
+					"we do not mutilate the content", f.keeps, got)
 			}
-			// Contrôle générique : plus AUCUN rune non graphique, quelle que soit la famille.
+			// Generic control: NO non-graphic rune left, whatever the family.
 			for _, r := range got {
 				if !unicode.IsGraphic(r) {
-					t.Errorf("rune non graphique U+%04X survit dans %q", r, got)
+					t.Errorf("non-graphic rune U+%04X survives in %q", r, got)
 				}
 			}
 		})
 	}
 }
 
-// Block conserve les retours à la ligne, convertit les tabulations, et supprime tout le reste.
+// Block keeps the line breaks, converts the tabulations, and removes everything else.
 func TestBlockKeepsStructureAndNothingElse(t *testing.T) {
-	got := Block("ligne 1\n\tindentée\rEFFACE\x1b[2Jsuite\n")
+	got := Block("line 1\n\tindented\rERASES\x1b[2Jrest\n")
 
 	if strings.Count(got, "\n") != 2 {
-		t.Errorf("%d retours à la ligne, attendu 2 : un corps est structuré par ses lignes\n%q",
+		t.Errorf("%d line breaks, expected 2: a body is structured by its lines\n%q",
 			strings.Count(got, "\n"), got)
 	}
-	if !strings.Contains(got, "  indentée") {
-		t.Errorf("la tabulation n'est pas devenue deux espaces: %q", got)
+	if !strings.Contains(got, "  indented") {
+		t.Errorf("the tabulation did not become two spaces: %q", got)
 	}
 	if strings.ContainsAny(got, "\r\x1b\t") {
-		t.Errorf("un contrôle survit: %q", got)
+		t.Errorf("a control survives: %q", got)
 	}
-	if !strings.Contains(got, "EFFACE") || !strings.Contains(got, "suite") {
-		t.Errorf("du contenu légitime a disparu: %q", got)
+	if !strings.Contains(got, "ERASES") || !strings.Contains(got, "rest") {
+		t.Errorf("legitimate content disappeared: %q", got)
 	}
 }
 
-// LA LARGEUR EST MESURÉE EN CELLULES D'AFFICHAGE, PAS EN RUNES.
+// THE WIDTH IS MEASURED IN DISPLAY CELLS, NOT IN RUNES.
 //
-// Compter des runes décale toute ligne contenant du CJK, un emoji ou un accent décomposé — et un
-// tableau dont les colonnes bougent est un tableau qu'on cesse de lire.
+// Counting runes shifts every line containing CJK, an emoji or a decomposed accent — and a table
+// whose columns move is a table people stop reading.
 //
-// MUTATION : rendre 1 pour tous les runes dans runeCells → les cas CJK et emoji rouges.
+// MUTATION: yielding 1 for every rune in runeCells → the CJK and emoji cases go red.
 func TestCellsMeasuresDisplayWidth(t *testing.T) {
-	cas := []struct {
-		nom   string
-		texte string
-		want  int
+	cases := []struct {
+		name string
+		text string
+		want int
 	}{
 		{"ascii", "CORE", 4},
-		{"accent précomposé", "é", 1},
-		{"accent décomposé — la combinante n'occupe aucune colonne", "é", 1},
-		{"CJK — deux colonnes par idéogramme", "日本語", 6},
-		{"pleine chasse", "ＣＯＲＥ", 8},
-		{"mixte", "bug 日本", 8},
-		{"vide", "", 0},
+		{"precomposed accent", "é", 1},
+		// Written as an escape and not as a literal: an editor or a formatter normalising the file
+		// would silently turn it back into the precomposed form, and this case would stop testing
+		// anything while staying green.
+		{"decomposed accent — the combining mark occupies no column", "e\u0301", 1},
+		{"CJK — two columns per ideogram", "日本語", 6},
+		{"fullwidth", "ＣＯＲＥ", 8},
+		{"mixed", "bug 日本", 8},
+		{"empty", "", 0},
 	}
 
-	for _, c := range cas {
-		t.Run(c.nom, func(t *testing.T) {
-			if got := Cells(c.texte); got != c.want {
-				t.Errorf("Cells(%q) = %d, attendu %d", c.texte, got, c.want)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := Cells(c.text); got != c.want {
+				t.Errorf("Cells(%q) = %d, expected %d", c.text, got, c.want)
 			}
 		})
 	}
 }
 
-// L'ORDRE EST NEUTRALISER PUIS TRONQUER, et ce test dit exactement ce qu'il prouve.
+// THE ORDER IS NEUTRALISE THEN TRUNCATE, and this test says exactly what it proves.
 //
-// IL NE PROUVE PAS UNE PROPRIÉTÉ DE SÛRETÉ. La liste blanche s'applique dans les deux ordres,
-// donc aucun rune actif ne survit de toute façon — la première rédaction de ce fichier affirmait
-// le contraire, et la mutation l'a démentie.
+// IT DOES NOT PROVE A SAFETY PROPERTY. The allow list applies in both orders, so no active rune
+// survives anyway — the first draft of this file claimed otherwise, and the mutation disproved it.
 //
-// Ce qu'il prouve est la FIDÉLITÉ DU BUDGET : sous l'ordre inverse, des caractères destinés à
-// disparaître consomment des cellules. Trente caractères de largeur NULLE en tête d'un titre
-// suffisent à manger la colonne entière et à repousser le texte réel hors du champ. L'écran est
-// alors vide, et rien n'a échoué.
+// What it proves is the FIDELITY OF THE BUDGET: under the reverse order, characters meant to
+// disappear consume cells. Thirty ZERO-width characters at the head of a title are enough to eat
+// the whole column and push the real text out of the field. The screen is then empty, and nothing
+// failed.
 //
-// MUTATION : tronquer avant de filtrer dans Line → ce test rouge, la sortie ne contient plus que
-// l'ellipse.
+// MUTATION: truncating before filtering in Line → this test goes red, the output holds nothing but
+// the ellipsis.
 func TestNeutralisationHappensBeforeTruncation(t *testing.T) {
-	// U+200B ESPACE SANS CHASSE : non graphique, donc supprimé — mais compté tant qu'il est là.
-	charge := strings.Repeat("\u200b", 30) + "titre lisible"
+	// U+200B ZERO WIDTH SPACE: non-graphic, hence removed — but counted while it is still there.
+	payload := strings.Repeat("\u200b", 30) + "readable title"
 
-	got := Line(charge, 20)
+	got := Line(payload, 20)
 
-	if !strings.Contains(got, "titre lisible") {
-		t.Errorf("got = %q — trente caractères invisibles ont consommé la colonne : la troncature "+
-			"a eu lieu AVANT le filtre", got)
+	if !strings.Contains(got, "readable title") {
+		t.Errorf("got = %q — thirty invisible characters consumed the column: the truncation "+
+			"happened BEFORE the filter", got)
 	}
 }
 
-// La borne est en CELLULES, et l'ellipse est comprise dans le budget — pas ajoutée après.
+// The bound is in CELLS, and the ellipsis is part of the budget — not added after it.
 func TestLineTruncatesToCellBudget(t *testing.T) {
-	cas := []struct {
-		nom   string
-		texte string
+	cases := []struct {
+		name  string
+		text  string
 		cells int
 		want  string
 	}{
-		{"tient tel quel", "CORE", 10, "CORE"},
-		{"exactement à la borne", "CORE", 4, "CORE"},
-		{"coupé", "titre beaucoup trop long", 10, "titre bea…"},
-		{"borne à 1", "titre", 1, "…"},
-		{"borne nulle = pas de borne", "titre beaucoup trop long", 0, "titre beaucoup trop long"},
-		// Un rune de deux cellules qui ne tient pas dans la place restante est écarté ENTIER :
-		// un rune n'a pas de moitié.
-		{"CJK coupé sur une frontière impaire", "日本語", 4, "日…"},
+		{"fits as is", "CORE", 10, "CORE"},
+		{"exactly at the bound", "CORE", 4, "CORE"},
+		{"cut", "a title that is far too long", 10, "a title t…"},
+		{"bound at 1", "title", 1, "…"},
+		{"zero bound = no bound", "a title that is far too long", 0, "a title that is far too long"},
+		// A two-cell rune that does not fit in the remaining room is dropped WHOLE: a rune has no
+		// half.
+		{"CJK cut on an odd boundary", "日本語", 4, "日…"},
 	}
 
-	for _, c := range cas {
-		t.Run(c.nom, func(t *testing.T) {
-			got := Line(c.texte, c.cells)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Line(c.text, c.cells)
 			if got != c.want {
-				t.Errorf("Line(%q, %d) = %q, attendu %q", c.texte, c.cells, got, c.want)
+				t.Errorf("Line(%q, %d) = %q, expected %q", c.text, c.cells, got, c.want)
 			}
 			if c.cells > 0 && Cells(got) > c.cells {
-				t.Errorf("la sortie fait %d cellules, au-dessus de la borne %d : l'ellipse a été "+
-					"ajoutée au budget au lieu d'y être comprise", Cells(got), c.cells)
+				t.Errorf("the output is %d cells, above the bound %d: the ellipsis was added to "+
+					"the budget instead of being part of it", Cells(got), c.cells)
 			}
 		})
 	}
 }
 
-// Une troncature doit se VOIR. Sans ellipse, un titre coupé se lit comme un titre complet, et
-// l'humain croit avoir tout lu — ce qui est pire que de ne pas afficher la ligne.
+// A truncation must SHOW. Without an ellipsis, a cut title reads like a complete title, and the
+// human believes they read everything — which is worse than not displaying the line at all.
 func TestTruncationIsVisible(t *testing.T) {
-	got := Line("un titre qui dépasse largement la colonne", 12)
+	got := Line("a title that goes well past the column", 12)
 
 	if !strings.HasSuffix(got, string(ellipsis)) {
-		t.Errorf("aucune ellipse sur %q : la troncature est invisible", got)
+		t.Errorf("no ellipsis on %q: the truncation is invisible", got)
 	}
 }
 
-// Contre-épreuve de tout le fichier : un texte parfaitement normal ressort INTACT.
+// Counter-proof of the whole file: perfectly normal text comes back out INTACT.
 //
-// Sans ce test, un filtre qui supprimerait tout passerait pour correct sur les dix familles
-// hostiles.
+// Without this test, a filter removing everything would look correct on the ten hostile families.
 func TestLegitimateTextIsUntouched(t *testing.T) {
 	for _, s := range []string{
-		"Le endpoint /login renvoie 500 depuis le déploiement",
-		"clé étrangère composite (project_id, team_id)",
-		"café — naïve — cœur — 42 %",
+		"The /login endpoint has returned 500 since the deploy",
+		"composite foreign key (project_id, team_id)",
+		// Diacritics and typographic punctuation on purpose: they are graphic, so the allow list
+		// must let them through untouched. A filter that stripped them would pass every hostile
+		// family above and still wreck ordinary text.
+		"café — naïve — piñata — 42 %",
 		"日本語のタイトル",
-		"emoji 🚀 dans un titre",
-		"guillemets \"doubles\" et 'simples'",
+		"emoji 🚀 in a title",
+		"\"double\" and 'single' quotes",
 	} {
 		if got := Line(s, 0); got != s {
-			t.Errorf("Line(%q) = %q — un texte légitime a été modifié", s, got)
+			t.Errorf("Line(%q) = %q — legitimate text was modified", s, got)
 		}
 	}
 }

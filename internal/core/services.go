@@ -4,9 +4,9 @@ package core
 //
 // | Élément          | Résumé                                                      | Ligne |
 // |------------------|-------------------------------------------------------------|-------|
-// | services         | Porte les services partagés transverses exposés aux modules   | 22    |
-// | NewServices      | Instancie les services partagés à partir de l'infra du process| 27    |
-// | services.Auth    | Renvoie le service d'authentification partagé                 | 34    |
+// | services         | Carries the shared cross-cutting services exposed to modules  | 22    |
+// | NewServices      | Instantiates the shared services from the process infra       | 27    |
+// | services.Auth    | Yields the shared authentication service                      | 34    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -17,20 +17,20 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/database"
 )
 
-// services implémente module.CoreServices. Il ne porte que du transverse, jamais le service
-// d'une feature précise.
+// services implements module.CoreServices. It carries nothing but cross-cutting concerns, never
+// the service of a specific feature.
 type services struct {
 	auth auth.Service
 }
 
-// NewServices instancie les services partagés. Appelé une seule fois, dans main.
+// NewServices instantiates the shared services. Called once, in main.
 func NewServices(q *database.Queries) module.CoreServices {
 	return &services{
 		auth: auth.New(auth.NewStore(q)),
 	}
 }
 
-// Auth renvoie le service d'authentification partagé par tous les modules.
+// Auth yields the authentication service shared by every module.
 func (s *services) Auth() auth.Service {
 	return s.auth
 }

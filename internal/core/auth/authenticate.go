@@ -4,8 +4,8 @@ package auth
 //
 // | Élément              | Résumé                                                   | Ligne |
 // |----------------------|----------------------------------------------------------|-------|
-// | service.Authenticate | Résout un token présenté en Principal, en temps constant  | 31    |
-// | service.touch        | Note l'usage du token, au plus une fois par intervalle     | 75    |
+// | service.Authenticate | Resolves a presented token into a Principal, in constant time | 31 |
+// | service.touch        | Records the token's use, at most once per interval        | 75    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -19,15 +19,15 @@ import (
 	"github.com/google/uuid"
 )
 
-// decoyHash est un hash valide comparé quand le préfixe est inconnu, pour que le chemin d'échec
-// coûte le même temps que le chemin nominal. Sans lui, la latence révélerait quels préfixes
-// existent en base.
+// decoyHash is a valid hash compared when the prefix is unknown, so that the failure path costs
+// the same time as the nominal one. Without it, the latency would reveal which prefixes
+// exist in the database.
 var decoyHash = crypto.HashSecret("decoy")
 
-// Authenticate résout un token présenté en Principal.
+// Authenticate resolves a presented token into a Principal.
 //
-// Tous les échecs renvoient ErrUnauthenticated sans détail : distinguer « préfixe inconnu » de
-// « secret faux » donnerait à un attaquant un moyen d'énumérer les tokens valides.
+// Every failure yields ErrUnauthenticated with no detail: telling "unknown prefix" apart from
+// "wrong secret" would give an attacker a way to enumerate the valid tokens.
 func (s *service) Authenticate(ctx context.Context, rawToken string) (Principal, error) {
 	prefix, secret, err := crypto.ParseToken(rawToken)
 	if err != nil {
@@ -37,7 +37,7 @@ func (s *service) Authenticate(ctx context.Context, rawToken string) (Principal,
 	rec, err := s.store.TokenByPrefix(ctx, prefix)
 	if err != nil {
 		if errors.Is(err, ErrTokenNotFound) {
-			// Comparaison factice : le préfixe inconnu doit coûter le même temps.
+			// Decoy comparison: an unknown prefix must cost the same time.
 			crypto.VerifySecret(secret, decoyHash)
 			return Principal{}, ErrUnauthenticated
 		}
@@ -58,8 +58,8 @@ func (s *service) Authenticate(ctx context.Context, rawToken string) (Principal,
 		ProjectID: rec.ProjectID,
 	}
 
-	// Un token de projet sans scope complet est une incohérence de données : le refuser plutôt
-	// que servir une requête non scopée, qui contournerait l'isolation entre projets.
+	// A project token without a complete scope is a data inconsistency: reject it rather than
+	// serve an unscoped request, which would bypass the isolation between projects.
 	if principal.Scope == ScopeProject &&
 		(principal.TeamID == uuid.Nil || principal.ProjectID == uuid.Nil) {
 		return Principal{}, ErrUnauthenticated
@@ -70,8 +70,8 @@ func (s *service) Authenticate(ctx context.Context, rawToken string) (Principal,
 	return principal, nil
 }
 
-// touch note l'usage du token au plus une fois par intervalle, pour ne pas transformer chaque
-// lecture authentifiée en écriture. Best effort : une erreur ici ne refuse pas la requête.
+// touch records the token's use at most once per interval, so as not to turn every
+// authenticated read into a write. Best effort: an error here does not reject the request.
 func (s *service) touch(ctx context.Context, rec TokenRecord) {
 	if !rec.LastUsedAt.IsZero() && time.Since(rec.LastUsedAt) < s.touchInterval {
 		return

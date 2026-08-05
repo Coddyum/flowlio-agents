@@ -73,7 +73,7 @@ func openDB(t *testing.T) *sql.DB {
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		t.Fatalf("ouverture de la base: %v", err)
+		t.Fatalf("opening the database: %v", err)
 	}
 	if err := db.Ping(); err != nil {
 		t.Fatalf("base injoignable: %v", err)
@@ -96,7 +96,7 @@ func newTeam(t *testing.T, db *sql.DB) uuid.UUID {
 	}
 	t.Cleanup(func() {
 		if _, err := db.Exec("DELETE FROM teams WHERE id = $1", teamID); err != nil {
-			t.Errorf("nettoyage de la team %s: %v", teamID, err)
+			t.Errorf("cleaning up team %s: %v", teamID, err)
 		}
 	})
 	return teamID
@@ -233,14 +233,14 @@ func TestResolutionStaysInsideTheCallerScope(t *testing.T) {
 	// norm, not a contrived case: it is exactly what the key guard has to survive.
 	newTask(t, db, caller, 34, "my task 34")
 	newTask(t, db, sibling, 34, "the sibling's task 34")
-	newIssue(t, db, caller, sibling, 12, "question entrante")   // FRNT → CORE
-	newIssue(t, db, sibling, caller, 7, "question sortante")    // CORE → FRNT
-	newIssue(t, db, third, sibling, 1, "conversation de tiers") // FRNT → OPS
+	newIssue(t, db, caller, sibling, 12, "incoming question")      // FRNT → CORE
+	newIssue(t, db, sibling, caller, 7, "outgoing question")       // CORE → FRNT
+	newIssue(t, db, third, sibling, 1, "third-party conversation") // FRNT → OPS
 
 	ts, tok := serveRef(t, db, caller)
 
-	cas := []struct {
-		nom    string
+	cases := []struct {
+		name   string
 		key    string
 		number int64
 		status int
@@ -258,8 +258,8 @@ func TestResolutionStaysInsideTheCallerScope(t *testing.T) {
 		{"unknown key", "ZZZZ", 1, http.StatusNotFound, "", ""},
 	}
 
-	for _, c := range cas {
-		t.Run(c.nom, func(t *testing.T) {
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
 			got := get(t, ts, tok, c.key, c.number)
 
 			if got.status != c.status {

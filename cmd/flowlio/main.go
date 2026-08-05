@@ -4,16 +4,16 @@ package main
 //
 // | Élément   | Résumé                                                              | Ligne |
 // |-----------|---------------------------------------------------------------------|-------|
-// | main      | Point d'entrée de la CLI : dispatch et code de sortie                 | 33    |
-// | run       | Route la commande demandée vers son implémentation                    | 46    |
-// | usage     | Affiche l'aide                                                        | 85    |
-// | newClient | Construit le client API à partir des identifiants locaux ou de l'env  | 130   |
+// | main      | Entry point of the CLI: dispatch and exit code                        | 34    |
+// | run       | Routes the requested command to its implementation                    | 47    |
+// | usage     | Prints the help                                                       | 86    |
+// | newClient | Builds the API client from the local credentials or from the env      | 131   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// La CLI est le visage du produit en local : elle doit rendre un projet opérationnel en moins
-// de deux minutes, sans lire de documentation.
+// The CLI is the face of the product locally: it must make a project operational in under two
+// minutes, without reading any documentation.
 
 import (
 	"context"
@@ -25,7 +25,8 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/pkg/credentials"
 )
 
-// main délègue à run et traduit l'erreur en code de sortie : un seul endroit décide du statut.
+// main delegates to run and translates the error into an exit code: one single place decides the
+// status.
 //
 // The general case is 1. A command needing another status carries it in an `exitError`
 // (`watch.go`) instead of calling os.Exit itself: os.Exit unwinds no defer, and the day a command
@@ -42,7 +43,7 @@ func main() {
 	}
 }
 
-// run route la commande vers son implémentation. Chaque commande vit dans son propre fichier.
+// run routes the command to its implementation. Every command lives in its own file.
 func run(args []string) error {
 	if len(args) == 0 {
 		usage()
@@ -77,11 +78,11 @@ func run(args []string) error {
 		return nil
 	default:
 		usage()
-		return fmt.Errorf("commande inconnue: %s", args[0])
+		return fmt.Errorf("unknown command: %s", args[0])
 	}
 }
 
-// usage affiche l'aide de la CLI.
+// usage prints the CLI help.
 func usage() {
 	fmt.Print(`flowlio — project management for AI agents
 
@@ -125,8 +126,8 @@ Environment:
 `)
 }
 
-// newClient construit le client API. Sans identifiants, le message dit quoi faire plutôt que
-// d'exposer un chemin de fichier sans contexte.
+// newClient builds the API client. Without credentials, the message says what to do rather than
+// exposing a file path without context.
 func newClient() (*client.Client, error) {
 	c, err := client.FromCredentials(os.Getenv("FLOWLIO_API_URL"), os.Getenv("FLOWLIO_TOKEN"))
 	if err == nil {

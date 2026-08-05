@@ -1,15 +1,13 @@
 package main
 
-// Ce que ce fichier verrouille : ce que l'HUMAIN LIT.
+// What this file locks down: what the HUMAN READS.
 //
-// Les trois commandes `trust` n'ont aucune logique métier — elles composent un chemin, décodent
-// une réponse et impriment. La seule chose qui puisse y être fausse est donc le texte, et c'est
-// exactement ce que personne ne teste d'habitude. Or ce texte est la seule surface où la vérité du
-// graphe est lisible, et la première chose que lit quelqu'un dont l'agent vient de recevoir
-// `not found`.
+// The three `trust` commands have no business logic — they compose a path, decode a response and
+// print. The only thing that can be wrong in them is therefore the text, and that is exactly what
+// nobody usually tests. Yet that text is the only surface where the truth of the graph is
+// readable, and the first thing read by somebody whose agent just got `not found`.
 //
-// Le serveur est un httptest : les chemins et les corps réellement émis sont vérifiés, pas
-// supposés.
+// The server is an httptest: the paths and bodies actually emitted are checked, not assumed.
 
 import (
 	"context"
@@ -26,11 +24,11 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
-// capture détourne os.Stdout le temps de fn et rend ce qui y a été écrit.
+// capture diverts os.Stdout for the duration of fn and yields what was written to it.
 //
-// Les commandes impriment avec fmt.Printf plutôt que sur un io.Writer injecté, comme les six
-// autres commandes du binaire. Détourner le descripteur garde ce test aligné sur la forme du
-// reste de la CLI au lieu d'imposer une injection à une seule famille de commandes.
+// The commands print with fmt.Printf rather than to an injected io.Writer, like the six other
+// commands of the binary. Diverting the descriptor keeps this test aligned on the shape of the
+// rest of the CLI instead of forcing an injection on a single family of commands.
 func capture(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
 
@@ -40,26 +38,26 @@ func capture(t *testing.T, fn func() error) (string, error) {
 	}
 	saved := os.Stdout
 	os.Stdout = w
-	// defer, et pas une restauration en ligne : si fn panique, os.Stdout resterait branché sur un
-	// tube que personne ne lit et TOUTE la suite du paquet perdrait sa sortie — un échec ailleurs
-	// deviendrait alors indébogable.
+	// defer, and not an inline restore: if fn panics, os.Stdout would stay plugged into a pipe
+	// nobody reads and the WHOLE rest of the package would lose its output — a failure elsewhere
+	// would then become undebuggable.
 	defer func() { os.Stdout = saved }()
 
 	runErr := fn()
 
 	os.Stdout = saved
 	if err := w.Close(); err != nil {
-		t.Fatalf("fermeture du tube: %v", err)
+		t.Fatalf("closing the pipe: %v", err)
 	}
 	out, err := io.ReadAll(r)
 	if err != nil {
-		t.Fatalf("lecture du tube: %v", err)
+		t.Fatalf("reading the pipe: %v", err)
 	}
 	return string(out), runErr
 }
 
-// trustAPI monte une API de test. Il enregistre chaque requête reçue, ce qui permet d'asserter le
-// CHEMIN réellement émis — la partie qu'une relecture ne voit pas.
+// trustAPI mounts a test API. It records every request received, which allows asserting on the
+// PATH actually emitted — the part a re-reading does not see.
 type trustAPI struct {
 	edges    []service.TrustEdge
 	projects []service.Project
@@ -96,21 +94,21 @@ func (a *trustAPI) serve(t *testing.T) *client.Client {
 	return client.New(srv.URL, "flw_test_secret")
 }
 
-func projets(keys ...string) []service.Project {
+func projectsNamed(keys ...string) []service.Project {
 	out := make([]service.Project, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, service.Project{Key: k, Name: "Projet " + k})
+		out = append(out, service.Project{Key: k, Name: "Project " + k})
 	}
 	return out
 }
 
-// Un graphe VIDE est le cas qui compte : c'est l'état par défaut de toute team après la migration,
-// donc celui dans lequel un humain arrive après qu'un agent lui a rendu `not found`.
+// An EMPTY graph is the case that counts: it is the default state of every team after the
+// migration, hence the one a human lands in after an agent handed them `not found`.
 //
-// La sortie doit nommer les projets ET donner la commande exacte à taper. Ne rien afficher serait
-// techniquement correct et pratiquement inutilisable.
-func TestTrustListSurUnGrapheVideDitQuoiTaper(t *testing.T) {
-	api := &trustAPI{projects: projets("CORE", "FRNT", "OPS")}
+// The output must name the projects AND give the exact command to type. Printing nothing would be
+// technically correct and practically unusable.
+func TestTrustListOnAnEmptyGraphSaysWhatToType(t *testing.T) {
+	api := &trustAPI{projects: projectsNamed("CORE", "FRNT", "OPS")}
 
 	out, err := capture(t, func() error {
 		return trustList(context.Background(), api.serve(t), "acme")
@@ -119,21 +117,21 @@ func TestTrustListSurUnGrapheVideDitQuoiTaper(t *testing.T) {
 		t.Fatalf("trustList: %v", err)
 	}
 
-	for _, attendu := range []string{
+	for _, expected := range []string{
 		"no trust declared",
 		"CORE, FRNT, OPS",
 		"flowlio trust allow CORE FRNT --team acme",
 	} {
-		if !strings.Contains(out, attendu) {
-			t.Errorf("la sortie ne contient pas %q :\n%s", attendu, out)
+		if !strings.Contains(out, expected) {
+			t.Errorf("the output does not contain %q:\n%s", expected, out)
 		}
 	}
 }
 
-// Une team d'UN SEUL projet n'a aucune paire possible : lui proposer d'en ouvrir une serait
-// proposer une commande qui ne peut pas exister.
-func TestTrustListNeProposeRienSansPairePossible(t *testing.T) {
-	api := &trustAPI{projects: projets("CORE")}
+// A team of a SINGLE project has no possible pair: offering to open one would be offering a
+// command that cannot exist.
+func TestTrustListOffersNothingWithoutAPossiblePair(t *testing.T) {
+	api := &trustAPI{projects: projectsNamed("CORE")}
 
 	out, err := capture(t, func() error {
 		return trustList(context.Background(), api.serve(t), "acme")
@@ -143,22 +141,22 @@ func TestTrustListNeProposeRienSansPairePossible(t *testing.T) {
 	}
 
 	if strings.Contains(out, "trust allow") {
-		t.Errorf("une commande est proposée alors qu'aucune paire n'est possible :\n%s", out)
+		t.Errorf("a command is offered although no pair is possible:\n%s", out)
 	}
 	if !strings.Contains(out, "fewer than two projects") {
-		t.Errorf("la sortie n'explique pas pourquoi il n'y a rien à faire :\n%s", out)
+		t.Errorf("the output does not explain why there is nothing to do:\n%s", out)
 	}
 }
 
-// Le compte « X sur Y » est ce qui montre d'un coup d'œil qu'il reste quelque chose à ouvrir.
-// Trois projets font trois paires possibles ; deux déclarées en laissent une.
-func TestTrustListCompteLesPairesPossibles(t *testing.T) {
-	jour := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+// The "X out of Y" count is what shows at a glance that something is left to open. Three projects
+// make three possible pairs; two declared leave one.
+func TestTrustListCountsThePossiblePairs(t *testing.T) {
+	day := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
 	api := &trustAPI{
-		projects: projets("CORE", "FRNT", "OPS"),
+		projects: projectsNamed("CORE", "FRNT", "OPS"),
 		edges: []service.TrustEdge{
-			{First: "CORE", Second: "FRNT", CreatedAt: jour},
-			{First: "CORE", Second: "OPS", CreatedAt: jour},
+			{First: "CORE", Second: "FRNT", CreatedAt: day},
+			{First: "CORE", Second: "OPS", CreatedAt: day},
 		},
 	}
 
@@ -169,46 +167,46 @@ func TestTrustListCompteLesPairesPossibles(t *testing.T) {
 		t.Fatalf("trustList: %v", err)
 	}
 
-	for _, attendu := range []string{"CORE ↔ FRNT", "CORE ↔ OPS", "2026-08-04", "2 pair(s) out of 3 possible"} {
-		if !strings.Contains(out, attendu) {
-			t.Errorf("la sortie ne contient pas %q :\n%s", attendu, out)
+	for _, expected := range []string{"CORE ↔ FRNT", "CORE ↔ OPS", "2026-08-04", "2 pair(s) out of 3 possible"} {
+		if !strings.Contains(out, expected) {
+			t.Errorf("the output does not contain %q:\n%s", expected, out)
 		}
 	}
 }
 
-// allow et deny disent ce qui a CHANGÉ. Un rejeu n'est pas une erreur, mais laisser croire à
-// l'humain qu'il vient de changer quelque chose en serait une.
-func TestTrustAnnonceCeQuiAChange(t *testing.T) {
-	cas := []struct {
-		name     string
-		changed  bool
-		run      func(*client.Client) error
-		attendu  string
-		interdit string
+// allow and deny say what CHANGED. A replay is not an error, but letting the human believe they
+// just changed something would be one.
+func TestTrustAnnouncesWhatChanged(t *testing.T) {
+	cases := []struct {
+		name      string
+		changed   bool
+		run       func(*client.Client) error
+		expected  string
+		forbidden string
 	}{
 		{
-			"allow, première fois", true,
+			"allow, first time", true,
 			func(c *client.Client) error { return trustAllow(context.Background(), c, "acme", "CORE", "FRNT") },
 			"can now raise issues to each other", "already allowed",
 		},
 		{
-			"allow, rejeu", false,
+			"allow, replay", false,
 			func(c *client.Client) error { return trustAllow(context.Background(), c, "acme", "CORE", "FRNT") },
 			"already allowed, nothing to do", "can now",
 		},
 		{
-			"deny, première fois", true,
+			"deny, first time", true,
 			func(c *client.Client) error { return trustDeny(context.Background(), c, "acme", "CORE", "FRNT") },
 			"trust withdrawn", "nothing to withdraw",
 		},
 		{
-			"deny, rejeu", false,
+			"deny, replay", false,
 			func(c *client.Client) error { return trustDeny(context.Background(), c, "acme", "CORE", "FRNT") },
 			"no trust declared, nothing to withdraw", "trust withdrawn",
 		},
 	}
 
-	for _, c := range cas {
+	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			api := &trustAPI{decision: service.TrustDecision{First: "CORE", Second: "FRNT", Changed: c.changed}}
 
@@ -216,24 +214,24 @@ func TestTrustAnnonceCeQuiAChange(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", c.name, err)
 			}
-			if !strings.Contains(out, c.attendu) {
-				t.Errorf("la sortie ne contient pas %q :\n%s", c.attendu, out)
+			if !strings.Contains(out, c.expected) {
+				t.Errorf("the output does not contain %q:\n%s", c.expected, out)
 			}
-			if strings.Contains(out, c.interdit) {
-				t.Errorf("la sortie contient %q, qui est le message de l'autre cas :\n%s", c.interdit, out)
+			if strings.Contains(out, c.forbidden) {
+				t.Errorf("the output contains %q, which is the other case's message:\n%s", c.forbidden, out)
 			}
 		})
 	}
 }
 
-// LES TROIS LIGNES LES PLUS IMPORTANTES DE LA COMMANDE.
+// THE THREE MOST IMPORTANT LINES OF THE COMMAND.
 //
-// `trust deny` n'est pas un outil de confinement : les fils déjà ouverts restent répondables, sans
-// borne de temps. Sans ces lignes, quelqu'un qui vient de découvrir un repo compromis croirait
-// l'avoir coupé. Le message nomme donc explicitement l'outil qui coupe vraiment.
+// `trust deny` is not a containment tool: the threads already open stay answerable, with no time
+// bound. Without these lines, somebody who has just discovered a compromised repo would believe
+// they had cut it off. The message therefore names explicitly the tool that really cuts.
 //
-// MUTATION : retirer l'un des deux Println de trustDeny fait tomber ce test.
-func TestTrustDenyNommeLeVraiCoupeCircuit(t *testing.T) {
+// MUTATION: removing either of the two Println of trustDeny makes this test fall over.
+func TestTrustDenyNamesTheRealCircuitBreaker(t *testing.T) {
 	api := &trustAPI{decision: service.TrustDecision{First: "CORE", Second: "OPS", Changed: true}}
 
 	out, err := capture(t, func() error {
@@ -243,23 +241,23 @@ func TestTrustDenyNommeLeVraiCoupeCircuit(t *testing.T) {
 		t.Fatalf("trustDeny: %v", err)
 	}
 
-	for _, attendu := range []string{
+	for _, expected := range []string{
 		"Threads already open stay readable and answerable.",
 		"flowlio token revoke",
 	} {
-		if !strings.Contains(out, attendu) {
-			t.Errorf("la sortie ne dit pas %q — l'humain croira avoir confiné le repo :\n%s", attendu, out)
+		if !strings.Contains(out, expected) {
+			t.Errorf("the output does not say %q — the human will believe they contained the repo:\n%s", expected, out)
 		}
 	}
 }
 
-// Les chemins réellement émis. C'est la partie qu'une relecture ne voit pas : une clé oubliée dans
-// l'URL du DELETE, ou un ?team= perdu, ne se remarque qu'à l'exécution.
-func TestTrustEmetLesBonsChemins(t *testing.T) {
-	cas := []struct {
-		name    string
-		run     func(*client.Client) error
-		attendu string
+// The paths actually emitted. This is the part a re-reading does not see: a key forgotten in the
+// DELETE URL, or a lost ?team=, only shows up at run time.
+func TestTrustEmitsTheRightPaths(t *testing.T) {
+	cases := []struct {
+		name     string
+		run      func(*client.Client) error
+		expected string
 	}{
 		{
 			"allow",
@@ -272,13 +270,13 @@ func TestTrustEmetLesBonsChemins(t *testing.T) {
 			"DELETE /api/workspace/trust/CORE/FRNT?team=acme",
 		},
 		{
-			"deny sans team (token de projet)",
+			"deny without a team (project token)",
 			func(c *client.Client) error { return trustDeny(context.Background(), c, "", "CORE", "FRNT") },
 			"DELETE /api/workspace/trust/CORE/FRNT",
 		},
 	}
 
-	for _, c := range cas {
+	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			api := &trustAPI{decision: service.TrustDecision{First: "CORE", Second: "FRNT"}}
 			cl := api.serve(t)
@@ -286,18 +284,18 @@ func TestTrustEmetLesBonsChemins(t *testing.T) {
 			if _, err := capture(t, func() error { return c.run(cl) }); err != nil {
 				t.Fatalf("%s: %v", c.name, err)
 			}
-			if len(api.seen) == 0 || api.seen[0] != c.attendu {
-				t.Errorf("chemin émis = %v, attendu %q", api.seen, c.attendu)
+			if len(api.seen) == 0 || api.seen[0] != c.expected {
+				t.Errorf("path emitted = %v, expected %q", api.seen, c.expected)
 			}
 		})
 	}
 }
 
-// Un 403 nu, une commande après qu'on a fait exporter FLOWLIO_TOKEN, est le pire message que ce
-// produit puisse rendre : l'humain vient de suivre les instructions et se fait refuser.
+// A bare 403, on a command run right after being told to export FLOWLIO_TOKEN, is the worst
+// message this product can yield: the human has just followed the instructions and gets rejected.
 //
-// MUTATION : retirer explainAdminToken de runTrust fait tomber ce test.
-func TestUn403DitQuelTokenUtiliser(t *testing.T) {
+// MUTATION: removing explainAdminToken from runTrust makes this test fall over.
+func TestA403SaysWhichTokenToUse(t *testing.T) {
 	api := &trustAPI{status: http.StatusForbidden}
 	cl := api.serve(t)
 
@@ -305,19 +303,19 @@ func TestUn403DitQuelTokenUtiliser(t *testing.T) {
 		return explainAdminToken(trustList(context.Background(), cl, "acme"))
 	})
 	if err == nil {
-		t.Fatal("aucune erreur alors que l'API a rendu 403")
+		t.Fatal("no error although the API returned 403")
 	}
 
-	for _, attendu := range []string{"ADMIN token", "credentials.json", "FLOWLIO_TOKEN"} {
-		if !strings.Contains(err.Error(), attendu) {
-			t.Errorf("le message ne contient pas %q :\n%v", attendu, err)
+	for _, expected := range []string{"ADMIN token", "credentials.json", "FLOWLIO_TOKEN"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Errorf("the message does not contain %q:\n%v", expected, err)
 		}
 	}
 }
 
-// Une erreur qui n'est PAS un 403 traverse explainAdminToken sans être maquillée. Sans ce cas, un
-// helper qui réécrirait tout en « mauvais token » passerait pour correct.
-func TestUneAutreErreurNestPasMaquillee(t *testing.T) {
+// An error that is NOT a 403 goes through explainAdminToken without being dressed up. Without this
+// case, a helper rewriting everything into "wrong token" would look correct.
+func TestAnotherErrorIsNotDressedUp(t *testing.T) {
 	api := &trustAPI{status: http.StatusNotFound}
 	cl := api.serve(t)
 
@@ -325,17 +323,17 @@ func TestUneAutreErreurNestPasMaquillee(t *testing.T) {
 		return explainAdminToken(trustList(context.Background(), cl, "acme"))
 	})
 	if err == nil {
-		t.Fatal("aucune erreur alors que l'API a rendu 404")
+		t.Fatal("no error although the API returned 404")
 	}
 	if strings.Contains(err.Error(), "ADMIN token") {
-		t.Errorf("un 404 est présenté comme un problème de token :\n%v", err)
+		t.Errorf("a 404 is presented as a token problem:\n%v", err)
 	}
 }
 
 func TestPossiblePairs(t *testing.T) {
 	for _, c := range []struct{ n, want int }{{0, 0}, {1, 0}, {2, 1}, {3, 3}, {4, 6}, {30, 435}} {
 		if got := possiblePairs(c.n); got != c.want {
-			t.Errorf("possiblePairs(%d) = %d, attendu %d", c.n, got, c.want)
+			t.Errorf("possiblePairs(%d) = %d, expected %d", c.n, got, c.want)
 		}
 	}
 }
