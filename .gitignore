@@ -23,5 +23,8 @@ coverage.*
 .claude/worktrees/
 
 
-# Next prompt
+# Session handoff and its two append-only companions. Working notes, written in French, for
+# whoever picks the project up next — not documentation, and not part of what this repo publishes.
 next.md
+docs/decisions.md
+docs/lecons.md
