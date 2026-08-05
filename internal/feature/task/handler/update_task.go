@@ -6,7 +6,7 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/service"
 )
 
-// UpdateTask applique un patch partiel à une tâche du projet du token.
+// UpdateTask applies a partial patch to a task of the token's project.
 func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	teamID, projectID, ok := h.scope(w, r)
 	if !ok {

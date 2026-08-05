@@ -4,18 +4,18 @@ package store
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | store.ClaimNumber  | Réserve le prochain numéro lisible du projet                 | 38    |
-// | store.CreateTask   | Insère une tâche dont le numéro est déjà réservé              | 50    |
-// | store.TaskByNumber | Lit une tâche par son numéro, scopée team + projet            | 69    |
-// | store.ListTasks    | Lit le backlog du projet selon un filtre                      | 82    |
-// | store.UpdateTask   | Applique un patch partiel à une tâche active                  | 103   |
-// | toTask             | Projette une ligne générée en type domaine                    | 123   |
-// | nullTime           | Convertit un pointeur de date en paramètre nullable           | 141   |
-// | fromNullTime       | Convertit une date nullable lue en base en pointeur            | 149   |
-// | nullString         | Convertit un pointeur de chaîne en paramètre nullable         | 158   |
-// | nullStatus         | Convertit un statut de filtre en paramètre nullable            | 167   |
-// | nullStatusPtr      | Convertit un statut de patch en paramètre nullable             | 175   |
-// | nullPriorityPtr    | Convertit une priorité de patch en paramètre nullable          | 183   |
+// | store.ClaimNumber  | Reserves the project's next readable number                  | 37    |
+// | store.CreateTask   | Inserts a task whose number is already reserved              | 49    |
+// | store.TaskByNumber | Reads a task by its number, scoped by team + project         | 68    |
+// | store.ListTasks    | Reads the project backlog through a filter                   | 81    |
+// | store.UpdateTask   | Applies a partial patch to an active task                    | 102   |
+// | toTask             | Projects a generated row onto the domain type                | 122   |
+// | nullTime           | Turns a date pointer into a nullable parameter               | 140   |
+// | fromNullTime       | Turns a nullable date read from the database into a pointer  | 148   |
+// | nullString         | Turns a string pointer into a nullable parameter             | 157   |
+// | nullStatus         | Turns a filter status into a nullable parameter              | 166   |
+// | nullStatusPtr      | Turns a patch status into a nullable parameter               | 174   |
+// | nullPriorityPtr    | Turns a patch priority into a nullable parameter             | 182   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -29,12 +29,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// ClaimNumber réserve le prochain numéro lisible du projet. Le UPDATE ... RETURNING verrouille
-// la ligne du projet, ce qui sérialise les créations concurrentes : deux tâches ne peuvent pas
-// obtenir le même numéro.
+// ClaimNumber reserves the project's next readable number. The UPDATE ... RETURNING locks the
+// project row, which serialises concurrent creations: two tasks cannot obtain the same number.
 //
-// Un projet qui n'appartient pas à la team est introuvable, donc le numéro n'est pas réservé :
-// on ne peut pas faire avancer le compteur d'un projet tiers en le devinant.
+// A project that does not belong to the team is not found, so no number is reserved: nobody can
+// push a third-party project's counter forward by guessing it.
 func (s *store) ClaimNumber(ctx context.Context, teamID, projectID uuid.UUID) (int64, error) {
 	number, err := s.q.ClaimNextNumber(ctx, database.ClaimNextNumberParams{
 		ID:     projectID,
@@ -46,7 +45,7 @@ func (s *store) ClaimNumber(ctx context.Context, teamID, projectID uuid.UUID) (i
 	return number, nil
 }
 
-// CreateTask insère une tâche dont le numéro est déjà réservé.
+// CreateTask inserts a task whose number is already reserved.
 func (s *store) CreateTask(ctx context.Context, in NewTask) (Task, error) {
 	row, err := s.q.CreateTask(ctx, database.CreateTaskParams{
 		TeamID:    in.TeamID,
@@ -64,8 +63,8 @@ func (s *store) CreateTask(ctx context.Context, in NewTask) (Task, error) {
 	return toTask(row), nil
 }
 
-// TaskByNumber lit une tâche par son numéro, toujours dans le scope team + projet. Une tâche
-// d'un autre projet remonte ErrNotFound : introuvable, pas interdite.
+// TaskByNumber reads a task by its number, always within the team + project scope. A task of
+// another project yields ErrNotFound: not found, not forbidden.
 func (s *store) TaskByNumber(ctx context.Context, teamID, projectID uuid.UUID, number int64) (Task, error) {
 	row, err := s.q.GetTask(ctx, database.GetTaskParams{
 		TeamID:    teamID,
@@ -78,7 +77,7 @@ func (s *store) TaskByNumber(ctx context.Context, teamID, projectID uuid.UUID, n
 	return toTask(row), nil
 }
 
-// ListTasks lit le backlog du projet, du numéro le plus récent au plus ancien.
+// ListTasks reads the project backlog, newest number first.
 func (s *store) ListTasks(ctx context.Context, filter TaskFilter) ([]Task, error) {
 	rows, err := s.q.ListTasks(ctx, database.ListTasksParams{
 		TeamID:          filter.TeamID,
@@ -98,8 +97,8 @@ func (s *store) ListTasks(ctx context.Context, filter TaskFilter) ([]Task, error
 	return tasks, nil
 }
 
-// UpdateTask applique un patch partiel. Une tâche archivée est hors de portée de la query et
-// remonte donc ErrNotFound, comme un numéro inexistant.
+// UpdateTask applies a partial patch. An archived task is out of the query's reach and therefore
+// yields ErrNotFound, like a non-existent number.
 func (s *store) UpdateTask(ctx context.Context, patch TaskPatch) (Task, error) {
 	row, err := s.q.UpdateTask(ctx, database.UpdateTaskParams{
 		TeamID:        patch.TeamID,
@@ -119,7 +118,7 @@ func (s *store) UpdateTask(ctx context.Context, patch TaskPatch) (Task, error) {
 	return toTask(row), nil
 }
 
-// toTask projette une ligne générée en type domaine.
+// toTask projects a generated row onto the domain type.
 func toTask(row database.Task) Task {
 	return Task{
 		ID:         row.ID,
@@ -137,7 +136,7 @@ func toTask(row database.Task) Task {
 	}
 }
 
-// nullTime convertit un pointeur de date en paramètre nullable.
+// nullTime turns a date pointer into a nullable parameter.
 func nullTime(t *time.Time) sql.NullTime {
 	if t == nil {
 		return sql.NullTime{}
@@ -145,7 +144,7 @@ func nullTime(t *time.Time) sql.NullTime {
 	return sql.NullTime{Time: *t, Valid: true}
 }
 
-// fromNullTime convertit une date nullable lue en base en pointeur.
+// fromNullTime turns a nullable date read from the database into a pointer.
 func fromNullTime(t sql.NullTime) *time.Time {
 	if !t.Valid {
 		return nil
@@ -154,7 +153,7 @@ func fromNullTime(t sql.NullTime) *time.Time {
 	return &value
 }
 
-// nullString convertit un pointeur de chaîne en paramètre nullable.
+// nullString turns a string pointer into a nullable parameter.
 func nullString(s *string) sql.NullString {
 	if s == nil {
 		return sql.NullString{}
@@ -162,8 +161,8 @@ func nullString(s *string) sql.NullString {
 	return sql.NullString{String: *s, Valid: true}
 }
 
-// nullStatus convertit un statut de filtre en paramètre nullable : la chaîne vide signifie
-// « tous les statuts ».
+// nullStatus turns a filter status into a nullable parameter: the empty string means "every
+// status".
 func nullStatus(status string) database.NullTaskStatus {
 	if status == "" {
 		return database.NullTaskStatus{}
@@ -171,7 +170,7 @@ func nullStatus(status string) database.NullTaskStatus {
 	return database.NullTaskStatus{TaskStatus: database.TaskStatus(status), Valid: true}
 }
 
-// nullStatusPtr convertit un statut de patch en paramètre nullable.
+// nullStatusPtr turns a patch status into a nullable parameter.
 func nullStatusPtr(status *string) database.NullTaskStatus {
 	if status == nil {
 		return database.NullTaskStatus{}
@@ -179,7 +178,7 @@ func nullStatusPtr(status *string) database.NullTaskStatus {
 	return nullStatus(*status)
 }
 
-// nullPriorityPtr convertit une priorité de patch en paramètre nullable.
+// nullPriorityPtr turns a patch priority into a nullable parameter.
 func nullPriorityPtr(priority *string) database.NullTaskPriority {
 	if priority == nil {
 		return database.NullTaskPriority{}

@@ -2,7 +2,7 @@ package handler
 
 import "net/http"
 
-// GetTask renvoie une tâche du projet du token et son fil de notes.
+// GetTask returns one task of the token's project along with its note thread.
 func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 	teamID, projectID, ok := h.scope(w, r)
 	if !ok {

@@ -7,11 +7,11 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 )
 
-// CreateTask ouvre une tâche dans le backlog du projet du token.
+// CreateTask opens a task in the backlog of the token's project.
 //
-// La réservation du numéro et l'insertion se font dans UNE transaction : si l'insertion échoue,
-// le compteur revient en arrière et le numéro n'est pas brûlé. Sans transaction, chaque
-// création ratée laisserait un trou définitif dans la suite CORE-1, CORE-2, …
+// Reserving the number and inserting happen in ONE transaction: should the insert fail, the
+// counter rolls back and the number is not burnt. Without a transaction, every failed creation
+// would leave a permanent hole in the CORE-1, CORE-2, … sequence.
 func (s *service) CreateTask(ctx context.Context, in CreateTaskInput) (Task, error) {
 	if err := validateScope(in.TeamID, in.ProjectID); err != nil {
 		return Task{}, err
@@ -28,8 +28,8 @@ func (s *service) CreateTask(ctx context.Context, in CreateTaskInput) (Task, err
 		return Task{}, err
 	}
 
-	// Un agent qui ouvre une tâche sans préciser l'état veut le cas nominal : à faire, priorité
-	// normale. Exiger ces deux champs ne rendrait aucune écriture plus sûre.
+	// An agent opening a task without naming a state wants the nominal case: to do, normal
+	// priority. Requiring those two fields would make no write any safer.
 	status := in.Status
 	if status == "" {
 		status = "todo"

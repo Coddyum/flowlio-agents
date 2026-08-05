@@ -6,21 +6,20 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/database"
 )
 
-// AppendEvent écrit une entrée du journal, avec `task` comme type de sujet.
+// AppendEvent writes a journal entry, with `task` as the subject type.
 //
-// Toujours appelé dans la transaction de ce qui la produit : un événement écrit à part pourrait
-// manquer alors que l'arête est déjà libérée, et la tâche débloquée ne l'apprendrait jamais — le
-// manque exact que cette feature comble.
+// Always called inside the transaction of whatever produces it: an event written apart could go
+// missing while the edge is already released, and the unblocked task would never learn about it —
+// the exact gap this feature fills.
 //
-// La feature task porte sa propre écriture plutôt que d'emprunter celle de la feature issue : un
-// module n'importe jamais un autre module. Les deux passent par la même query générée, donc la
-// table n'a qu'une définition.
+// The task feature carries its own write rather than borrowing the issue feature's: a module never
+// imports another module. Both go through the same generated query, so the table has a single
+// definition.
 //
-// Le journal ne sert qu'au drapeau « nouveau » de l'inbox — l'état de référence reste
-// task_dependencies.released_at et tasks.status. C'est cette propriété qui autorise à ne PAS payer
-// une livraison exactement-une-fois : un événement manqué coûte un `new: false`, jamais une tâche
-// qui ignore qu'elle est débloquée. Ne pas s'appuyer dessus pour autre chose sans relire
-// docs/DESIGN-M3.md.
+// The journal only serves the inbox's "new" flag — the reference state stays
+// task_dependencies.released_at and tasks.status. That property is what allows NOT paying for
+// exactly-once delivery: a missed event costs a `new: false`, never a task unaware that it is
+// unblocked. Do not lean on it for anything else without re-reading docs/DESIGN-M3.md.
 func (s *store) AppendEvent(ctx context.Context, event Event) error {
 	err := s.q.AppendEvent(ctx, database.AppendEventParams{
 		TeamID:         event.TeamID,

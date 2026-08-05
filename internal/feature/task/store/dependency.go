@@ -4,15 +4,15 @@ package store
 //
 // | Élément                   | Résumé                                                | Ligne |
 // |---------------------------|-------------------------------------------------------|-------|
-// | store.CreateDependency    | Ouvre une arête de blocage entre deux tâches            | 37    |
-// | store.ReleaseBlockerEdges | Libère les arêtes qu'une tâche vient de débloquer       | 57    |
-// | store.ReleaseEdge         | Libère une arête nommée                                 | 72    |
-// | store.ClearBlock          | Ramène une tâche bloquée par arête à `todo`             | 89    |
-// | store.ActiveEdges         | Rend le graphe de blocage actif du projet               | 103   |
-// | toDependency              | Projette une ligne générée en type domaine              | 117   |
+// | store.CreateDependency    | Opens a blocking edge between two tasks                 | 37    |
+// | store.ReleaseBlockerEdges | Releases the edges a task has just freed                | 57    |
+// | store.ReleaseEdge         | Releases one named edge                                 | 72    |
+// | store.ClearBlock          | Brings a task blocked by an edge back to `todo`         | 89    |
+// | store.ActiveEdges         | Returns the project's active blocking graph             | 103   |
+// | toDependency              | Projects a generated row onto the domain type           | 117   |
 //
-// Les deux boucles de projection de ReleasedEdge se ressemblent sans pouvoir être factorisées :
-// sqlc engendre un type de ligne DISTINCT par query, et une seule ligne de code les sépare.
+// The two ReleasedEdge projection loops look alike without being factorable: sqlc generates a
+// DISTINCT row type per query, and a single line of code separates them.
 //
 // Fin du sommaire.
 // =====================================================================
@@ -24,16 +24,16 @@ import (
 	"github.com/google/uuid"
 )
 
-// CreateDependency ouvre une arête « in.TaskID est bloquée par in.BlockerTaskID ».
+// CreateDependency opens an edge "in.TaskID is blocked by in.BlockerTaskID".
 //
-// Le project_id de l'arête est lu depuis la tâche bloquée et non fourni : c'est ce qui fait entrer
-// les deux extrémités dans la même clé étrangère composite. Un blocker d'un autre projet fait donc
-// échouer la contrainte en base — la dépendance inter-repos est inexprimable, pas seulement
-// refusée par le service (D42).
+// The edge's project_id is read from the blocked task rather than supplied: that is what brings
+// both endpoints into the same composite foreign key. A blocker from another project therefore
+// fails the constraint in the database — the cross-repo dependency is inexpressible, not merely
+// refused by the service (D42).
 //
-// Une tâche bloquée archivée, ou d'un autre projet, est hors de portée de la query et remonte
-// ErrNotFound. Une arête active déjà ouverte sur le même couple remonte ErrConflict : rejouer
-// block_task ne fabrique pas un second blocage à libérer.
+// A blocked task that is archived, or belongs to another project, is out of the query's reach and
+// yields ErrNotFound. An active edge already open on the same pair yields ErrConflict: replaying
+// block_task does not manufacture a second block to release.
 func (s *store) CreateDependency(ctx context.Context, in NewDependency) (Dependency, error) {
 	row, err := s.q.CreateTaskDependency(ctx, database.CreateTaskDependencyParams{
 		TaskID:        in.TaskID,
@@ -49,11 +49,11 @@ func (s *store) CreateDependency(ctx context.Context, in NewDependency) (Depende
 	return toDependency(row), nil
 }
 
-// ReleaseBlockerEdges libère les arêtes que blockerTaskID vient de débloquer en atteignant
-// blockerStatus, et rend celles qui l'ont été.
+// ReleaseBlockerEdges releases the edges blockerTaskID has just freed by reaching blockerStatus,
+// and returns the ones that were.
 //
-// force ignore la condition de libération : une bloquante archivée n'atteindra jamais rien, et
-// laisser ses arêtes en place fabriquerait des tâches que plus rien ne peut débloquer.
+// force ignores the release condition: an archived blocker will never reach anything, and leaving
+// its edges in place would manufacture tasks nothing can ever unblock.
 func (s *store) ReleaseBlockerEdges(ctx context.Context, projectID, blockerTaskID uuid.UUID, blockerStatus string, force bool) ([]uuid.UUID, error) {
 	freed, err := s.q.ReleaseDependenciesOfBlocker(ctx, database.ReleaseDependenciesOfBlockerParams{
 		BlockerTaskID: blockerTaskID,
@@ -67,8 +67,8 @@ func (s *store) ReleaseBlockerEdges(ctx context.Context, projectID, blockerTaskI
 	return freed, nil
 }
 
-// ReleaseEdge libère une arête nommée et rend la tâche libérée. Une arête absente ou déjà libérée
-// rend une liste vide et non une erreur : pour l'appelant, les deux sont le même non-événement.
+// ReleaseEdge releases one named edge and returns the freed task. A missing or already-released
+// edge returns an empty list rather than an error: to the caller, both are the same non-event.
 func (s *store) ReleaseEdge(ctx context.Context, projectID, taskID, blockerTaskID uuid.UUID) ([]uuid.UUID, error) {
 	freed, err := s.q.ReleaseDependencyPair(ctx, database.ReleaseDependencyPairParams{
 		TaskID:        taskID,
@@ -81,11 +81,11 @@ func (s *store) ReleaseEdge(ctx context.Context, projectID, taskID, blockerTaskI
 	return freed, nil
 }
 
-// ClearBlock ramène la tâche de `blocked` à `todo`. Les trois conditions — statut encore bloqué,
-// plus aucune arête active, au moins une arête ayant posé le blocage — vivent dans la query.
+// ClearBlock brings the task back from `blocked` to `todo`. All three conditions — status still
+// blocked, no active edge left, at least one edge having set the block — live in the query.
 //
-// false signifie « rien à changer » et non un échec : c'est le cas nominal d'une tâche bloquée
-// par un agent pour une autre raison, qu'on notifie sans décider à sa place.
+// false means "nothing to change" rather than a failure: that is the nominal case of a task
+// blocked by an agent for another reason, which gets notified without anyone deciding for it.
 func (s *store) ClearBlock(ctx context.Context, teamID, projectID, taskID uuid.UUID) (bool, error) {
 	rows, err := s.q.ClearTaskBlock(ctx, database.ClearTaskBlockParams{
 		TaskID:    taskID,
@@ -98,8 +98,8 @@ func (s *store) ClearBlock(ctx context.Context, teamID, projectID, taskID uuid.U
 	return len(rows) > 0, nil
 }
 
-// ActiveEdges rend le graphe de blocage non libéré du projet, pour le parcours de détection de
-// cycle. Seules les deux extrémités traversent le réseau : c'est tout ce dont le parcours a besoin.
+// ActiveEdges returns the project's unreleased blocking graph, for the cycle-detection traversal.
+// Only the two endpoints cross the network: that is all the traversal needs.
 func (s *store) ActiveEdges(ctx context.Context, projectID uuid.UUID) ([]Edge, error) {
 	rows, err := s.q.ListActiveDependencyEdges(ctx, projectID)
 	if err != nil {
@@ -113,7 +113,7 @@ func (s *store) ActiveEdges(ctx context.Context, projectID uuid.UUID) ([]Edge, e
 	return edges, nil
 }
 
-// toDependency projette une ligne générée en type domaine.
+// toDependency projects a generated row onto the domain type.
 func toDependency(row database.TaskDependency) Dependency {
 	return Dependency{
 		ID:            row.ID,

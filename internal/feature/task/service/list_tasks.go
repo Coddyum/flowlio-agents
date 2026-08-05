@@ -6,11 +6,11 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 )
 
-// ListTasks renvoie le backlog du projet du token, du numéro le plus récent au plus ancien.
+// ListTasks returns the backlog of the token's project, newest number first.
 //
-// La description complète est retirée de la liste : elle peut faire des dizaines de milliers
-// d'octets par tâche, et un agent qui parcourt son backlog paierait en contexte ce qu'il ne lit
-// pas. GetTask la renvoie quand elle est réellement demandée.
+// The full description is stripped from the list: it can run to tens of thousands of bytes per
+// task, and an agent scanning its backlog would pay in context for what it does not read. GetTask
+// returns it when it is actually asked for.
 func (s *service) ListTasks(ctx context.Context, in ListTasksInput) ([]Task, error) {
 	if err := validateScope(in.TeamID, in.ProjectID); err != nil {
 		return nil, err

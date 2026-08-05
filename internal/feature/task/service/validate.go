@@ -4,20 +4,20 @@ package service
 //
 // | Élément          | Résumé                                                      | Ligne |
 // |------------------|-------------------------------------------------------------|-------|
-// | validateStatus   | Vérifie qu'un statut fait partie du vocabulaire du produit    | 79    |
-// | validatePriority | Vérifie qu'une priorité fait partie du vocabulaire            | 88    |
-// | validateTitle    | Vérifie qu'un titre n'est ni vide ni démesuré                 | 98    |
-// | validateBody     | Vérifie qu'un corps markdown ne dépasse pas la borne          | 110   |
-// | validateDeadline | Refuse une échéance dont l'année n'est pas sérialisable       | 129   |
-// | validateScope    | Refuse un scope de tenancy incomplet                          | 142   |
-// | clampLimit       | Ramène une limite de listing dans les bornes                  | 152   |
-// | translateStore   | Traduit une erreur de store en erreur domaine                 | 168   |
+// | validateStatus   | Checks a status belongs to the product vocabulary             | 79    |
+// | validatePriority | Checks a priority belongs to the vocabulary                   | 88    |
+// | validateTitle    | Checks a title is neither empty nor oversized                 | 98    |
+// | validateBody     | Checks a markdown body stays within the bound                 | 110   |
+// | validateDeadline | Rejects a deadline whose year cannot be serialised            | 129   |
+// | validateScope    | Rejects an incomplete tenancy scope                           | 142   |
+// | clampLimit       | Brings a listing limit back within bounds                     | 152   |
+// | translateStore   | Turns a store error into a domain error                       | 168   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// Les mêmes règles existent en ENUM et en CHECK dans la migration : la base est la garantie,
-// cette validation est le message d'erreur utile.
+// The very same rules exist as ENUM and CHECK in the migration: the database is the guarantee,
+// this validation is the useful error message.
 
 import (
 	"errors"
@@ -30,18 +30,18 @@ import (
 	"github.com/google/uuid"
 )
 
-// MaxBodyLen est la taille maximale d'un texte markdown accepté par le service : description
-// d'une tâche, ou note de progression.
+// MaxBodyLen is the largest markdown text the service accepts: a task description, or a progress
+// note.
 //
-// Elle est EXPORTÉE parce que le handler doit en dériver sa propre borne de transport. Les deux
-// ont vécu séparément le temps d'un commit, et le résultat était qu'une requête portant les deux
-// plus grands champs que ce service accepte était rejetée avant toute validation, avec un message
-// qui ne disait pas lequel des deux était en cause. Une borne de champ qui n'est pas atteignable
-// n'est pas une borne, c'est une promesse fausse.
+// It is EXPORTED because the handler has to derive its own transport bound from it. The two lived
+// apart for the span of one commit, and the result was that a request carrying the two largest
+// fields this service accepts got rejected before any validation, with a message that never said
+// which of the two was at fault. A field bound that cannot be reached is not a bound, it is a
+// false promise.
 const MaxBodyLen = 64 << 10
 
-// Bornes de taille. Le corps est large — une tâche porte une consigne complète pour un agent —
-// mais il reste borné : un backlog n'est pas un espace de stockage.
+// Size bounds. The body is generous — a task carries a full brief for an agent — but it stays
+// bounded: a backlog is not a storage space.
 const (
 	maxTitleLen = 200
 	maxBodyLen  = MaxBodyLen
@@ -49,13 +49,13 @@ const (
 	defaultLimit = 50
 	maxLimit     = 200
 
-	// maxDeadlineYear est la dernière année qu'une échéance peut porter. La borne vient de
-	// time.Time, qui refuse d'encoder en JSON une année hors [0, 9999].
+	// maxDeadlineYear is the last year a deadline may carry. The bound comes from time.Time, which
+	// refuses to encode a year outside [0, 9999] as JSON.
 	maxDeadlineYear = 9999
 )
 
-// Statuts nommés. Seuls ceux dont le code raisonne le sont : les autres n'existent que dans la
-// liste ci-dessous, qui est le vocabulaire complet.
+// Named statuses. Only the ones the code reasons about get a name: the others exist solely in the
+// list below, which is the complete vocabulary.
 const (
 	statusTodo       = "todo"
 	statusInProgress = "in_progress"
@@ -63,92 +63,92 @@ const (
 	statusDone       = "done"
 )
 
-// Vocabulaire du domaine. Il doit rester identique aux enums task_status et task_priority de la
-// migration 000003 : si les deux divergent, la base refuse l'écriture.
+// Domain vocabulary. It has to stay identical to the task_status and task_priority enums of
+// migration 000003: should the two drift apart, the database refuses the write.
 var (
 	statuses   = []string{statusTodo, statusInProgress, statusBlocked, statusDone}
 	priorities = []string{"low", "normal", "high", "urgent"}
 
-	// releaseStatuses est ce qu'une arête peut attendre. `todo` et `blocked` en sont exclus :
-	// ce ne sont pas des progrès, et une arête qui se libère sur `todo` naîtrait déjà libérée.
-	// Miroir de la contrainte task_dependencies_until_is_progress.
+	// releaseStatuses is what an edge may wait for. `todo` and `blocked` are excluded: they are not
+	// progress, and an edge releasing on `todo` would be born already released.
+	// Mirror of the task_dependencies_until_is_progress constraint.
 	releaseStatuses = []string{statusInProgress, statusDone}
 )
 
-// validateStatus vérifie qu'un statut fait partie du vocabulaire du produit.
+// validateStatus checks a status belongs to the product vocabulary.
 func validateStatus(status string) error {
 	if !slices.Contains(statuses, status) {
-		return fmt.Errorf("%w: statut %q (attendu: %s)",
+		return fmt.Errorf("%w: status %q (expected: %s)",
 			ErrInvalidInput, status, strings.Join(statuses, ", "))
 	}
 	return nil
 }
 
-// validatePriority vérifie qu'une priorité fait partie du vocabulaire du produit.
+// validatePriority checks a priority belongs to the product vocabulary.
 func validatePriority(priority string) error {
 	if !slices.Contains(priorities, priority) {
-		return fmt.Errorf("%w: priorité %q (attendu: %s)",
+		return fmt.Errorf("%w: priority %q (expected: %s)",
 			ErrInvalidInput, priority, strings.Join(priorities, ", "))
 	}
 	return nil
 }
 
-// validateTitle vérifie qu'un titre est renseigné et de taille raisonnable. Le titre est ce
-// qu'un agent lit dans une liste : il doit tenir sur une ligne.
+// validateTitle checks a title is filled in and of reasonable size. The title is what an agent
+// reads in a list: it has to fit on one line.
 func validateTitle(title string) error {
 	if title == "" {
-		return fmt.Errorf("%w: titre vide", ErrInvalidInput)
+		return fmt.Errorf("%w: empty title", ErrInvalidInput)
 	}
 	if len([]rune(title)) > maxTitleLen {
-		return fmt.Errorf("%w: titre de %d caractères, maximum %d",
+		return fmt.Errorf("%w: title of %d characters, maximum %d",
 			ErrInvalidInput, len([]rune(title)), maxTitleLen)
 	}
 	return nil
 }
 
-// validateBody vérifie qu'un texte markdown reste dans la borne.
+// validateBody checks a markdown text stays within the bound.
 func validateBody(field, body string) error {
 	if len(body) > maxBodyLen {
-		return fmt.Errorf("%w: %s de %d octets, maximum %d",
+		return fmt.Errorf("%w: %s of %d bytes, maximum %d",
 			ErrInvalidInput, field, len(body), maxBodyLen)
 	}
 	return nil
 }
 
-// validateDeadline refuse une échéance dont l'année sort de l'intervalle sérialisable en JSON.
+// validateDeadline rejects a deadline whose year falls outside the JSON-serialisable range.
 //
-// time.Time refuse d'encoder une année hors [0, 9999], et l'encodage a lieu APRÈS l'écriture en
-// base : sans cette barrière, une tâche créée avec `9999-12-31T23:30:00-05:00` s'insère très
-// bien, puis rend illisible le listing du projet entier — y compris les tâches saines créées
-// ensuite, puisqu'elles voyagent dans le même tableau JSON.
+// time.Time refuses to encode a year outside [0, 9999], and the encoding happens AFTER the write
+// to the database: without this barrier, a task created with `9999-12-31T23:30:00-05:00` inserts
+// just fine, then makes the entire project listing unreadable — healthy tasks created afterwards
+// included, since they travel in the same JSON array.
 //
-// L'année est vérifiée en UTC ET en heure locale : Time.MarshalJSON évalue l'année dans la
-// Location de la valeur, et pgx relit une colonne timestamptz dans le fuseau du serveur. Une
-// valeur d'année 9999 en UTC peut donc être en 10000 après relecture sur un serveur à fuseau
-// positif — contrôler seulement l'UTC laisserait passer exactement ce cas.
+// The year is checked in UTC AND in local time: Time.MarshalJSON evaluates the year in the value's
+// Location, and pgx reads a timestamptz column back in the server's time zone. A value whose year
+// is 9999 in UTC can therefore be in 10000 once read back on a server with a positive offset —
+// checking UTC alone would let exactly that case through.
 func validateDeadline(deadline *time.Time) error {
 	if deadline == nil {
 		return nil
 	}
 	if year := max(deadline.UTC().Year(), deadline.Local().Year()); year > maxDeadlineYear {
-		return fmt.Errorf("%w: échéance en l'an %d, maximum %d", ErrInvalidInput, year, maxDeadlineYear)
+		return fmt.Errorf("%w: deadline in year %d, maximum %d", ErrInvalidInput, year, maxDeadlineYear)
 	}
 	return nil
 }
 
-// validateScope refuse un scope de tenancy incomplet. Sans cette barrière, un identifiant nul
-// passé par erreur produirait une query qui ne filtre plus rien de significatif : c'est un
-// défaut de programmation, mais sa conséquence serait une fuite entre projets.
+// validateScope rejects an incomplete tenancy scope. Without this barrier, a nil identifier passed
+// by mistake would produce a query that no longer filters anything meaningful: it is a programming
+// defect, but its consequence would be a leak across projects.
 func validateScope(teamID, projectID uuid.UUID) error {
 	if teamID == uuid.Nil || projectID == uuid.Nil {
-		return fmt.Errorf("%w: scope de projet incomplet", ErrInvalidInput)
+		return fmt.Errorf("%w: incomplete project scope", ErrInvalidInput)
 	}
 	return nil
 }
 
-// clampLimit ramène une limite de listing dans les bornes. Une limite absente ou absurde donne
-// la valeur par défaut plutôt qu'une erreur : un agent qui liste son backlog ne doit pas avoir à
-// deviner une borne.
+// clampLimit brings a listing limit back within bounds. A missing or absurd limit yields the
+// default value rather than an error: an agent listing its backlog should not have to guess a
+// bound.
 func clampLimit(limit int) int32 {
 	if limit <= 0 {
 		return defaultLimit
@@ -159,15 +159,15 @@ func clampLimit(limit int) int32 {
 	return int32(limit)
 }
 
-// translateStore ramène les erreurs du store aux erreurs domaine du service, en conservant la
-// cause pour le log.
+// translateStore brings store errors back to the service's domain errors, keeping the cause for
+// the log.
 //
-// ErrCorrupted n'est PAS traduit en erreur domaine : un numéro servi deux fois est une panne
-// serveur, pas une faute de l'appelant. Il remonte tel quel et le handler en fera un 500 —
-// répondre 409 ferait réessayer indéfiniment un agent qui n'a rien fait de mal.
+// ErrCorrupted is NOT translated into a domain error: a number served twice is a server failure,
+// not a caller's fault. It travels up untouched and the handler turns it into a 500 — answering
+// 409 would make an agent that did nothing wrong retry forever.
 func translateStore(err error, op string) error {
-	// Le succès traverse cette fonction sans dommage : sans ce cas, fmt.Errorf envelopperait nil
-	// et fabriquerait une erreur là où il n'y en a pas.
+	// Success crosses this function unharmed: without that case, fmt.Errorf would wrap nil and
+	// manufacture an error where there is none.
 	if err == nil {
 		return nil
 	}

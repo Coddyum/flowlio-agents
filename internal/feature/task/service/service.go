@@ -4,27 +4,27 @@ package service
 //
 // | Élément         | Résumé                                                        | Ligne |
 // |-----------------|---------------------------------------------------------------|-------|
-// | Service         | Contrat consommé par le handler task                            | 50    |
-// | service         | Implémentation, dépendante de l'interface store                 | 78    |
-// | New             | Crée le service task                                            | 83    |
-// | Task            | Une tâche telle qu'exposée par l'API                            | 89    |
-// | Note            | Une note de progression exposée par l'API                       | 102   |
-// | TaskDetail      | Une tâche et son fil de notes                                   | 113   |
-// | CreateTaskInput | Entrée de création d'une tâche                                  | 121   |
-// | ListTasksInput  | Critères de lecture du backlog                                  | 136   |
-// | UpdateTaskInput | Patch partiel d'une tâche, note de progression comprise         | 149   |
-// | BlockTaskInput  | Ouverture d'une arête de blocage entre deux tâches du projet     | 187   |
-// | UnblockTaskInput| Libération à la main d'une arête nommée                          | 201   |
+// | Service         | The contract consumed by the task handler                       | 50    |
+// | service         | Implementation, depending on the store interface                | 78    |
+// | New             | Creates the task service                                        | 83    |
+// | Task            | A task as exposed by the API                                    | 89    |
+// | Note            | A progress note as exposed by the API                           | 102   |
+// | TaskDetail      | A task together with its note thread                            | 112   |
+// | CreateTaskInput | Input for creating a task                                       | 120   |
+// | ListTasksInput  | Criteria for reading the backlog                                | 135   |
+// | UpdateTaskInput | Partial patch of a task, progress note included                 | 148   |
+// | BlockTaskInput  | Opening a blocking edge between two tasks of the project        | 186   |
+// | UnblockTaskInput| Releasing one named edge by hand                                | 200   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// CONTRAT UNIQUEMENT — les implémentations sont dans create_task.go, list_tasks.go,
-// get_task.go et update_task.go.
+// CONTRACT ONLY — the implementations live in create_task.go, list_tasks.go, get_task.go and
+// update_task.go.
 //
-// Il n'y a PAS de méthode d'archivage : archiver est un champ d'UpdateTask, écrit dans la même
-// transaction que le reste. Une seule écriture sur une tâche, donc une seule surface à sécuriser
-// et aucune couture non atomique entre deux appels.
+// There is NO archive method: archiving is a field of UpdateTask, written in the same transaction
+// as the rest. One single write on a task, hence one single surface to secure and no non-atomic
+// seam between two calls.
 
 import (
 	"context"
@@ -35,57 +35,57 @@ import (
 	"github.com/google/uuid"
 )
 
-// Erreurs domaine, traduites en codes HTTP par le handler via errors.Is.
+// Domain errors, translated into HTTP codes by the handler through errors.Is.
 var (
 	ErrInvalidInput = errors.New("task: invalid input")
 	ErrNotFound     = errors.New("task: not found")
 	ErrConflict     = errors.New("task: conflict")
 )
 
-// Service porte le backlog d'un projet.
+// Service carries the backlog of one project.
 //
-// Chaque méthode prend teamID et projectID : ils viennent du Principal du token, jamais du corps
-// de la requête. Un agent ne peut donc pas désigner le backlog d'un autre projet, même en
-// forgeant sa requête.
+// Every method takes teamID and projectID: they come from the token's Principal, never from the
+// request body. An agent therefore cannot name another project's backlog, not even by forging its
+// request.
 type Service interface {
 	CreateTask(ctx context.Context, in CreateTaskInput) (Task, error)
 	ListTasks(ctx context.Context, in ListTasksInput) ([]Task, error)
 
-	// GetTask renvoie la tâche et son fil de notes : reprendre une tâche interrompue demande les
-	// deux, et deux allers-retours coûteraient un tour d'agent de plus.
+	// GetTask returns the task and its note thread: resuming an interrupted task needs both, and
+	// two round trips would cost one more agent turn.
 	GetTask(ctx context.Context, teamID, projectID uuid.UUID, number int64) (TaskDetail, error)
 
-	// UpdateTask applique un patch et, si Note est fourni, écrit la note de progression dans la
-	// MÊME transaction : « passer en done et dire pourquoi » est une seule intention, donc une
-	// seule écriture, qui réussit ou échoue d'un bloc.
+	// UpdateTask applies a patch and, when Note is provided, writes the progress note in the SAME
+	// transaction: "move to done and say why" is a single intention, hence a single write, which
+	// succeeds or fails as one.
 	//
-	// C'est aussi ce qui LIBÈRE les arêtes de blocage : une tâche qui atteint son statut de
-	// libération, ou qui est archivée, débloque celles qui l'attendaient, dans la même transaction.
-	// Un chemin séparé aurait rendu possible « la bloquante est done, la bloquée l'ignore ».
+	// It is also what RELEASES blocking edges: a task reaching its release status, or getting
+	// archived, unblocks whatever was waiting on it, in the same transaction. A separate path would
+	// have made "the blocker is done, the blocked task never heard about it" possible.
 	UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, error)
 
-	// BlockTask ouvre une arête « cette tâche est bloquée par une autre du MÊME projet, jusqu'à ce
-	// que celle-ci atteigne Until ». Renvoie la tâche bloquée dans son état d'après.
+	// BlockTask opens an edge reading "this task is blocked by another one of the SAME project,
+	// until that one reaches Until". Returns the blocked task in its resulting state.
 	BlockTask(ctx context.Context, in BlockTaskInput) (Task, error)
 
-	// UnblockTask libère une arête à la main, sans attendre que la bloquante avance. Le retour à
-	// `todo` obéit à la même règle que la libération automatique : seulement si l'arête avait posé
-	// le blocage et qu'aucune autre ne subsiste.
+	// UnblockTask releases an edge by hand, without waiting for the blocker to move on. Going back
+	// to `todo` obeys the same rule as an automatic release: only if that edge was what set the
+	// block and no other one remains.
 	UnblockTask(ctx context.Context, in UnblockTaskInput) (Task, error)
 }
 
-// service dépend de l'interface store, jamais de sqlc.
+// service depends on the store interface, never on sqlc.
 type service struct {
 	store store.Store
 }
 
-// New crée le service task.
+// New creates the task service.
 func New(st store.Store) Service {
 	return &service{store: st}
 }
 
-// Task est la vue API d'une tâche. Number est l'identifiant lisible dans le projet : associé à
-// la clé du projet, il donne CORE-34.
+// Task is the API view of a task. Number is the human-readable identifier inside the project:
+// paired with the project key, it reads CORE-34.
 type Task struct {
 	Number    int64      `json:"number"`
 	Title     string     `json:"title"`
@@ -98,26 +98,25 @@ type Task struct {
 	Archived  bool       `json:"archived"`
 }
 
-// Note est la vue API d'une note de progression.
+// Note is the API view of a progress note.
 type Note struct {
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// TaskDetail est une tâche accompagnée de la FIN de son fil de notes, du plus ancien au plus
-// récent.
+// TaskDetail is a task together with the TAIL of its note thread, oldest to newest.
 //
-// NotesTotal existe pour que l'agent sache qu'il ne lit qu'une fenêtre — même raison que
-// MessagesTotal côté issue. Sans ce compteur, un fil tronqué est indiscernable d'un fil court, et
-// l'agent conclut qu'il n'y a rien d'autre à savoir sur la tâche qu'il reprend.
+// NotesTotal exists so the agent knows it is only reading a window — same reason as MessagesTotal
+// on the issue side. Without that counter, a truncated thread is indistinguishable from a short
+// one, and the agent concludes there is nothing else to know about the task it is resuming.
 type TaskDetail struct {
 	Task
 	Notes      []Note `json:"notes"`
 	NotesTotal int    `json:"notes_total"`
 }
 
-// CreateTaskInput porte les données de création. TeamID et ProjectID viennent du token et ne
-// sont jamais lus depuis le corps de la requête.
+// CreateTaskInput carries the creation data. TeamID and ProjectID come from the token and are
+// never read from the request body.
 type CreateTaskInput struct {
 	TeamID    uuid.UUID `json:"-"`
 	ProjectID uuid.UUID `json:"-"`
@@ -129,10 +128,10 @@ type CreateTaskInput struct {
 	Deadline *time.Time `json:"deadline"`
 }
 
-// ListTasksInput décrit une lecture du backlog.
+// ListTasksInput describes one read of the backlog.
 //
-// Status vide signifie « tous les statuts ». Les tâches archivées sont exclues par défaut : un
-// agent qui demande son travail en cours ne doit pas payer en tokens l'historique du repo.
+// An empty Status means "every status". Archived tasks are excluded by default: an agent asking
+// for its work in progress must not pay, in tokens, for the repo's history.
 type ListTasksInput struct {
 	TeamID    uuid.UUID `json:"-"`
 	ProjectID uuid.UUID `json:"-"`
@@ -142,10 +141,10 @@ type ListTasksInput struct {
 	Limit           int    `json:"limit"`
 }
 
-// UpdateTaskInput est un patch : un champ absent du JSON reste nil et laisse la valeur en place.
+// UpdateTaskInput is a patch: a field absent from the JSON stays nil and leaves the value in place.
 //
-// ClearDeadline est nécessaire parce que `"deadline": null` est indiscernable d'un champ absent
-// une fois décodé — sans ce drapeau, effacer une échéance serait impossible à exprimer.
+// ClearDeadline is needed because `"deadline": null` is indistinguishable from an absent field
+// once decoded — without that flag, wiping a deadline would be impossible to express.
 type UpdateTaskInput struct {
 	TeamID    uuid.UUID `json:"-"`
 	ProjectID uuid.UUID `json:"-"`
@@ -159,31 +158,31 @@ type UpdateTaskInput struct {
 	Deadline      *time.Time `json:"deadline"`
 	ClearDeadline bool       `json:"clear_deadline"`
 
-	// Note ajoute une note de progression au fil, dans la même transaction que le patch.
+	// Note appends a progress note to the thread, in the same transaction as the patch.
 	//
-	// C'est un champ et non une opération séparée parce que l'intention réelle d'un agent est
-	// « passer en done ET dire pourquoi » : deux écritures rendaient possible un statut changé
-	// sans son motif, et coûtaient un aller-retour de plus à chaque tour.
-	// Une chaîne vide est refusée : une note sans contenu n'apprend rien à la session suivante.
+	// It is a field rather than a separate operation because an agent's real intention is "move to
+	// done AND say why": two writes made a status change without its reason possible, and cost one
+	// more round trip every turn.
+	// An empty string is rejected: a note with no content teaches the next session nothing.
 	Note *string `json:"note"`
 
-	// Archive sort la tâche du backlog actif, dans la MÊME écriture que le reste du patch.
+	// Archive takes the task out of the active backlog, in the SAME write as the rest of the patch.
 	//
-	// Champ et non opération séparée, pour la raison qui a replié la note : l'archivage était un
-	// second aller-retour HTTP, et l'atomicité s'arrêtait à cette frontière. Une panne entre les
-	// deux commitait la note sans archiver, l'agent lisait une erreur et rejouait — ce qui écrivait
-	// la note une seconde fois. Replié, l'appel réussit ou échoue d'un bloc.
+	// A field rather than a separate operation, for the reason that folded the note in: archiving
+	// was a second HTTP round trip, and atomicity stopped at that boundary. A failure between the
+	// two committed the note without archiving, the agent read an error and replayed — which wrote
+	// the note a second time. Folded in, the call succeeds or fails as one.
 	//
-	// Archiver LIBÈRE aussi les arêtes que cette tâche bloquait : archivée, elle n'atteindra jamais
-	// son statut de libération, et les laisser en place fabriquerait des tâches mortes-vivantes.
+	// Archiving also RELEASES the edges this task was blocking: archived, it will never reach its
+	// release status, and leaving them in place would manufacture undead tasks.
 	Archive bool `json:"archive"`
 }
 
-// BlockTaskInput ouvre une arête « Number est bloquée par Blocker ».
+// BlockTaskInput opens an edge reading "Number is blocked by Blocker".
 //
-// Blocker est un NUMÉRO, pas une référence : il n'existe pas de forme inter-repos, et ce n'est pas
-// un manque. Une dépendance qui traverse un dépôt a déjà son objet, l'issue (D42). La garde tient
-// en base — les deux extrémités de l'arête partagent la même colonne project_id — et non ici.
+// Blocker is a NUMBER, not a reference: no cross-repo form exists, and that is not a gap. A
+// dependency crossing a repository already has its object, the issue (D42). The guard holds in the
+// database — both ends of the edge share the same project_id column — not here.
 type BlockTaskInput struct {
 	TeamID    uuid.UUID `json:"-"`
 	ProjectID uuid.UUID `json:"-"`
@@ -191,13 +190,13 @@ type BlockTaskInput struct {
 
 	Blocker int64 `json:"blocker"`
 
-	// Until est le statut que la bloquante doit atteindre pour libérer l'arête. Vide vaut `done`.
-	// Seuls `in_progress` et `done` sont acceptés : les deux autres ne sont pas des progrès, et
-	// une arête qui se libère sur `todo` naîtrait déjà libérée.
+	// Until is the status the blocker must reach for the edge to be released. Empty means `done`.
+	// Only `in_progress` and `done` are accepted: the other two are not progress, and an edge
+	// releasing on `todo` would be born already released.
 	Until string `json:"until"`
 }
 
-// UnblockTaskInput libère à la main l'arête entre Number et Blocker.
+// UnblockTaskInput releases, by hand, the edge between Number and Blocker.
 type UnblockTaskInput struct {
 	TeamID    uuid.UUID `json:"-"`
 	ProjectID uuid.UUID `json:"-"`

@@ -7,22 +7,22 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 )
 
-// UnblockTask libère à la main l'arête entre in.Number et in.Blocker, sans attendre que la
-// bloquante avance.
+// UnblockTask releases, by hand, the edge between in.Number and in.Blocker, without waiting for
+// the blocker to move on.
 //
-// Le retour à `todo` et le `task.unblocked` passent par le MÊME chemin que la libération
-// automatique : deux chemins auraient fini par diverger, et c'est exactement la divergence qui
-// laisserait une tâche bloquée pour toujours après un déblocage manuel.
+// Going back to `todo` and the `task.unblocked` both go through the SAME path as an automatic
+// release: two paths would have drifted apart eventually, and that very drift is what would leave
+// a task blocked forever after a manual unblocking.
 //
-// Une arête absente ou déjà libérée n'est pas une erreur : `unblock_task` rejoué rend la tâche
-// dans son état courant. Refuser aurait fait échouer une reprise de session sur une action déjà
-// faite — un agent qui rejoue ne fait pas une faute, il a perdu son contexte.
+// A missing or already-released edge is not an error: `unblock_task` replayed returns the task in
+// its current state. Refusing would have failed a session resume on an action already carried out
+// — an agent replaying is not at fault, it has lost its context.
 func (s *service) UnblockTask(ctx context.Context, in UnblockTaskInput) (Task, error) {
 	if err := validateScope(in.TeamID, in.ProjectID); err != nil {
 		return Task{}, err
 	}
 	if in.Number == in.Blocker {
-		return Task{}, fmt.Errorf("%w: une tâche ne peut pas se bloquer elle-même", ErrInvalidInput)
+		return Task{}, fmt.Errorf("%w: a task cannot block itself", ErrInvalidInput)
 	}
 
 	var blocked store.Task
@@ -48,8 +48,8 @@ func (s *service) UnblockTask(ctx context.Context, in UnblockTaskInput) (Task, e
 			return err
 		}
 
-		// Relu APRÈS la libération : announceFreed a pu ramener la tâche à `todo`, et rendre l'état
-		// d'avant ferait lire à l'agent un `blocked` que la base ne porte plus.
+		// Read back AFTER the release: announceFreed may have brought the task back to `todo`, and
+		// returning the prior state would have the agent read a `blocked` the database no longer holds.
 		blocked, err = tx.TaskByNumber(ctx, in.TeamID, in.ProjectID, in.Number)
 		return translateStore(err, "unblock task: reread")
 	})

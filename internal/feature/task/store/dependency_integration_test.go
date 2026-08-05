@@ -8,16 +8,15 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 )
 
-// LA garantie intra-repo, prouvée là où elle vit : en base.
+// THE intra-repo guarantee, proven where it lives: in the database.
 //
-// Ce test appelle le store DIRECTEMENT, en contournant le service. C'est tout son intérêt — la
-// carte demande qu'une arête vers un autre projet soit refusée « en base, pas seulement dans le
-// service » (D42), et une garde qui n'existe que dans le service tombe au premier chemin
-// d'écriture ajouté à côté d'elle.
+// This test calls the store DIRECTLY, bypassing the service. That is the whole point — the card
+// demands an edge towards another project be refused "in the database, not only in the service"
+// (D42), and a guard that exists only in the service falls at the first write path added next to it.
 //
-// Ce qui refuse n'est pas un prédicat mais la FORME de la table : les deux clés étrangères
-// composites de task_dependencies partagent la même colonne project_id. La dépendance inter-repos
-// n'est pas interdite, elle est inexprimable.
+// What refuses is not a predicate but the SHAPE of the table: both composite foreign keys of
+// task_dependencies share the same project_id column. The cross-repo dependency is not forbidden,
+// it is inexpressible.
 func TestDependencyCannotCrossProjects(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -25,8 +24,8 @@ func TestDependencyCannotCrossProjects(t *testing.T) {
 	mine := newProject(t, db, "OWN")
 	sibling := newProjectIn(t, db, mine.teamID, "SIB")
 
-	blocked := createTask(t, st, mine, "ce que je dois faire")
-	foreign := createTask(t, st, sibling, "ce que le voisin doit faire")
+	blocked := createTask(t, st, mine, "what I have to do")
+	foreign := createTask(t, st, sibling, "what the sibling has to do")
 
 	_, err := st.CreateDependency(ctx, store.NewDependency{
 		TeamID:        mine.teamID,
@@ -37,29 +36,29 @@ func TestDependencyCannotCrossProjects(t *testing.T) {
 		SetBlocked:    true,
 	})
 	if !errors.Is(err, store.ErrConflict) {
-		t.Fatalf("erreur = %v, attendu ErrConflict : la base doit refuser une arête inter-projets", err)
+		t.Fatalf("error = %v, want ErrConflict: the database must refuse a cross-project edge", err)
 	}
 
-	// Et rien n'a été écrit : un refus qui laisserait une ligne serait pire qu'une absence de refus.
+	// And nothing was written: a refusal leaving a row behind would be worse than no refusal at all.
 	var count int
 	if err := db.QueryRow(
 		"SELECT count(*) FROM task_dependencies WHERE task_id = $1", blocked.ID,
 	).Scan(&count); err != nil {
-		t.Fatalf("comptage des arêtes: %v", err)
+		t.Fatalf("counting the edges: %v", err)
 	}
 	if count != 0 {
-		t.Errorf("%d arête(s) écrite(s) malgré le refus", count)
+		t.Errorf("%d edge(s) written despite the refusal", count)
 	}
 }
 
-// Une tâche ne peut pas se bloquer elle-même, et c'est le CHECK qui le dit. Le service rend le
-// motif lisible ; la contrainte est ce qui tient si un jour un autre chemin d'écriture apparaît.
+// A task cannot block itself, and it is the CHECK that says so. The service makes the reason
+// readable; the constraint is what holds should another write path appear one day.
 func TestDependencyCannotBeSelfReferential(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
 
 	sc := newProject(t, db, "SELF")
-	task := createTask(t, st, sc, "moi-même")
+	task := createTask(t, st, sc, "myself")
 
 	_, err := st.CreateDependency(ctx, store.NewDependency{
 		TeamID:        sc.teamID,
@@ -69,20 +68,20 @@ func TestDependencyCannotBeSelfReferential(t *testing.T) {
 		UntilStatus:   "done",
 	})
 	if !errors.Is(err, store.ErrConflict) {
-		t.Fatalf("erreur = %v, attendu ErrConflict sur l'auto-blocage", err)
+		t.Fatalf("error = %v, want ErrConflict on self-blocking", err)
 	}
 }
 
-// Une arête ACTIVE est unique par couple : rejouer block_task ne fabrique pas un second blocage à
-// libérer. Une fois libérée, en revanche, le même couple redevient ouvrable — l'unicité est
-// partielle pour cette raison exacte, sinon débloquer puis rebloquer serait refusé pour toujours.
+// An ACTIVE edge is unique per pair: replaying block_task does not manufacture a second block to
+// release. Once released, however, the same pair becomes openable again — the uniqueness is partial
+// for that exact reason, otherwise unblocking then reblocking would be refused forever.
 func TestDependencyPairIsUniqueWhileActiveOnly(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
 
 	sc := newProject(t, db, "PAIR")
-	blocked := createTask(t, st, sc, "bloquée")
-	blocker := createTask(t, st, sc, "bloquante")
+	blocked := createTask(t, st, sc, "blocked")
+	blocker := createTask(t, st, sc, "blocker")
 
 	edge := store.NewDependency{
 		TeamID:        sc.teamID,
@@ -94,61 +93,61 @@ func TestDependencyPairIsUniqueWhileActiveOnly(t *testing.T) {
 	}
 
 	if _, err := st.CreateDependency(ctx, edge); err != nil {
-		t.Fatalf("première arête: %v", err)
+		t.Fatalf("first edge: %v", err)
 	}
 	if _, err := st.CreateDependency(ctx, edge); !errors.Is(err, store.ErrConflict) {
-		t.Fatalf("erreur = %v, attendu ErrConflict sur le doublon actif", err)
+		t.Fatalf("error = %v, want ErrConflict on the active duplicate", err)
 	}
 
 	if _, err := st.ReleaseEdge(ctx, sc.projectID, blocked.ID, blocker.ID); err != nil {
-		t.Fatalf("libération: %v", err)
+		t.Fatalf("release: %v", err)
 	}
 	if _, err := st.CreateDependency(ctx, edge); err != nil {
-		t.Fatalf("réouverture après libération: %v — l'unicité doit être partielle", err)
+		t.Fatalf("reopening after release: %v — the uniqueness must be partial", err)
 	}
 }
 
-// La règle de retour à `todo`, prouvée là où elle vit : dans la query ClearTaskBlock. Les trois
-// conditions y tiennent ensemble pour qu'aucun appelant ne puisse en oublier une, donc c'est ici
-// qu'il faut les vérifier — pas dans un double en mémoire, qui prouverait la réimplémentation.
+// The rule for going back to `todo`, proven where it lives: in the ClearTaskBlock query. All three
+// conditions hold together in there so that no caller can forget one, which is why they have to be
+// checked here — not in an in-memory double, which would prove the reimplementation.
 func TestClearBlockObeysItsThreeConditions(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
 		name string
-		// setBlocked dit si l'arête est celle qui a posé le blocage.
+		// setBlocked tells whether the edge is the one that set the block.
 		setBlocked bool
-		// pendingEdge ajoute une seconde arête, non libérée.
+		// pendingEdge adds a second, unreleased edge.
 		pendingEdge bool
-		// status est celui de la tâche bloquée au moment de la libération.
+		// status is the blocked task's status at release time.
 		status string
 		want   bool
 	}{
 		{
-			name:       "l'arête avait bloqué, plus rien ne subsiste : retour à todo",
+			name:       "the edge had blocked, nothing else remains: back to todo",
 			setBlocked: true,
 			status:     "blocked",
 			want:       true,
 		},
 		{
-			// Le cas que set_blocked existe pour distinguer. Sans lui, on écraserait une décision
-			// humaine par une déduction.
-			name:       "l'agent avait bloqué pour une autre raison : le statut ne bouge pas",
+			// The case set_blocked exists to tell apart. Without it, we would overwrite a human
+			// decision with a deduction.
+			name:       "the agent had blocked for another reason: the status does not move",
 			setBlocked: false,
 			status:     "blocked",
 			want:       false,
 		},
 		{
-			name:        "une autre arête bloque encore : rien ne bouge",
+			name:        "another edge still blocks: nothing moves",
 			setBlocked:  true,
 			pendingEdge: true,
 			status:      "blocked",
 			want:        false,
 		},
 		{
-			// Un agent qui a déjà repris la tâche à la main ne doit pas être renvoyé à `todo` par
-			// une libération arrivée après coup.
-			name:       "la tâche n'est plus bloquée : on ne la ramène pas en arrière",
+			// An agent that already picked the task back up by hand must not be sent back to `todo`
+			// by a release arriving after the fact.
+			name:       "the task is no longer blocked: we do not drag it backwards",
 			setBlocked: true,
 			status:     "in_progress",
 			want:       false,
@@ -160,25 +159,25 @@ func TestClearBlockObeysItsThreeConditions(t *testing.T) {
 			st, db := newStore(t)
 			sc := newProject(t, db, "CLR")
 
-			blocked := createTask(t, st, sc, "bloquée")
-			blocker := createTask(t, st, sc, "bloquante")
+			blocked := createTask(t, st, sc, "blocked")
+			blocker := createTask(t, st, sc, "blocker")
 
 			if _, err := st.CreateDependency(ctx, store.NewDependency{
 				TeamID: sc.teamID, ProjectID: sc.projectID,
 				TaskID: blocked.ID, BlockerTaskID: blocker.ID,
 				UntilStatus: "done", SetBlocked: tc.setBlocked,
 			}); err != nil {
-				t.Fatalf("arête principale: %v", err)
+				t.Fatalf("main edge: %v", err)
 			}
 
 			if tc.pendingEdge {
-				other := createTask(t, st, sc, "autre bloquante")
+				other := createTask(t, st, sc, "other blocker")
 				if _, err := st.CreateDependency(ctx, store.NewDependency{
 					TeamID: sc.teamID, ProjectID: sc.projectID,
 					TaskID: blocked.ID, BlockerTaskID: other.ID,
 					UntilStatus: "done", SetBlocked: false,
 				}); err != nil {
-					t.Fatalf("arête secondaire: %v", err)
+					t.Fatalf("secondary edge: %v", err)
 				}
 			}
 
@@ -186,22 +185,22 @@ func TestClearBlockObeysItsThreeConditions(t *testing.T) {
 			if _, err := st.UpdateTask(ctx, store.TaskPatch{
 				TeamID: sc.teamID, ProjectID: sc.projectID, Number: blocked.Number, Status: &status,
 			}); err != nil {
-				t.Fatalf("statut initial de la bloquée: %v", err)
+				t.Fatalf("initial status of the blocked task: %v", err)
 			}
 
-			// La bloquante atteint `done`, ce qui libère l'arête principale.
+			// The blocker reaches `done`, which releases the main edge.
 			done := "done"
 			if _, err := st.UpdateTask(ctx, store.TaskPatch{
 				TeamID: sc.teamID, ProjectID: sc.projectID, Number: blocker.Number, Status: &done,
 			}); err != nil {
-				t.Fatalf("bloquante en done: %v", err)
+				t.Fatalf("blocker to done: %v", err)
 			}
 			freed, err := st.ReleaseBlockerEdges(ctx, sc.projectID, blocker.ID, "done", false)
 			if err != nil {
-				t.Fatalf("libération: %v", err)
+				t.Fatalf("release: %v", err)
 			}
 			if len(freed) != 1 {
-				t.Fatalf("%d arête(s) libérée(s), attendu 1", len(freed))
+				t.Fatalf("%d edge(s) released, want 1", len(freed))
 			}
 
 			cleared, err := st.ClearBlock(ctx, sc.teamID, sc.projectID, blocked.ID)
@@ -209,37 +208,37 @@ func TestClearBlockObeysItsThreeConditions(t *testing.T) {
 				t.Fatalf("ClearBlock: %v", err)
 			}
 			if cleared != tc.want {
-				t.Fatalf("retour à todo = %v, attendu %v", cleared, tc.want)
+				t.Fatalf("back to todo = %v, want %v", cleared, tc.want)
 			}
 
 			after, err := st.TaskByNumber(ctx, sc.teamID, sc.projectID, blocked.Number)
 			if err != nil {
-				t.Fatalf("relecture: %v", err)
+				t.Fatalf("reading back: %v", err)
 			}
 			wantStatus := tc.status
 			if tc.want {
 				wantStatus = "todo"
 			}
 			if after.Status != wantStatus {
-				t.Errorf("statut = %q, attendu %q", after.Status, wantStatus)
+				t.Errorf("status = %q, want %q", after.Status, wantStatus)
 			}
 		})
 	}
 }
 
-// « Atteindre » un statut est monotone et non une égalité : une bloquante qui saute de `todo` à
-// `done` doit libérer aussi les arêtes qui n'attendaient que `in_progress`.
+// "Reaching" a status is monotone rather than an equality: a blocker jumping from `todo` to `done`
+// must also release the edges that were only waiting for `in_progress`.
 //
-// L'égalité stricte est le piège naturel de cette query, et elle fabriquerait des arêtes que plus
-// rien ne peut libérer — la tâche morte-vivante que cette feature existe pour empêcher.
+// Strict equality is the natural trap of this query, and it would manufacture edges nothing can
+// release any more — the undead task this feature exists to prevent.
 func TestReleaseIsMonotone(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
 
 	sc := newProject(t, db, "MONO")
-	waitsStart := createTask(t, st, sc, "attend le démarrage")
-	waitsEnd := createTask(t, st, sc, "attend la fin")
-	blocker := createTask(t, st, sc, "bloquante")
+	waitsStart := createTask(t, st, sc, "waiting for the start")
+	waitsEnd := createTask(t, st, sc, "waiting for the end")
+	blocker := createTask(t, st, sc, "blocker")
 
 	for _, edge := range []struct {
 		task  store.Task
@@ -253,44 +252,44 @@ func TestReleaseIsMonotone(t *testing.T) {
 			TaskID: edge.task.ID, BlockerTaskID: blocker.ID,
 			UntilStatus: edge.until, SetBlocked: true,
 		}); err != nil {
-			t.Fatalf("arête %s: %v", edge.until, err)
+			t.Fatalf("edge %s: %v", edge.until, err)
 		}
 	}
 
-	// La bloquante passe directement en `done`, sans jamais avoir été `in_progress`.
+	// The blocker moves straight to `done`, without ever having been `in_progress`.
 	freed, err := st.ReleaseBlockerEdges(ctx, sc.projectID, blocker.ID, "done", false)
 	if err != nil {
-		t.Fatalf("libération: %v", err)
+		t.Fatalf("release: %v", err)
 	}
 	if len(freed) != 2 {
-		t.Fatalf("%d arête(s) libérée(s), attendu 2 : `done` a dépassé `in_progress`", len(freed))
+		t.Fatalf("%d edge(s) released, want 2: `done` has moved past `in_progress`", len(freed))
 	}
 }
 
-// L'inverse, qui borne la règle précédente : atteindre `in_progress` ne libère PAS ce qui attendait
-// `done`. Sans cette borne, « bloquée jusqu'à ce que ce soit fini » voudrait dire « jusqu'à ce que
-// ce soit commencé », et la promesse de la feature serait fausse dans le cas le plus courant.
+// The converse, which bounds the previous rule: reaching `in_progress` does NOT release what was
+// waiting for `done`. Without that bound, "blocked until it is finished" would mean "until it is
+// started", and the feature's promise would be false in the most common case.
 func TestReleaseDoesNotOvershoot(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
 
 	sc := newProject(t, db, "OVER")
-	blocked := createTask(t, st, sc, "attend la fin")
-	blocker := createTask(t, st, sc, "bloquante")
+	blocked := createTask(t, st, sc, "waiting for the end")
+	blocker := createTask(t, st, sc, "blocker")
 
 	if _, err := st.CreateDependency(ctx, store.NewDependency{
 		TeamID: sc.teamID, ProjectID: sc.projectID,
 		TaskID: blocked.ID, BlockerTaskID: blocker.ID,
 		UntilStatus: "done", SetBlocked: true,
 	}); err != nil {
-		t.Fatalf("arête: %v", err)
+		t.Fatalf("edge: %v", err)
 	}
 
 	freed, err := st.ReleaseBlockerEdges(ctx, sc.projectID, blocker.ID, "in_progress", false)
 	if err != nil {
-		t.Fatalf("libération: %v", err)
+		t.Fatalf("release: %v", err)
 	}
 	if len(freed) != 0 {
-		t.Fatalf("%d arête(s) libérée(s) sur `in_progress`, attendu 0", len(freed))
+		t.Fatalf("%d edge(s) released on `in_progress`, want 0", len(freed))
 	}
 }

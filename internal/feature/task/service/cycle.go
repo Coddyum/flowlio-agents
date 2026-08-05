@@ -1,32 +1,32 @@
 package service
 
-// POURQUOI UN PARCOURS EN GO ET NON UNE CTE RÉCURSIVE
+// WHY A TRAVERSAL IN GO AND NOT A RECURSIVE CTE
 //
-// Le graphe de blocage ACTIF d'un repo est petit par nature — ce sont les blocages en cours, pas
-// l'historique — donc son transport coûte moins qu'un aller-retour de plus. Le vrai gain est
-// ailleurs : « un cycle est refusé » devient une garantie prouvable par un test qui ne dépend
-// d'aucune base, donc qui tourne partout et ne peut pas être contourné par un environnement.
+// A repo's ACTIVE blocking graph is small by nature — those are the blocks in force, not the
+// history — so carrying it over costs less than one more round trip. The real gain lies elsewhere:
+// "a cycle is refused" becomes a guarantee provable by a test that depends on no database, hence
+// runs everywhere and cannot be worked around by an environment.
 //
-// CE QUE CE CONTRÔLE NE GARANTIT PAS, et qui doit rester écrit : deux block_task concurrents
-// peuvent chacun lire un graphe sans cycle et écrire les deux arêtes qui le referment. Sérialiser
-// demanderait un verrou de projet sur le chemin d'écriture le plus courant, pour un défaut dont le
-// coût est borné — deux tâches restant `blocked`, visibles dans le seau `unblocked` de personne, et
-// libérables à la main par unblock_task. Le prix de la garantie est plus élevé que celui du défaut.
+// WHAT THIS CHECK DOES NOT GUARANTEE, and which must stay written down: two concurrent block_task
+// calls can each read a cycle-free graph and write the two edges that close it. Serialising would
+// demand a project-wide lock on the most common write path, for a defect whose cost is bounded —
+// two tasks left `blocked`, showing up in nobody's `unblocked` bucket, and releasable by hand with
+// unblock_task. The price of the guarantee is higher than the price of the defect.
 
 import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 	"github.com/google/uuid"
 )
 
-// wouldCycle dit si ouvrir l'arête « taskID est bloquée par blockerID » refermerait une boucle.
+// wouldCycle tells whether opening the edge "taskID is blocked by blockerID" would close a loop.
 //
-// Le parcours part de la BLOQUANTE et suit ses propres bloquantes : si la bloquée est atteignable
-// depuis elle, alors l'arête qu'on s'apprête à écrire ferme le cycle. A bloque B qui bloque A
-// laisserait les deux `blocked` pour toujours, sans que rien ne le dise — c'est précisément le
-// contraire de ce que cette feature promet.
+// The traversal starts from the BLOCKER and follows its own blockers: if the blocked task is
+// reachable from there, then the edge about to be written closes the cycle. A blocks B which
+// blocks A would leave both `blocked` forever with nothing to say so — precisely the opposite of
+// what this feature promises.
 //
-// L'ensemble des nœuds vus borne le parcours même sur un graphe qui contiendrait DÉJÀ un cycle,
-// cas qu'une écriture concurrente rend possible.
+// The set of visited nodes bounds the traversal even on a graph that ALREADY contains a cycle, a
+// case a concurrent write makes possible.
 func wouldCycle(edges []store.Edge, taskID, blockerID uuid.UUID) bool {
 	blockers := make(map[uuid.UUID][]uuid.UUID, len(edges))
 	for _, edge := range edges {

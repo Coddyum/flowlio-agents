@@ -4,19 +4,19 @@ package handler
 //
 // | Élément              | Résumé                                                   | Ligne |
 // |----------------------|----------------------------------------------------------|-------|
-// | Handler.BlockTask    | Ouvre une arête de blocage sur une tâche du projet         | 29    |
-// | Handler.UnblockTask  | Libère une arête de blocage nommée                         | 60    |
-// | Handler.blockerNumber| Lit le numéro de la bloquante dans le chemin               | 89    |
+// | Handler.BlockTask    | Opens a blocking edge on a task of the project             | 29    |
+// | Handler.UnblockTask  | Releases one named blocking edge                           | 60    |
+// | Handler.blockerNumber| Reads the blocker number from the path                     | 89    |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// POURQUOI CES DEUX ROUTES EXISTENT À CÔTÉ DU PATCH
+// WHY THESE TWO ROUTES EXIST ALONGSIDE THE PATCH
 //
-// La feature tient par ailleurs à UNE SEULE route d'écriture par tâche, et ces deux-là n'y
-// dérogent qu'en apparence : leur objet n'est pas la tâche mais l'ARÊTE, qui a son propre cycle de
-// vie. Le patch ne peut pas la porter — « un champ absent laisse la valeur en place » n'a aucune
-// forme capable d'exprimer « retire CE bloqueur-là et garde les autres ».
+// The feature otherwise holds to EXACTLY ONE write route per task, and these two only appear to
+// break that: their object is not the task but the EDGE, which has a life cycle of its own. The
+// patch cannot carry it — "an absent field leaves the value in place" has no shape able to express
+// "drop THAT blocker and keep the others".
 
 import (
 	"net/http"
@@ -25,7 +25,7 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/service"
 )
 
-// BlockTask ouvre une arête « cette tâche est bloquée par une autre du même projet ».
+// BlockTask opens an edge reading "this task is blocked by another one of the same project".
 func (h *Handler) BlockTask(w http.ResponseWriter, r *http.Request) {
 	teamID, projectID, ok := h.scope(w, r)
 	if !ok {
@@ -53,10 +53,10 @@ func (h *Handler) BlockTask(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusCreated, task)
 }
 
-// UnblockTask libère l'arête entre la tâche du chemin et la bloquante nommée.
+// UnblockTask releases the edge between the task in the path and the named blocker.
 //
-// La bloquante est dans le CHEMIN et non dans un corps : c'est la ressource qu'on supprime, et un
-// DELETE portant un corps est ignoré par assez d'intermédiaires pour que ce soit un mauvais pari.
+// The blocker sits in the PATH rather than in a body: it is the resource being deleted, and a
+// DELETE carrying a body is dropped by enough intermediaries to make it a bad bet.
 func (h *Handler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 	teamID, projectID, ok := h.scope(w, r)
 	if !ok {
@@ -84,14 +84,14 @@ func (h *Handler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, task)
 }
 
-// blockerNumber lit le numéro de la bloquante dans le chemin. Même traitement que `number` : un
-// numéro illisible est une erreur d'entrée, pas une ressource absente.
+// blockerNumber reads the blocker number from the path. Same treatment as `number`: an unreadable
+// number is an input error, not a missing resource.
 func (h *Handler) blockerNumber(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	raw := r.PathValue("blocker")
 	number, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || number < 1 {
 		h.writeJSON(w, http.StatusBadRequest, errorBody{
-			Error: "numéro de tâche bloquante invalide: " + raw,
+			Error: "invalid blocking task number: " + raw,
 		})
 		return 0, false
 	}

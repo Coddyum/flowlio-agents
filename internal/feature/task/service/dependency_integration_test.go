@@ -14,65 +14,65 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// projectScope est la paire de tenancy d'un projet de test : ce qu'un token de projet porte.
+// projectScope is the tenancy pair of a test project: what a project token carries.
 type projectScope struct {
 	teamID    uuid.UUID
 	projectID uuid.UUID
 }
 
-// newRealService monte le service sur la VRAIE base. Les doubles en mémoire prouvent ce que le
-// service décide seul ; ce fichier prouve la chaîne entière — service, store, queries, contraintes
-// — parce que la règle de libération n'existe nulle part en Go : elle est dans le SQL.
+// newRealService mounts the service on the REAL database. In-memory doubles prove what the service
+// decides on its own; this file proves the whole chain — service, store, queries, constraints —
+// because the release rule exists nowhere in Go: it lives in the SQL.
 func newRealService(t *testing.T) (service.Service, *sql.DB) {
 	t.Helper()
 
 	dsn := os.Getenv("FLOWLIO_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("FLOWLIO_TEST_DATABASE_URL non renseigné — test d'intégration ignoré")
+		t.Skip("FLOWLIO_TEST_DATABASE_URL not set — integration test skipped")
 	}
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		t.Fatalf("ouverture de la base: %v", err)
+		t.Fatalf("opening the database: %v", err)
 	}
 	if err := db.Ping(); err != nil {
-		t.Fatalf("base injoignable: %v", err)
+		t.Fatalf("database unreachable: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
 	return service.New(store.New(database.New(db), db)), db
 }
 
-// newRealProject crée une team et un projet jetables par SQL direct. Les fixtures n'empruntent
-// aucune autre feature : la suppression de la team emporte le reste en cascade.
+// newRealProject creates a throwaway team and project through direct SQL. The fixtures borrow no
+// other feature: deleting the team takes the rest with it in cascade.
 func newRealProject(t *testing.T, db *sql.DB, key string) projectScope {
 	t.Helper()
 
 	slug := "test-" + strings.ToLower(uuid.NewString()[:8])
 	var teamID uuid.UUID
 	if err := db.QueryRow(
-		"INSERT INTO teams (slug, name) VALUES ($1, $2) RETURNING id", slug, "Team de test",
+		"INSERT INTO teams (slug, name) VALUES ($1, $2) RETURNING id", slug, "Test team",
 	).Scan(&teamID); err != nil {
-		t.Fatalf("création de la team: %v", err)
+		t.Fatalf("creating the team: %v", err)
 	}
 	t.Cleanup(func() {
 		if _, err := db.Exec("DELETE FROM teams WHERE id = $1", teamID); err != nil {
-			t.Errorf("nettoyage de la team %s: %v", teamID, err)
+			t.Errorf("cleaning up team %s: %v", teamID, err)
 		}
 	})
 
 	var projectID uuid.UUID
 	if err := db.QueryRow(
 		"INSERT INTO projects (team_id, key, name) VALUES ($1, $2, $3) RETURNING id",
-		teamID, key, "Projet de test",
+		teamID, key, "Test project",
 	).Scan(&projectID); err != nil {
-		t.Fatalf("création du projet %s: %v", key, err)
+		t.Fatalf("creating project %s: %v", key, err)
 	}
 
 	return projectScope{teamID: teamID, projectID: projectID}
 }
 
-// openTask ouvre une tâche par le chemin nominal du service.
+// openTask opens a task through the service's nominal path.
 func openTask(t *testing.T, svc service.Service, sc projectScope, title string) service.Task {
 	t.Helper()
 
@@ -80,12 +80,12 @@ func openTask(t *testing.T, svc service.Service, sc projectScope, title string) 
 		TeamID: sc.teamID, ProjectID: sc.projectID, Title: title,
 	})
 	if err != nil {
-		t.Fatalf("création de %q: %v", title, err)
+		t.Fatalf("creating %q: %v", title, err)
 	}
 	return task
 }
 
-// unblockedEvents compte les `task.unblocked` journalisés sur une tâche donnée.
+// unblockedEvents counts the `task.unblocked` entries journalled on a given task.
 func unblockedEvents(t *testing.T, db *sql.DB, sc projectScope, number int64) int {
 	t.Helper()
 
@@ -98,24 +98,24 @@ func unblockedEvents(t *testing.T, db *sql.DB, sc projectScope, number int64) in
 		  AND t.project_id = $1
 		  AND t.number = $2`, sc.projectID, number).Scan(&count)
 	if err != nil {
-		t.Fatalf("comptage des événements: %v", err)
+		t.Fatalf("counting the events: %v", err)
 	}
 	return count
 }
 
-// LE critère de la carte, de bout en bout : block_task, puis passage de la bloquante à `done`,
-// donne une bloquée qui repasse `todo` ET un `task.unblocked` dans le journal.
+// THE criterion of the card, end to end: block_task, then moving the blocker to `done`, yields a
+// blocked task back on `todo` AND a `task.unblocked` in the journal.
 //
-// Les deux moitiés comptent. Sans le retour à `todo`, l'agent lit un blocage que rien ne lève ;
-// sans l'événement, check_inbox n'a rien à lui rendre et la tâche ne dit toujours rien — ce qui
-// était le manque d'origine.
+// Both halves matter. Without the return to `todo`, the agent reads a block nothing lifts; without
+// the event, check_inbox has nothing to hand back and the task still says nothing — which was the
+// original gap.
 func TestBlockThenDoneReleasesAndAnnounces(t *testing.T) {
 	svc, db := newRealService(t)
 	ctx := context.Background()
 	sc := newRealProject(t, db, "E2E")
 
-	blocked := openTask(t, svc, sc, "attend la migration")
-	blocker := openTask(t, svc, sc, "la migration")
+	blocked := openTask(t, svc, sc, "waiting for the migration")
+	blocker := openTask(t, svc, sc, "the migration")
 
 	after, err := svc.BlockTask(ctx, service.BlockTaskInput{
 		TeamID: sc.teamID, ProjectID: sc.projectID,
@@ -125,48 +125,48 @@ func TestBlockThenDoneReleasesAndAnnounces(t *testing.T) {
 		t.Fatalf("BlockTask: %v", err)
 	}
 	if after.Status != "blocked" {
-		t.Fatalf("statut après blocage = %q, attendu blocked", after.Status)
+		t.Fatalf("status after blocking = %q, want blocked", after.Status)
 	}
 
 	done := "done"
 	if _, err := svc.UpdateTask(ctx, service.UpdateTaskInput{
 		TeamID: sc.teamID, ProjectID: sc.projectID, Number: blocker.Number, Status: &done,
 	}); err != nil {
-		t.Fatalf("passage de la bloquante en done: %v", err)
+		t.Fatalf("moving the blocker to done: %v", err)
 	}
 
 	released, err := svc.GetTask(ctx, sc.teamID, sc.projectID, blocked.Number)
 	if err != nil {
-		t.Fatalf("relecture de la bloquée: %v", err)
+		t.Fatalf("reading the blocked task back: %v", err)
 	}
 	if released.Status != "todo" {
-		t.Errorf("statut après libération = %q, attendu todo", released.Status)
+		t.Errorf("status after release = %q, want todo", released.Status)
 	}
 	if n := unblockedEvents(t, db, sc, blocked.Number); n != 1 {
-		t.Errorf("%d événement(s) task.unblocked, attendu 1", n)
+		t.Errorf("%d task.unblocked event(s), want 1", n)
 	}
 }
 
-// L'autre moitié du critère « seulement si l'arête l'avait bloquée » : une tâche que l'agent avait
-// mise en `blocked` LUI-MÊME garde son statut, et est quand même notifiée.
+// The other half of the "only if the edge had blocked it" criterion: a task the agent had moved to
+// `blocked` ITSELF keeps its status, and is notified all the same.
 //
-// Notifier et décider sont deux gestes distincts, et un seul est automatisé. Confondre les deux
-// écraserait une information humaine par une déduction.
+// Notifying and deciding are two distinct gestures, and only one of them is automated. Conflating
+// them would overwrite a human piece of information with a deduction.
 func TestReleaseNotifiesWithoutOverridingAnAgentsBlock(t *testing.T) {
 	svc, db := newRealService(t)
 	ctx := context.Background()
 	sc := newRealProject(t, db, "KEEP")
 
-	blocked := openTask(t, svc, sc, "bloquée pour une autre raison")
-	blocker := openTask(t, svc, sc, "la migration")
+	blocked := openTask(t, svc, sc, "blocked for another reason")
+	blocker := openTask(t, svc, sc, "the migration")
 
-	// L'agent bloque d'abord la tâche à la main : l'arête ouverte ensuite ne s'attribuera pas
-	// le blocage, donc sa libération ne le lèvera pas.
+	// The agent blocks the task by hand first: the edge opened afterwards will not claim the block,
+	// so releasing it will not lift it.
 	manual := "blocked"
 	if _, err := svc.UpdateTask(ctx, service.UpdateTaskInput{
 		TeamID: sc.teamID, ProjectID: sc.projectID, Number: blocked.Number, Status: &manual,
 	}); err != nil {
-		t.Fatalf("blocage manuel: %v", err)
+		t.Fatalf("manual block: %v", err)
 	}
 	if _, err := svc.BlockTask(ctx, service.BlockTaskInput{
 		TeamID: sc.teamID, ProjectID: sc.projectID,
@@ -179,30 +179,30 @@ func TestReleaseNotifiesWithoutOverridingAnAgentsBlock(t *testing.T) {
 	if _, err := svc.UpdateTask(ctx, service.UpdateTaskInput{
 		TeamID: sc.teamID, ProjectID: sc.projectID, Number: blocker.Number, Status: &done,
 	}); err != nil {
-		t.Fatalf("passage de la bloquante en done: %v", err)
+		t.Fatalf("moving the blocker to done: %v", err)
 	}
 
 	after, err := svc.GetTask(ctx, sc.teamID, sc.projectID, blocked.Number)
 	if err != nil {
-		t.Fatalf("relecture: %v", err)
+		t.Fatalf("reading back: %v", err)
 	}
 	if after.Status != "blocked" {
-		t.Errorf("statut = %q, attendu blocked : la décision de l'agent ne s'écrase pas", after.Status)
+		t.Errorf("status = %q, want blocked: the agent's decision is not overwritten", after.Status)
 	}
 	if n := unblockedEvents(t, db, sc, blocked.Number); n != 1 {
-		t.Errorf("%d événement(s), attendu 1 : on notifie même quand on ne décide pas", n)
+		t.Errorf("%d event(s), want 1: we notify even when we do not decide", n)
 	}
 }
 
-// Archiver une bloquante libère ses arêtes. Archivée, elle n'atteindra jamais `done` : sans cette
-// règle, on fabriquerait des tâches que plus rien ne peut débloquer.
+// Archiving a blocker releases its edges. Archived, it will never reach `done`: without that rule,
+// we would manufacture tasks nothing can ever unblock.
 func TestArchivingABlockerReleasesItsEdges(t *testing.T) {
 	svc, db := newRealService(t)
 	ctx := context.Background()
 	sc := newRealProject(t, db, "ARCH")
 
-	blocked := openTask(t, svc, sc, "attend une tâche qui va disparaître")
-	blocker := openTask(t, svc, sc, "abandonnée")
+	blocked := openTask(t, svc, sc, "waiting for a task about to vanish")
+	blocker := openTask(t, svc, sc, "abandoned")
 
 	if _, err := svc.BlockTask(ctx, service.BlockTaskInput{
 		TeamID: sc.teamID, ProjectID: sc.projectID,
@@ -214,38 +214,38 @@ func TestArchivingABlockerReleasesItsEdges(t *testing.T) {
 	if _, err := svc.UpdateTask(ctx, service.UpdateTaskInput{
 		TeamID: sc.teamID, ProjectID: sc.projectID, Number: blocker.Number, Archive: true,
 	}); err != nil {
-		t.Fatalf("archivage de la bloquante: %v", err)
+		t.Fatalf("archiving the blocker: %v", err)
 	}
 
 	after, err := svc.GetTask(ctx, sc.teamID, sc.projectID, blocked.Number)
 	if err != nil {
-		t.Fatalf("relecture: %v", err)
+		t.Fatalf("reading back: %v", err)
 	}
 	if after.Status != "todo" {
-		t.Errorf("statut = %q, attendu todo : une bloquante archivée n'atteindra jamais done", after.Status)
+		t.Errorf("status = %q, want todo: an archived blocker will never reach done", after.Status)
 	}
 	if n := unblockedEvents(t, db, sc, blocked.Number); n != 1 {
-		t.Errorf("%d événement(s), attendu 1", n)
+		t.Errorf("%d event(s), want 1", n)
 	}
 }
 
-// Deux bloquantes : la première qui tombe ne libère rien. Le retour à `todo` demande que TOUTES les
-// arêtes soient levées — être libéré d'un obstacle sur deux, c'est encore être bloqué.
+// Two blockers: the first one to fall releases nothing. Going back to `todo` demands that ALL edges
+// be lifted — being freed from one obstacle out of two is still being blocked.
 func TestPartialReleaseKeepsTheTaskBlocked(t *testing.T) {
 	svc, db := newRealService(t)
 	ctx := context.Background()
 	sc := newRealProject(t, db, "PART")
 
-	blocked := openTask(t, svc, sc, "attend deux choses")
-	first := openTask(t, svc, sc, "première")
-	second := openTask(t, svc, sc, "seconde")
+	blocked := openTask(t, svc, sc, "waiting for two things")
+	first := openTask(t, svc, sc, "first")
+	second := openTask(t, svc, sc, "second")
 
 	for _, blocker := range []service.Task{first, second} {
 		if _, err := svc.BlockTask(ctx, service.BlockTaskInput{
 			TeamID: sc.teamID, ProjectID: sc.projectID,
 			Number: blocked.Number, Blocker: blocker.Number,
 		}); err != nil {
-			t.Fatalf("BlockTask sur #%d: %v", blocker.Number, err)
+			t.Fatalf("BlockTask on #%d: %v", blocker.Number, err)
 		}
 	}
 
@@ -253,62 +253,62 @@ func TestPartialReleaseKeepsTheTaskBlocked(t *testing.T) {
 	if _, err := svc.UpdateTask(ctx, service.UpdateTaskInput{
 		TeamID: sc.teamID, ProjectID: sc.projectID, Number: first.Number, Status: &done,
 	}); err != nil {
-		t.Fatalf("première bloquante en done: %v", err)
+		t.Fatalf("first blocker to done: %v", err)
 	}
 
 	half, err := svc.GetTask(ctx, sc.teamID, sc.projectID, blocked.Number)
 	if err != nil {
-		t.Fatalf("relecture intermédiaire: %v", err)
+		t.Fatalf("intermediate read back: %v", err)
 	}
 	if half.Status != "blocked" {
-		t.Fatalf("statut = %q, attendu blocked : une arête subsiste", half.Status)
+		t.Fatalf("status = %q, want blocked: one edge remains", half.Status)
 	}
 
 	if _, err := svc.UpdateTask(ctx, service.UpdateTaskInput{
 		TeamID: sc.teamID, ProjectID: sc.projectID, Number: second.Number, Status: &done,
 	}); err != nil {
-		t.Fatalf("seconde bloquante en done: %v", err)
+		t.Fatalf("second blocker to done: %v", err)
 	}
 
 	full, err := svc.GetTask(ctx, sc.teamID, sc.projectID, blocked.Number)
 	if err != nil {
-		t.Fatalf("relecture finale: %v", err)
+		t.Fatalf("final read back: %v", err)
 	}
 	if full.Status != "todo" {
-		t.Errorf("statut = %q, attendu todo une fois les deux arêtes levées", full.Status)
+		t.Errorf("status = %q, want todo once both edges are lifted", full.Status)
 	}
 }
 
-// Une clé d'un autre projet n'a aucun chemin jusqu'ici : le service ne résout que des NUMÉROS de
-// son propre projet, et un numéro qui n'y existe pas est introuvable. C'est le pendant, côté
-// service, de ce que la contrainte composite garantit en base.
+// A key from another project has no path in here: the service only resolves NUMBERS of its own
+// project, and a number that does not exist there is not found. This is the service-side
+// counterpart of what the composite constraint guarantees in the database.
 func TestBlockTaskCannotNameAnotherProjectsTask(t *testing.T) {
 	svc, db := newRealService(t)
 	ctx := context.Background()
 	sc := newRealProject(t, db, "MINE")
 
-	blocked := openTask(t, svc, sc, "la mienne")
+	blocked := openTask(t, svc, sc, "mine")
 
-	// Un projet voisin dans la MÊME team, avec sa propre tâche numéro 1.
+	// A sibling project in the SAME team, with its own task number 1.
 	var siblingID uuid.UUID
 	if err := db.QueryRow(
 		"INSERT INTO projects (team_id, key, name) VALUES ($1, $2, $3) RETURNING id",
-		sc.teamID, "OTHR", "Projet voisin",
+		sc.teamID, "OTHR", "Sibling project",
 	).Scan(&siblingID); err != nil {
-		t.Fatalf("création du projet voisin: %v", err)
+		t.Fatalf("creating the sibling project: %v", err)
 	}
 	if _, err := svc.CreateTask(ctx, service.CreateTaskInput{
-		TeamID: sc.teamID, ProjectID: siblingID, Title: "la sienne",
+		TeamID: sc.teamID, ProjectID: siblingID, Title: "theirs",
 	}); err != nil {
-		t.Fatalf("tâche du voisin: %v", err)
+		t.Fatalf("sibling's task: %v", err)
 	}
 
-	// Le numéro 999 n'existe dans aucun des deux : le service ne peut pas le résoudre, et il
-	// n'existe aucune forme d'entrée capable de désigner le projet voisin.
+	// Number 999 exists in neither: the service cannot resolve it, and no input shape is able to
+	// name the sibling project.
 	_, err := svc.BlockTask(ctx, service.BlockTaskInput{
 		TeamID: sc.teamID, ProjectID: sc.projectID, Number: blocked.Number, Blocker: 999,
 	})
 	if err == nil {
-		t.Fatal("BlockTask a accepté une bloquante inexistante")
+		t.Fatal("BlockTask accepted a non-existent blocker")
 	}
 }

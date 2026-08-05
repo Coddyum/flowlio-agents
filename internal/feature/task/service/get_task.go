@@ -6,22 +6,22 @@ import (
 	"github.com/google/uuid"
 )
 
-// maxThreadNotes borne le fil rendu par GetTask.
+// maxThreadNotes bounds the thread returned by GetTask.
 //
-// `get CORE-34` est l'outil qu'un agent appelle pour REPRENDRE une tâche : le fil entier, c'est un
-// appel qui remplit son contexte sur une lecture qu'il croyait anodine — mesuré à 62,6 Mio pour
-// 1 000 notes de 64 KiB. Les dernières notes sont celles qui portent l'état ; NotesTotal dit à
-// l'agent qu'il ne lit qu'une fenêtre.
+// `get CORE-34` is the tool an agent calls to RESUME a task: the whole thread means one call that
+// fills its context on a read it thought was harmless — measured at 62.6 MiB for 1,000 notes of
+// 64 KiB. The last notes are the ones carrying the state; NotesTotal tells the agent it is only
+// reading a window.
 //
-// 10, comme maxThreadMessages côté issue : le fil d'une tâche et le fil d'une issue se lisent pour
-// la même raison, deux bornes différentes n'auraient été qu'une chose de plus à retenir.
+// 10, like maxThreadMessages on the issue side: a task thread and an issue thread are read for the
+// same reason, and two different bounds would only have been one more thing to remember.
 const maxThreadNotes = 10
 
-// GetTask renvoie une tâche et la fin de son fil de notes.
+// GetTask returns a task and the tail of its note thread.
 //
-// Les deux lectures sont scopées indépendamment par la même paire team + projet : la seconde ne
-// fait pas confiance au résultat de la première. Elles ne sont pas dans une transaction — une
-// note ajoutée entre les deux apparaît, ce qui est le bon comportement pour une lecture.
+// Both reads are scoped independently by the same team + project pair: the second one does not
+// trust the result of the first. They are not inside a transaction — a note added in between shows
+// up, which is the right behaviour for a read.
 func (s *service) GetTask(ctx context.Context, teamID, projectID uuid.UUID, number int64) (TaskDetail, error) {
 	if err := validateScope(teamID, projectID); err != nil {
 		return TaskDetail{}, err

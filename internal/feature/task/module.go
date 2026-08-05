@@ -2,13 +2,13 @@ package task
 
 // SOMMAIRE (lire en premier, sauter directement au bon passage)
 //
-// | Élément            | Résumé                                                    | Ligne |
-// |--------------------|-----------------------------------------------------------|-------|
-// | NewModule          | Câble store → service → handler et renvoie le module        | 34    |
-// | mod                | Module task, porteur du handler et du middleware d'auth     | 50    |
-// | mod.Key            | Renvoie la clé du module                                    | 57    |
-// | mod.Routes         | Déclare les routes, middleware lié une seule fois           | 68    |
-// | requireProjectScope| Refuse tout token qui n'est pas scopé à un projet           | 103   |
+// | Élément            | Résumé                                                     | Ligne |
+// |--------------------|------------------------------------------------------------|-------|
+// | NewModule          | Wires store → service → handler and returns the module      | 34    |
+// | mod                | The task module, holding the handler and the auth middleware| 50    |
+// | mod.Key            | Returns the module key                                      | 57    |
+// | mod.Routes         | Declares the routes, middleware bound exactly once          | 67    |
+// | requireProjectScope| Rejects any token that is not scoped to a project           | 102   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -23,14 +23,14 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 )
 
-// Key identifie le module dans le FeatureRegistry et sert de préfixe à ses routes.
+// Key identifies the module in the FeatureRegistry and prefixes its routes.
 const Key = "task"
 
-// NewModule câble la feature : store → service → handler.
+// NewModule wires the feature: store → service → handler.
 //
-// Le store reçoit RawDB en plus des queries : la création d'une tâche réserve son numéro et
-// l'insère dans une seule transaction. *sql.DB s'arrête à cette couche — le service ne voit que
-// l'interface store, qui expose WithTx.
+// The store gets RawDB on top of the queries: creating a task reserves its number and inserts it
+// in a single transaction. *sql.DB stops at that layer — the service only ever sees the store
+// interface, which exposes WithTx.
 func NewModule(cfg module.ModuleConfig) module.Module {
 	st := store.New(cfg.DB, cfg.RawDB)
 	svc := service.New(st)
@@ -42,29 +42,28 @@ func NewModule(cfg module.ModuleConfig) module.Module {
 	}
 }
 
-// mod porte le handler, le service et le service d'auth partagé.
+// mod holds the handler, the service and the shared auth service.
 //
-// Le service est retenu EN PLUS du handler parce que ce module a deux surfaces : HTTP, servie par
-// le handler, et le FeatureRegistry, servie par provider.go. La seconde ne passe pas par HTTP —
-// c'est tout son intérêt.
+// The service is kept ON TOP of the handler because this module has two surfaces: HTTP, served by
+// the handler, and the FeatureRegistry, served by provider.go. The second one does not go through
+// HTTP — that is the entire point of it.
 type mod struct {
 	h    *handler.Handler
 	svc  service.Service
 	auth auth.Service
 }
 
-// Key renvoie la clé du module.
+// Key returns the module key.
 func (m *mod) Key() string {
 	return Key
 }
 
-// Routes déclare les routes de la feature. Le middleware est lié ICI, une seule fois.
+// Routes declares the feature routes. The middleware is bound HERE, exactly once.
 //
-// TOUTES les routes exigent un token de portée projet. Une tâche est le travail interne d'un
-// repo, géré par l'agent de ce repo : il n'existe donc aucune route qui prenne un projet en
-// paramètre, et par conséquent aucune surface où un scope pourrait être contourné. Un token
-// admin, qui n'est lié à aucun projet, se voit refuser l'accès plutôt que de désigner sa cible
-// — administrer la tenancy et travailler dans un backlog sont deux métiers différents.
+// EVERY route requires a project-scoped token. A task is the internal work of a repo, handled by
+// that repo's agent: no route takes a project as a parameter, and therefore no surface exists
+// where a scope could be worked around. An admin token, tied to no project, is denied rather than
+// allowed to name its target — administering tenancy and working a backlog are two different jobs.
 func (m *mod) Routes() http.Handler {
 	r := http.NewServeMux()
 
@@ -78,28 +77,28 @@ func (m *mod) Routes() http.Handler {
 	r.Handle("GET /{number}", project(m.h.GetTask))
 	r.Handle("PATCH /{number}", project(m.h.UpdateTask))
 
-	// UNE SEULE route d'écriture sur une TÂCHE, et c'est voulu.
+	// EXACTLY ONE write route on a TASK, and that is deliberate.
 	//
-	// Ni /notes ni /archive : la note et l'archivage sont des CHAMPS du PATCH, écrits dans la même
-	// transaction que le reste. Deux chemins d'écriture pour un même objet, c'est deux surfaces à
-	// sécuriser, et surtout une couture non atomique — l'agent qui archivait passait par deux
-	// requêtes HTTP, et une panne entre les deux lui faisait rejouer une note déjà écrite.
+	// Neither /notes nor /archive: the note and the archive flag are FIELDS of the PATCH, written in
+	// the same transaction as the rest. Two write paths onto one object means two surfaces to
+	// secure, and above all a non-atomic seam — the agent archiving a task went through two HTTP
+	// requests, and a failure between them made it replay a note it had already written.
 
-	// Les deux routes ci-dessous n'écrivent pas la tâche mais l'ARÊTE DE BLOCAGE, qui a son propre
-	// cycle de vie. Elles ne rouvrent donc pas la couture que le PATCH a refermée : le patch n'a
-	// aucune forme capable d'exprimer « retire CE bloqueur-là et garde les autres », puisque chez
-	// lui un champ absent veut déjà dire « laisse en place ».
+	// The two routes below do not write the task but the BLOCKING EDGE, which has a life cycle of
+	// its own. They therefore do not reopen the seam the PATCH closed: the patch has no shape able
+	// to express "drop THAT blocker and keep the others", since in a patch an absent field already
+	// means "leave it alone".
 	r.Handle("POST /{number}/blockers", project(m.h.BlockTask))
 	r.Handle("DELETE /{number}/blockers/{blocker}", project(m.h.UnblockTask))
 
 	return r
 }
 
-// requireProjectScope refuse tout principal qui n'est pas scopé à un projet.
+// requireProjectScope rejects any principal that is not scoped to a project.
 //
-// Il s'enveloppe autour du Middleware d'auth et pas à l'intérieur des handlers : ajouter une
-// route plus tard sans passer par `project` se verrait immédiatement dans Routes, alors qu'un
-// oubli de vérification dans un handler serait invisible.
+// It wraps around the auth middleware rather than sitting inside the handlers: adding a route
+// later without going through `project` shows up immediately in Routes, whereas a missing check
+// inside a handler would be invisible.
 func requireProjectScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := auth.FromContext(r.Context())

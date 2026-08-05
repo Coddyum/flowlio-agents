@@ -4,9 +4,9 @@ package store
 //
 // | Élément         | Résumé                                                        | Ligne |
 // |-----------------|---------------------------------------------------------------|-------|
-// | store.AddNote   | Ajoute une note de progression, via un SELECT scopé             | 27    |
-// | store.ListNotes | Rend la fin du fil, bornée, et le total écrit                   | 52    |
-// | toNote          | Projette une ligne générée en type domaine                      | 75    |
+// | store.AddNote   | Appends a progress note, through a scoped SELECT                | 26    |
+// | store.ListNotes | Returns the bounded tail of the thread and the total written    | 52    |
+// | toNote          | Projects a generated row onto the domain type                   | 75    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -18,12 +18,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// AddNote ajoute une note de progression à une tâche.
+// AddNote appends a progress note to a task.
 //
-// L'insertion est alimentée par un SELECT scopé sur la tâche : si la tâche n'appartient pas au
-// projet, aucune ligne n'est produite, donc rien n'est inséré et l'appel remonte ErrNotFound.
-// Le scope est porté par la query, pas par une vérification préalable qu'un appelant pourrait
-// oublier.
+// The insert is fed by a SELECT scoped on the task: if the task does not belong to the project, no
+// row is produced, hence nothing is inserted and the call yields ErrNotFound. The scope is carried
+// by the query, not by a prior check a caller could forget.
 func (s *store) AddNote(ctx context.Context, teamID, projectID uuid.UUID, number int64, body string) (Note, error) {
 	row, err := s.q.CreateTaskNote(ctx, database.CreateTaskNoteParams{
 		TeamID:    teamID,
@@ -34,21 +33,22 @@ func (s *store) AddNote(ctx context.Context, teamID, projectID uuid.UUID, number
 	if err != nil {
 		return Note{}, translate(err, "add note")
 	}
-	// L'écriture et la lecture ne rendent plus la même ligne générée : ListTaskNotes porte en plus
-	// le total du fil. Projeter ici plutôt que partager toNote évite d'inventer un type commun
-	// pour deux formes qui n'ont aucune raison de rester identiques.
+	// The write and the read no longer return the same generated row: ListTaskNotes also carries the
+	// thread total. Projecting here rather than sharing toNote avoids inventing a common type for
+	// two shapes that have no reason to stay identical.
 	return Note{ID: row.ID, Body: row.BodyMd, CreatedAt: row.CreatedAt}, nil
 }
 
-// ListNotes rend la FIN du fil d'une tâche — au plus limit notes — et le nombre total écrit.
+// ListNotes returns the TAIL of a task's thread — at most limit notes — and the total number
+// written.
 //
-// La query rend les plus récentes d'abord, parce que ce sont elles qui portent l'état ; cette
-// fonction les remet dans l'ordre d'écriture, qui est celui dans lequel un journal se lit. Le
-// retournement vit ici et pas dans le service : il fait partie du contrat de lecture annoncé par
-// le type, pas d'une décision métier.
+// The query returns the most recent ones first, because those are the ones carrying the state;
+// this function puts them back in write order, which is how a journal is read. The reversal lives
+// here and not in the service: it belongs to the read contract announced by the type, not to a
+// business decision.
 //
-// Le total vient de la MÊME query (count(*) OVER ()), donc borner le fil n'a pas coûté un
-// aller-retour de plus sur le chemin de lecture le plus appelé du produit.
+// The total comes from the SAME query (count(*) OVER ()), so bounding the thread did not cost one
+// more round trip on the product's most-called read path.
 func (s *store) ListNotes(ctx context.Context, teamID, projectID uuid.UUID, number int64, limit int32) ([]Note, int, error) {
 	rows, err := s.q.ListTaskNotes(ctx, database.ListTaskNotesParams{
 		TeamID:    teamID,
@@ -71,7 +71,7 @@ func (s *store) ListNotes(ctx context.Context, teamID, projectID uuid.UUID, numb
 	return notes, total, nil
 }
 
-// toNote projette une ligne générée en type domaine.
+// toNote projects a generated row onto the domain type.
 func toNote(row database.ListTaskNotesRow) Note {
 	return Note{
 		ID:        row.ID,

@@ -7,10 +7,10 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/service"
 )
 
-// ListTasks renvoie le backlog du projet du token.
+// ListTasks returns the backlog of the token's project.
 //
-// Les critères passent par la query string : une lecture reste un GET, donc rejouable et
-// journalisable sans effet de bord.
+// The criteria travel in the query string: a read stays a GET, hence replayable and loggable with
+// no side effect.
 func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	teamID, projectID, ok := h.scope(w, r)
 	if !ok {
@@ -24,8 +24,8 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		Status:    query.Get("status"),
 	}
 
-	// Une valeur illisible est ignorée plutôt que refusée : `?limit=abc` doit rendre le backlog
-	// par défaut, pas une erreur qui coûte un tour d'agent. Le service borne ensuite la valeur.
+	// An unreadable value is ignored rather than rejected: `?limit=abc` must return the default
+	// backlog, not an error costing an agent turn. The service bounds the value afterwards.
 	if limit, err := strconv.Atoi(query.Get("limit")); err == nil {
 		in.Limit = limit
 	}

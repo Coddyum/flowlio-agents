@@ -16,39 +16,39 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// scope est la paire de tenancy d'un projet de test : exactement ce qu'un token de projet porte.
+// scope is the tenancy pair of a test project: exactly what a project token carries.
 type scope struct {
 	teamID    uuid.UUID
 	projectID uuid.UUID
 }
 
-// newStore ouvre la base de test. Sans FLOWLIO_TEST_DATABASE_URL, le test est ignoré : la suite
-// unitaire doit rester exécutable sans infrastructure.
+// newStore opens the test database. Without FLOWLIO_TEST_DATABASE_URL the test is skipped: the unit
+// suite has to stay runnable with no infrastructure.
 func newStore(t *testing.T) (store.Store, *sql.DB) {
 	t.Helper()
 
 	dsn := os.Getenv("FLOWLIO_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("FLOWLIO_TEST_DATABASE_URL non renseigné — test d'intégration ignoré")
+		t.Skip("FLOWLIO_TEST_DATABASE_URL not set — integration test skipped")
 	}
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		t.Fatalf("ouverture de la base: %v", err)
+		t.Fatalf("opening the database: %v", err)
 	}
 	if err := db.Ping(); err != nil {
-		t.Fatalf("base injoignable: %v", err)
+		t.Fatalf("database unreachable: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
 	return store.New(database.New(db), db), db
 }
 
-// newProject crée une team et un projet jetables par SQL direct.
+// newProject creates a throwaway team and project through direct SQL.
 //
-// Les fixtures n'empruntent pas le store de la feature workspace : la feature task ne doit
-// dépendre d'aucune autre feature, pas même dans ses tests. La suppression de la team emporte le
-// reste en cascade, donc la base de test ne dérive pas d'une exécution à l'autre.
+// The fixtures do not borrow the workspace feature's store: the task feature must depend on no
+// other feature, not even in its tests. Deleting the team takes the rest with it in cascade, so the
+// test database does not drift from one run to the next.
 func newProject(t *testing.T, db *sql.DB, key string) scope {
 	t.Helper()
 
@@ -56,46 +56,46 @@ func newProject(t *testing.T, db *sql.DB, key string) scope {
 	var teamID uuid.UUID
 	err := db.QueryRow(
 		"INSERT INTO teams (slug, name) VALUES ($1, $2) RETURNING id",
-		slug, "Team de test",
+		slug, "Test team",
 	).Scan(&teamID)
 	if err != nil {
-		t.Fatalf("création de la team: %v", err)
+		t.Fatalf("creating the team: %v", err)
 	}
 	t.Cleanup(func() {
 		if _, err := db.Exec("DELETE FROM teams WHERE id = $1", teamID); err != nil {
-			t.Errorf("nettoyage de la team %s: %v", teamID, err)
+			t.Errorf("cleaning up team %s: %v", teamID, err)
 		}
 	})
 
 	var projectID uuid.UUID
 	err = db.QueryRow(
 		"INSERT INTO projects (team_id, key, name) VALUES ($1, $2, $3) RETURNING id",
-		teamID, key, "Projet de test",
+		teamID, key, "Test project",
 	).Scan(&projectID)
 	if err != nil {
-		t.Fatalf("création du projet %s: %v", key, err)
+		t.Fatalf("creating project %s: %v", key, err)
 	}
 
 	return scope{teamID: teamID, projectID: projectID}
 }
 
-// newProjectIn crée un second projet dans une team existante : le voisin de palier, celui qui ne
-// doit rien voir du backlog du premier.
+// newProjectIn creates a second project inside an existing team: the next-door neighbour, the one
+// that must see nothing of the first one's backlog.
 func newProjectIn(t *testing.T, db *sql.DB, teamID uuid.UUID, key string) scope {
 	t.Helper()
 
 	var projectID uuid.UUID
 	err := db.QueryRow(
 		"INSERT INTO projects (team_id, key, name) VALUES ($1, $2, $3) RETURNING id",
-		teamID, key, "Projet voisin",
+		teamID, key, "Sibling project",
 	).Scan(&projectID)
 	if err != nil {
-		t.Fatalf("création du projet %s: %v", key, err)
+		t.Fatalf("creating project %s: %v", key, err)
 	}
 	return scope{teamID: teamID, projectID: projectID}
 }
 
-// createTask ouvre une tâche dans un scope donné, en passant par le chemin nominal du store.
+// createTask opens a task in a given scope, through the store's nominal path.
 func createTask(t *testing.T, st store.Store, sc scope, title string) store.Task {
 	t.Helper()
 
@@ -117,7 +117,7 @@ func createTask(t *testing.T, st store.Store, sc scope, title string) store.Task
 		return err
 	})
 	if err != nil {
-		t.Fatalf("création de la tâche %q: %v", title, err)
+		t.Fatalf("creating task %q: %v", title, err)
 	}
 	return created
 }
@@ -127,14 +127,14 @@ func TestTaskLifecycle(t *testing.T) {
 	ctx := context.Background()
 	sc := newProject(t, db, "CORE")
 
-	task := createTask(t, st, sc, "première tâche")
+	task := createTask(t, st, sc, "first task")
 	if task.Number != 1 {
-		t.Errorf("première tâche numérotée %d, attendu 1", task.Number)
+		t.Errorf("first task numbered %d, want 1", task.Number)
 	}
 
-	second := createTask(t, st, sc, "deuxième tâche")
+	second := createTask(t, st, sc, "second task")
 	if second.Number != 2 {
-		t.Errorf("deuxième tâche numérotée %d, attendu 2", second.Number)
+		t.Errorf("second task numbered %d, want 2", second.Number)
 	}
 
 	status := "in_progress"
@@ -150,16 +150,16 @@ func TestTaskLifecycle(t *testing.T) {
 		t.Fatalf("UpdateTask: %v", err)
 	}
 	if updated.Status != "in_progress" {
-		t.Errorf("statut = %q, attendu in_progress", updated.Status)
+		t.Errorf("status = %q, want in_progress", updated.Status)
 	}
 	if updated.Title != task.Title {
-		t.Errorf("un champ absent du patch a été écrasé : titre = %q, attendu %q", updated.Title, task.Title)
+		t.Errorf("a field absent from the patch was overwritten: title = %q, want %q", updated.Title, task.Title)
 	}
 	if updated.Deadline == nil || !updated.Deadline.UTC().Equal(deadline) {
-		t.Errorf("échéance = %v, attendu %v", updated.Deadline, deadline)
+		t.Errorf("deadline = %v, want %v", updated.Deadline, deadline)
 	}
 
-	// ClearDeadline doit effacer, là où un pointeur nil signifie « ne change pas ».
+	// ClearDeadline must wipe, where a nil pointer means "do not change".
 	cleared, err := st.UpdateTask(ctx, store.TaskPatch{
 		TeamID:        sc.teamID,
 		ProjectID:     sc.projectID,
@@ -170,57 +170,57 @@ func TestTaskLifecycle(t *testing.T) {
 		t.Fatalf("UpdateTask (clear deadline): %v", err)
 	}
 	if cleared.Deadline != nil {
-		t.Errorf("échéance = %v après effacement, attendu nil", cleared.Deadline)
+		t.Errorf("deadline = %v after wiping, want nil", cleared.Deadline)
 	}
 
-	if _, err := st.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "avancement"); err != nil {
+	if _, err := st.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "progress"); err != nil {
 		t.Fatalf("AddNote: %v", err)
 	}
 	notes, total, err := st.ListNotes(ctx, sc.teamID, sc.projectID, task.Number, 10)
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
 	}
-	if len(notes) != 1 || notes[0].Body != "avancement" {
-		t.Fatalf("ListNotes renvoie %d notes, attendu la note ajoutée", len(notes))
+	if len(notes) != 1 || notes[0].Body != "progress" {
+		t.Fatalf("ListNotes returns %d notes, want the note just added", len(notes))
 	}
 	if total != 1 {
-		t.Errorf("total = %d, attendu 1", total)
+		t.Errorf("total = %d, want 1", total)
 	}
 
 	archived, err := st.UpdateTask(ctx, store.TaskPatch{TeamID: sc.teamID, ProjectID: sc.projectID, Number: task.Number, Archive: true})
 	if err != nil {
-		t.Fatalf("archivage: %v", err)
+		t.Fatalf("archiving: %v", err)
 	}
 	if archived.ArchivedAt == nil {
-		t.Error("la tâche archivée doit porter une date d'archivage")
+		t.Error("an archived task must carry an archive timestamp")
 	}
 
 	if _, err := st.UpdateTask(ctx, store.TaskPatch{TeamID: sc.teamID, ProjectID: sc.projectID, Number: task.Number, Archive: true}); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("second archivage: erreur = %v, attendu ErrNotFound", err)
+		t.Errorf("second archiving: error = %v, want ErrNotFound", err)
 	}
 }
 
-// Le fil de notes est BORNÉ par la query, et le total reste exact.
+// The note thread is BOUNDED by the query, and the total stays exact.
 //
-// Sans LIMIT, `get CORE-34` sérialisait le fil entier : mesuré sur cette base, 1 000 notes de
-// 64 KiB donnaient 62,6 Mio en 669 ms, écrites sans être throttlées en 659 ms. C'est l'outil qu'un
-// agent appelle pour REPRENDRE une tâche — un fil non borné, c'est un appel qui remplit son
-// contexte sur une lecture qu'il croyait anodine.
+// Without LIMIT, `get CORE-34` serialised the whole thread: measured on this database, 1,000 notes
+// of 64 KiB gave 62.6 MiB in 669 ms, written unthrottled in 659 ms. This is the tool an agent calls
+// to RESUME a task — an unbounded thread means one call that fills its context on a read it thought
+// was harmless.
 //
-// Ce test utilise des notes de 1 KiB : ce qu'il vérifie n'est pas un volume, c'est que la taille
-// rendue NE CROÎT PLUS avec le fil. Le chiffre de 62,6 Mio est une mesure, pas une suite à rejouer
-// à chaque `make test-integration`.
+// This test uses 1 KiB notes: what it checks is not a volume, it is that the size returned NO
+// LONGER GROWS with the thread. The 62.6 MiB figure is a measurement, not a run to replay on every
+// `make test-integration`.
 //
-// MUTATION : retirer `LIMIT @lim` de ListTaskNotes fait tomber ce test sur les trois assertions.
+// MUTATION: removing `LIMIT @lim` from ListTaskNotes makes this test fail on all three assertions.
 func TestNoteThreadIsBoundedByTheQuery(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
 	sc := newProject(t, db, "CORE")
-	task := createTask(t, st, sc, "fil long")
+	task := createTask(t, st, sc, "long thread")
 
-	// created_at est explicite et distinct par note : un INSERT en masse leur donnerait toutes le
-	// même now(), et le départage retomberait sur un uuid aléatoire. Le vrai trafic écrit une note
-	// par requête, donc une par transaction, donc un created_at par note — c'est ce qu'on simule.
+	// created_at is explicit and distinct per note: a bulk INSERT would give them all the same
+	// now(), and the tie-break would fall back on a random uuid. Real traffic writes one note per
+	// request, hence one per transaction, hence one created_at per note — that is what we simulate.
 	const written = 1000
 	if _, err := db.Exec(`
 		INSERT INTO task_notes (task_id, body_md, created_at)
@@ -228,7 +228,7 @@ func TestNoteThreadIsBoundedByTheQuery(t *testing.T) {
 		FROM generate_series(1, $2) AS g`,
 		task.ID, written,
 	); err != nil {
-		t.Fatalf("seed du fil: %v", err)
+		t.Fatalf("seeding the thread: %v", err)
 	}
 
 	const window = 10
@@ -238,35 +238,35 @@ func TestNoteThreadIsBoundedByTheQuery(t *testing.T) {
 	}
 
 	if len(notes) != window {
-		t.Errorf("%d notes rendues, attendu %d : le fil n'est pas borné", len(notes), window)
+		t.Errorf("%d notes returned, want %d: the thread is not bounded", len(notes), window)
 	}
 	if total != written {
-		t.Errorf("total = %d, attendu %d : l'agent ne sait pas qu'il ne lit qu'une fenêtre", total, written)
+		t.Errorf("total = %d, want %d: the agent does not know it is only reading a window", total, written)
 	}
 
 	raw, err := json.Marshal(notes)
 	if err != nil {
-		t.Fatalf("sérialisation: %v", err)
+		t.Fatalf("serialisation: %v", err)
 	}
 	if len(raw) > 64<<10 {
-		t.Errorf("%d octets sérialisés pour %d notes écrites : la taille rendue suit encore le fil",
+		t.Errorf("%d bytes serialised for %d notes written: the size returned still follows the thread",
 			len(raw), written)
 	}
 
-	// Ce sont les DERNIÈRES notes qui portent l'état, rendues dans l'ordre d'écriture.
+	// It is the LAST notes that carry the state, returned in write order.
 	if !strings.HasSuffix(notes[len(notes)-1].Body, "#1000") {
-		t.Errorf("dernière note rendue = %q, attendu la note #1000",
+		t.Errorf("last note returned = %q, want note #1000",
 			notes[len(notes)-1].Body[max(0, len(notes[len(notes)-1].Body)-8):])
 	}
 	if !strings.HasSuffix(notes[0].Body, "#991") {
-		t.Errorf("première note rendue = %q, attendu la note #991 (fenêtre des 10 dernières)",
+		t.Errorf("first note returned = %q, want note #991 (window of the last 10)",
 			notes[0].Body[max(0, len(notes[0].Body)-8):])
 	}
 }
 
-// Propriété de sécurité centrale du produit : un token de projet ne voit que son propre backlog.
-// Les deux projets sont dans la MÊME team, ce qui est le cas le plus exposé — un filtrage qui ne
-// porterait que sur team_id passerait tous les autres tests et échouerait ici.
+// The product's central security property: a project token only ever sees its own backlog. Both
+// projects live in the SAME team, which is the most exposed case — a filter carrying only team_id
+// would pass every other test and fail here.
 func TestTasksAreIsolatedAcrossProjectsOfSameTeam(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -274,11 +274,11 @@ func TestTasksAreIsolatedAcrossProjectsOfSameTeam(t *testing.T) {
 	core := newProject(t, db, "CORE")
 	front := newProjectIn(t, db, core.teamID, "FRNT")
 
-	task := createTask(t, st, core, "secret de CORE")
+	task := createTask(t, st, core, "CORE's secret")
 
-	t.Run("lecture", func(t *testing.T) {
+	t.Run("read", func(t *testing.T) {
 		if _, err := st.TaskByNumber(ctx, front.teamID, front.projectID, task.Number); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("FRNT lit la tâche de CORE: erreur = %v, attendu ErrNotFound", err)
+			t.Errorf("FRNT reads CORE's task: error = %v, want ErrNotFound", err)
 		}
 	})
 
@@ -292,56 +292,56 @@ func TestTasksAreIsolatedAcrossProjectsOfSameTeam(t *testing.T) {
 			t.Fatalf("ListTasks: %v", err)
 		}
 		if len(tasks) != 0 {
-			t.Errorf("FRNT liste %d tâches, attendu 0", len(tasks))
+			t.Errorf("FRNT lists %d tasks, want 0", len(tasks))
 		}
 	})
 
 	t.Run("modification", func(t *testing.T) {
-		title := "détourné"
+		title := "hijacked"
 		if _, err := st.UpdateTask(ctx, store.TaskPatch{
 			TeamID:    front.teamID,
 			ProjectID: front.projectID,
 			Number:    task.Number,
 			Title:     &title,
 		}); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("FRNT modifie la tâche de CORE: erreur = %v, attendu ErrNotFound", err)
+			t.Errorf("FRNT modifies CORE's task: error = %v, want ErrNotFound", err)
 		}
 	})
 
 	t.Run("note", func(t *testing.T) {
 		if _, err := st.AddNote(ctx, front.teamID, front.projectID, task.Number, "intrusion"); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("FRNT écrit dans le fil de CORE: erreur = %v, attendu ErrNotFound", err)
+			t.Errorf("FRNT writes into CORE's thread: error = %v, want ErrNotFound", err)
 		}
 	})
 
-	t.Run("lecture des notes", func(t *testing.T) {
+	t.Run("reading the notes", func(t *testing.T) {
 		notes, _, err := st.ListNotes(ctx, front.teamID, front.projectID, task.Number, 10)
 		if err != nil {
 			t.Fatalf("ListNotes: %v", err)
 		}
 		if len(notes) != 0 {
-			t.Errorf("FRNT lit %d notes de CORE, attendu 0", len(notes))
+			t.Errorf("FRNT reads %d of CORE's notes, want 0", len(notes))
 		}
 	})
 
-	t.Run("archivage", func(t *testing.T) {
+	t.Run("archiving", func(t *testing.T) {
 		if _, err := st.UpdateTask(ctx, store.TaskPatch{TeamID: front.teamID, ProjectID: front.projectID, Number: task.Number, Archive: true}); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("FRNT archive la tâche de CORE: erreur = %v, attendu ErrNotFound", err)
+			t.Errorf("FRNT archives CORE's task: error = %v, want ErrNotFound", err)
 		}
 	})
 
-	// Après toutes ces tentatives, la tâche doit être intacte chez son propriétaire.
+	// After all those attempts, the task must be untouched at its owner's.
 	unchanged, err := st.TaskByNumber(ctx, core.teamID, core.projectID, task.Number)
 	if err != nil {
-		t.Fatalf("TaskByNumber (propriétaire): %v", err)
+		t.Fatalf("TaskByNumber (owner): %v", err)
 	}
-	if unchanged.Title != "secret de CORE" || unchanged.ArchivedAt != nil {
-		t.Errorf("la tâche de CORE a été altérée: %+v", unchanged)
+	if unchanged.Title != "CORE's secret" || unchanged.ArchivedAt != nil {
+		t.Errorf("CORE's task was altered: %+v", unchanged)
 	}
 }
 
-// Le team_id d'un scope ne doit jamais suffire à lui seul, et le project_id non plus : une
-// requête qui présenterait le bon project_id avec le team_id d'une autre team doit échouer.
+// A scope's team_id must never be enough on its own, and neither must the project_id: a request
+// presenting the right project_id with another team's team_id has to fail.
 func TestTaskScopeRequiresBothTeamAndProject(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -349,11 +349,11 @@ func TestTaskScopeRequiresBothTeamAndProject(t *testing.T) {
 	core := newProject(t, db, "CORE")
 	other := newProject(t, db, "CORE")
 
-	task := createTask(t, st, core, "tâche de la team A")
+	task := createTask(t, st, core, "task of team A")
 
 	forged := scope{teamID: other.teamID, projectID: core.projectID}
 	if _, err := st.TaskByNumber(ctx, forged.teamID, forged.projectID, task.Number); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("project_id valide + team_id étranger: erreur = %v, attendu ErrNotFound", err)
+		t.Errorf("valid project_id + foreign team_id: error = %v, want ErrNotFound", err)
 	}
 
 	tasks, err := st.ListTasks(ctx, store.TaskFilter{
@@ -365,13 +365,13 @@ func TestTaskScopeRequiresBothTeamAndProject(t *testing.T) {
 		t.Fatalf("ListTasks: %v", err)
 	}
 	if len(tasks) != 0 {
-		t.Errorf("le scope forgé liste %d tâches, attendu 0", len(tasks))
+		t.Errorf("the forged scope lists %d tasks, want 0", len(tasks))
 	}
 }
 
-// Réserver un numéro sur le projet d'une autre team doit être impossible : sinon le compteur
-// d'un projet tiers pourrait être avancé sans y avoir accès, et les numéros de ce projet
-// deviendraient devinables.
+// Reserving a number on another team's project has to be impossible: otherwise a third-party
+// project's counter could be pushed forward without any access to it, and that project's numbers
+// would become guessable.
 func TestClaimNumberIsScopedToTeam(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -380,18 +380,18 @@ func TestClaimNumberIsScopedToTeam(t *testing.T) {
 	other := newProject(t, db, "CORE")
 
 	if _, err := st.ClaimNumber(ctx, other.teamID, core.projectID); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("réservation croisée: erreur = %v, attendu ErrNotFound", err)
+		t.Fatalf("cross reservation: error = %v, want ErrNotFound", err)
 	}
 
-	// Le compteur du projet visé n'a pas bougé : la première tâche légitime porte bien le n° 1.
-	task := createTask(t, st, core, "première")
+	// The target project's counter has not moved: the first legitimate task does carry number 1.
+	task := createTask(t, st, core, "first")
 	if task.Number != 1 {
-		t.Errorf("numéro = %d après une tentative croisée, attendu 1", task.Number)
+		t.Errorf("number = %d after a cross attempt, want 1", task.Number)
 	}
 }
 
-// La réservation du numéro et l'insertion partagent une transaction : une insertion refusée ne
-// doit pas brûler définitivement un numéro dans la suite CORE-1, CORE-2, …
+// Reserving the number and inserting share a transaction: a rejected insert must not burn a number
+// for good in the CORE-1, CORE-2, … sequence.
 func TestFailedCreateDoesNotBurnNumber(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -403,10 +403,10 @@ func TestFailedCreateDoesNotBurnNumber(t *testing.T) {
 			return err
 		}
 		if number != 1 {
-			t.Errorf("numéro réservé = %d, attendu 1", number)
+			t.Errorf("number reserved = %d, want 1", number)
 		}
-		// Titre vide : refusé par la contrainte tasks_title_not_blank, donc la transaction
-		// entière est annulée, réservation du numéro comprise.
+		// Empty title: refused by the tasks_title_not_blank constraint, so the whole transaction is
+		// rolled back, the number reservation included.
 		_, err = tx.CreateTask(ctx, store.NewTask{
 			TeamID:    sc.teamID,
 			ProjectID: sc.projectID,
@@ -418,32 +418,32 @@ func TestFailedCreateDoesNotBurnNumber(t *testing.T) {
 		return err
 	})
 	if !errors.Is(err, store.ErrConflict) {
-		t.Fatalf("insertion d'un titre vide: erreur = %v, attendu ErrConflict", err)
+		t.Fatalf("inserting an empty title: error = %v, want ErrConflict", err)
 	}
 
-	task := createTask(t, st, sc, "première vraie tâche")
+	task := createTask(t, st, sc, "first real task")
 	if task.Number != 1 {
-		t.Errorf("numéro = %d après un échec, attendu 1 (le numéro ne doit pas être brûlé)", task.Number)
+		t.Errorf("number = %d after a failure, want 1 (the number must not be burnt)", task.Number)
 	}
 }
 
-// Le patch et la note d'un même appel tombent ensemble ou tiennent ensemble.
+// The patch and the note of one call fall together or hold together.
 //
-// C'est la garantie sur laquelle repose le repli d'add_task_note dans update_task : sans elle,
-// l'état « statut changé, motif perdu » resterait atteignable — la note échoue alors que le done
-// est déjà en base, et la session suivante lit un done que rien n'explique.
+// This is the guarantee the folding of add_task_note into update_task rests on: without it, the
+// state "status changed, reason lost" would stay reachable — the note fails while the done is
+// already in the database, and the next session reads a done that nothing explains.
 //
-// MUTATION : remplacer le Rollback différé de tx.go par un Commit inconditionnel fait tomber ce
-// test sur les deux assertions à la fois.
+// MUTATION: replacing the deferred Rollback of tx.go with an unconditional Commit makes this test
+// fail on both assertions at once.
 func TestPatchAndNoteRollBackTogether(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
 	sc := newProject(t, db, "CORE")
 
-	task := createTask(t, st, sc, "titre d'origine")
+	task := createTask(t, st, sc, "original title")
 
-	boom := errors.New("échec après les deux écritures")
-	patched := "titre modifié"
+	boom := errors.New("failure after both writes")
+	patched := "modified title"
 	err := st.WithTx(ctx, func(tx store.Store) error {
 		if _, err := tx.UpdateTask(ctx, store.TaskPatch{
 			TeamID:    sc.teamID,
@@ -453,22 +453,22 @@ func TestPatchAndNoteRollBackTogether(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		if _, err := tx.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "note qui ne doit pas survivre"); err != nil {
+		if _, err := tx.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "note that must not survive"); err != nil {
 			return err
 		}
 		return boom
 	})
 	if !errors.Is(err, boom) {
-		t.Fatalf("erreur = %v, attendu celle renvoyée par fn", err)
+		t.Fatalf("error = %v, want the one returned by fn", err)
 	}
 
 	reread, err := st.TaskByNumber(ctx, sc.teamID, sc.projectID, task.Number)
 	if err != nil {
-		t.Fatalf("relecture de la tâche: %v", err)
+		t.Fatalf("reading the task back: %v", err)
 	}
-	if reread.Title != "titre d'origine" {
-		t.Errorf("titre = %q après annulation, attendu %q : le patch a été committé seul",
-			reread.Title, "titre d'origine")
+	if reread.Title != "original title" {
+		t.Errorf("title = %q after rollback, want %q: the patch was committed on its own",
+			reread.Title, "original title")
 	}
 
 	notes, _, err := st.ListNotes(ctx, sc.teamID, sc.projectID, task.Number, 10)
@@ -476,7 +476,7 @@ func TestPatchAndNoteRollBackTogether(t *testing.T) {
 		t.Fatalf("ListNotes: %v", err)
 	}
 	if len(notes) != 0 {
-		t.Errorf("%d note(s) après annulation, attendu 0: %+v", len(notes), notes)
+		t.Errorf("%d note(s) after rollback, want 0: %+v", len(notes), notes)
 	}
 }
 
@@ -485,28 +485,28 @@ func TestArchivedTaskIsNotWritable(t *testing.T) {
 	ctx := context.Background()
 	sc := newProject(t, db, "CORE")
 
-	task := createTask(t, st, sc, "à archiver")
+	task := createTask(t, st, sc, "to be archived")
 	if _, err := st.UpdateTask(ctx, store.TaskPatch{TeamID: sc.teamID, ProjectID: sc.projectID, Number: task.Number, Archive: true}); err != nil {
-		t.Fatalf("archivage: %v", err)
+		t.Fatalf("archiving: %v", err)
 	}
 
-	title := "modification après archivage"
+	title := "change after archiving"
 	if _, err := st.UpdateTask(ctx, store.TaskPatch{
 		TeamID:    sc.teamID,
 		ProjectID: sc.projectID,
 		Number:    task.Number,
 		Title:     &title,
 	}); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("modification d'une tâche archivée: erreur = %v, attendu ErrNotFound", err)
+		t.Errorf("modifying an archived task: error = %v, want ErrNotFound", err)
 	}
 
-	if _, err := st.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "note tardive"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("note sur une tâche archivée: erreur = %v, attendu ErrNotFound", err)
+	if _, err := st.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "late note"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("note on an archived task: error = %v, want ErrNotFound", err)
 	}
 
-	// Elle reste lisible : archiver range, ça n'efface pas.
+	// It stays readable: archiving tidies away, it does not erase.
 	if _, err := st.TaskByNumber(ctx, sc.teamID, sc.projectID, task.Number); err != nil {
-		t.Errorf("lecture d'une tâche archivée: %v", err)
+		t.Errorf("reading an archived task: %v", err)
 	}
 }
 
@@ -515,9 +515,9 @@ func TestListTasksFilters(t *testing.T) {
 	ctx := context.Background()
 	sc := newProject(t, db, "CORE")
 
-	todo := createTask(t, st, sc, "à faire")
-	done := createTask(t, st, sc, "terminée")
-	archived := createTask(t, st, sc, "archivée")
+	todo := createTask(t, st, sc, "to do")
+	done := createTask(t, st, sc, "finished")
+	archived := createTask(t, st, sc, "archived")
 
 	doneStatus := "done"
 	if _, err := st.UpdateTask(ctx, store.TaskPatch{
@@ -526,26 +526,26 @@ func TestListTasksFilters(t *testing.T) {
 		t.Fatalf("UpdateTask: %v", err)
 	}
 	if _, err := st.UpdateTask(ctx, store.TaskPatch{TeamID: sc.teamID, ProjectID: sc.projectID, Number: archived.Number, Archive: true}); err != nil {
-		t.Fatalf("archivage: %v", err)
+		t.Fatalf("archiving: %v", err)
 	}
 
 	base := store.TaskFilter{TeamID: sc.teamID, ProjectID: sc.projectID, Limit: 50}
 
-	t.Run("les archivées sont exclues par défaut", func(t *testing.T) {
+	t.Run("archived ones are excluded by default", func(t *testing.T) {
 		tasks, err := st.ListTasks(ctx, base)
 		if err != nil {
 			t.Fatalf("ListTasks: %v", err)
 		}
 		if len(tasks) != 2 {
-			t.Fatalf("%d tâches actives, attendu 2", len(tasks))
+			t.Fatalf("%d active tasks, want 2", len(tasks))
 		}
-		// Tri par numéro décroissant : la plus récente d'abord.
+		// Sorted by descending number: the most recent one first.
 		if tasks[0].Number != done.Number {
-			t.Errorf("première tâche n° %d, attendu %d (tri décroissant)", tasks[0].Number, done.Number)
+			t.Errorf("first task no. %d, want %d (descending sort)", tasks[0].Number, done.Number)
 		}
 	})
 
-	t.Run("archived inclut les archivées", func(t *testing.T) {
+	t.Run("archived includes the archived ones", func(t *testing.T) {
 		filter := base
 		filter.IncludeArchived = true
 		tasks, err := st.ListTasks(ctx, filter)
@@ -553,11 +553,11 @@ func TestListTasksFilters(t *testing.T) {
 			t.Fatalf("ListTasks: %v", err)
 		}
 		if len(tasks) != 3 {
-			t.Errorf("%d tâches au total, attendu 3", len(tasks))
+			t.Errorf("%d tasks in total, want 3", len(tasks))
 		}
 	})
 
-	t.Run("filtre par statut", func(t *testing.T) {
+	t.Run("filter by status", func(t *testing.T) {
 		filter := base
 		filter.Status = "todo"
 		tasks, err := st.ListTasks(ctx, filter)
@@ -565,11 +565,11 @@ func TestListTasksFilters(t *testing.T) {
 			t.Fatalf("ListTasks: %v", err)
 		}
 		if len(tasks) != 1 || tasks[0].Number != todo.Number {
-			t.Errorf("filtre todo renvoie %d tâches, attendu la seule tâche à faire", len(tasks))
+			t.Errorf("the todo filter returns %d tasks, want the single to-do task", len(tasks))
 		}
 	})
 
-	t.Run("la limite est respectée", func(t *testing.T) {
+	t.Run("the limit is honoured", func(t *testing.T) {
 		filter := base
 		filter.Limit = 1
 		tasks, err := st.ListTasks(ctx, filter)
@@ -577,13 +577,13 @@ func TestListTasksFilters(t *testing.T) {
 			t.Fatalf("ListTasks: %v", err)
 		}
 		if len(tasks) != 1 {
-			t.Errorf("%d tâches avec limit=1, attendu 1", len(tasks))
+			t.Errorf("%d tasks with limit=1, want 1", len(tasks))
 		}
 	})
 }
 
-// La base porte la garantie du vocabulaire : un statut hors enum est refusé même si la
-// validation applicative venait à être contournée.
+// The database carries the vocabulary guarantee: a status outside the enum is refused even if the
+// application-level validation were to be bypassed.
 func TestDatabaseRejectsUnknownStatus(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -598,26 +598,26 @@ func TestDatabaseRejectsUnknownStatus(t *testing.T) {
 			TeamID:    sc.teamID,
 			ProjectID: sc.projectID,
 			Number:    number,
-			Title:     "statut inventé",
+			Title:     "invented status",
 			Status:    "wontfix",
 			Priority:  "normal",
 		})
 		return err
 	})
 	if err == nil {
-		t.Fatal("un statut hors enum a été accepté par la base")
+		t.Fatal("a status outside the enum was accepted by the database")
 	}
 }
 
-// LE SCÉNARIO QUI MOTIVE L'IDEMPOTENCE (FLWL-14) NE SE PRODUIT PAS TEL QU'IL EST DÉCRIT.
+// THE SCENARIO MOTIVATING IDEMPOTENCE (FLWL-14) DOES NOT HAPPEN AS DESCRIBED.
 //
-// « L'agent appelle create_task, la réponse se perd, il rejoue » suppose que la première
-// création a abouti. Or quand le client abandonne — délai de 15 s dépassé, session tuée, agent
-// interrompu — le contexte de la requête est annulé, et la transaction l'est avec lui : aucune
-// ligne, aucun numéro consommé. Le rejeu crée alors la seule tâche qui existera.
+// "The agent calls create_task, the response is lost, it replays" assumes the first creation went
+// through. Yet when the client gives up — 15 s timeout exceeded, session killed, agent interrupted
+// — the request context is cancelled, and the transaction goes with it: no row, no number consumed.
+// The replay then creates the only task that will ever exist.
 //
-// La fenêtre où un rejeu duplique réellement est l'intervalle entre le COMMIT réussi et
-// l'arrivée des octets chez le client. Ce test la borne en prouvant tout ce qui est en amont.
+// The window where a replay really duplicates is the interval between a successful COMMIT and the
+// bytes arriving at the client. This test bounds it by proving everything upstream of it.
 func TestCancelledRequestCreatesNothing(t *testing.T) {
 	st, db := newStore(t)
 	sc := newProject(t, db, "CORE")
@@ -629,24 +629,24 @@ func TestCancelledRequestCreatesNothing(t *testing.T) {
 			return err
 		}
 		if number != 1 {
-			t.Errorf("numéro réservé = %d, attendu 1", number)
+			t.Errorf("number reserved = %d, want 1", number)
 		}
 
-		// Le client abandonne ici, la réservation déjà faite : c'est le pire moment possible.
+		// The client gives up here, the reservation already made: the worst possible moment.
 		cancel()
 
 		_, err = tx.CreateTask(ctx, store.NewTask{
 			TeamID:    sc.teamID,
 			ProjectID: sc.projectID,
 			Number:    number,
-			Title:     "tâche dont la réponse se perdra",
+			Title:     "task whose response will be lost",
 			Status:    "todo",
 			Priority:  "normal",
 		})
 		return err
 	})
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("erreur = %v, attendu context.Canceled", err)
+		t.Fatalf("error = %v, want context.Canceled", err)
 	}
 
 	live := context.Background()
@@ -654,67 +654,67 @@ func TestCancelledRequestCreatesNothing(t *testing.T) {
 		TeamID: sc.teamID, ProjectID: sc.projectID, IncludeArchived: true, Limit: 10,
 	})
 	if err != nil {
-		t.Fatalf("lecture du backlog: %v", err)
+		t.Fatalf("reading the backlog: %v", err)
 	}
 	if len(tasks) != 0 {
-		t.Fatalf("%d tâche(s) créée(s) par une requête annulée, attendu 0", len(tasks))
+		t.Fatalf("%d task(s) created by a cancelled request, want 0", len(tasks))
 	}
 
-	// Le rejeu de l'agent : c'est lui qui crée la tâche, et il prend bien le numéro 1.
-	replayed := createTask(t, st, sc, "tâche dont la réponse se perdra")
+	// The agent's replay: it is what creates the task, and it does take number 1.
+	replayed := createTask(t, st, sc, "task whose response will be lost")
 	if replayed.Number != 1 {
-		t.Errorf("numéro = %d après annulation, attendu 1 (aucun numéro consommé)", replayed.Number)
+		t.Errorf("number = %d after cancellation, want 1 (no number consumed)", replayed.Number)
 	}
 }
 
-// Un numéro servi deux fois est une incohérence du compteur, jamais une faute de l'appelant :
-// le numéro n'est pas un paramètre d'API, il est tiré de projects.next_number. Le rendre en
-// « conflit » ferait répondre 409 à un agent qui n'a rien fait de mal et qui réessaierait
-// indéfiniment. Décision #23 de docs/DESIGN-M3.md, portée depuis issue/store/errors.go.
+// A number served twice is an inconsistency of the counter, never a caller's fault: the number is
+// not an API parameter, it is drawn from projects.next_number. Returning it as a "conflict" would
+// answer 409 to an agent that did nothing wrong and would have it retry forever. Decision #23 of
+// docs/DESIGN-M3.md, carried over from issue/store/errors.go.
 func TestDuplicateNumberIsCorruptionNotConflict(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
 	sc := newProject(t, db, "CORE")
 
-	first := createTask(t, st, sc, "première tâche")
+	first := createTask(t, st, sc, "first task")
 
 	err := st.WithTx(ctx, func(tx store.Store) error {
 		_, err := tx.CreateTask(ctx, store.NewTask{
 			TeamID:    sc.teamID,
 			ProjectID: sc.projectID,
 			Number:    first.Number,
-			Title:     "même numéro que la première",
+			Title:     "same number as the first",
 			Status:    "todo",
 			Priority:  "normal",
 		})
 		return err
 	})
 	if !errors.Is(err, store.ErrCorrupted) {
-		t.Fatalf("erreur = %v, attendu ErrCorrupted", err)
+		t.Fatalf("error = %v, want ErrCorrupted", err)
 	}
 	if errors.Is(err, store.ErrConflict) {
-		t.Error("un compteur corrompu est remonté comme un conflit d'appelant")
+		t.Error("a corrupted counter surfaced as a caller conflict")
 	}
 }
 
-// « Passe en done, voilà pourquoi, et archive » tient dans UNE transaction, dans le bon ordre.
+// "Move to done, here is why, and archive" holds in ONE transaction, in the right order.
 //
-// L'ordre n'est pas indifférent : depuis que l'archivage est un champ du patch, patcher d'abord
-// archive la tâche, et CreateTaskNote — dont la query porte `t.archived_at IS NULL` — refuse alors
-// d'écrire dans le fil d'une tâche qu'on vient de fermer. Reproduit : l'appel le plus courant
-// d'une fin de session échouait entièrement sur `task store: not found`.
+// The order is not indifferent: ever since archiving became a field of the patch, patching first
+// archives the task, and CreateTaskNote — whose query carries `t.archived_at IS NULL` — then refuses
+// to write into the thread of a task just closed. Reproduced: the most common end-of-session call
+// failed entirely on `task store: not found`.
 //
-// MUTATION : remettre le patch avant la note dans UpdateTask (service) fait tomber ce test.
+// MUTATION: putting the patch back before the note in UpdateTask (service) makes this test fail.
 func TestEndOfTaskWritesNoteThenArchivesInOneTransaction(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
 	sc := newProject(t, db, "CORE")
-	task := createTask(t, st, sc, "à terminer")
+	task := createTask(t, st, sc, "to be finished")
 
 	done := "done"
 	var updated store.Task
 	err := st.WithTx(ctx, func(tx store.Store) error {
-		if _, err := tx.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "livré"); err != nil {
+		if _, err := tx.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "delivered"); err != nil {
 			return err
 		}
 		var err error
@@ -728,30 +728,30 @@ func TestEndOfTaskWritesNoteThenArchivesInOneTransaction(t *testing.T) {
 		return err
 	})
 	if err != nil {
-		t.Fatalf("fin de tâche en une transaction: %v", err)
+		t.Fatalf("end of task in one transaction: %v", err)
 	}
 
 	if updated.Status != "done" {
-		t.Errorf("statut = %q, attendu done", updated.Status)
+		t.Errorf("status = %q, want done", updated.Status)
 	}
 	if updated.ArchivedAt == nil {
-		t.Error("la tâche doit être archivée par le patch lui-même, sans seconde écriture")
+		t.Error("the task must be archived by the patch itself, with no second write")
 	}
 
-	// La note est bien là, et une seule fois : c'est le doublon que la seconde requête produisait
-	// à chaque rejeu.
+	// The note is there, and only once: that is the duplicate the second request produced on every
+	// replay.
 	notes, total, err := st.ListNotes(ctx, sc.teamID, sc.projectID, task.Number, 10)
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
 	}
-	if total != 1 || len(notes) != 1 || notes[0].Body != "livré" {
-		t.Errorf("fil = %d note(s) sur %d, attendu exactement « livré »", len(notes), total)
+	if total != 1 || len(notes) != 1 || notes[0].Body != "delivered" {
+		t.Errorf("thread = %d note(s) out of %d, want exactly \"delivered\"", len(notes), total)
 	}
 
-	// Rejouer le même appel ne peut plus doubler la note : la tâche est archivée, la transaction
-	// entière est refusée.
+	// Replaying the same call can no longer duplicate the note: the task is archived, the whole
+	// transaction is refused.
 	err = st.WithTx(ctx, func(tx store.Store) error {
-		if _, err := tx.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "livré"); err != nil {
+		if _, err := tx.AddNote(ctx, sc.teamID, sc.projectID, task.Number, "delivered"); err != nil {
 			return err
 		}
 		_, err := tx.UpdateTask(ctx, store.TaskPatch{
@@ -760,13 +760,13 @@ func TestEndOfTaskWritesNoteThenArchivesInOneTransaction(t *testing.T) {
 		return err
 	})
 	if !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("rejeu: erreur = %v, attendu ErrNotFound", err)
+		t.Errorf("replay: error = %v, want ErrNotFound", err)
 	}
 	_, total, err = st.ListNotes(ctx, sc.teamID, sc.projectID, task.Number, 10)
 	if err != nil {
-		t.Fatalf("ListNotes après rejeu: %v", err)
+		t.Fatalf("ListNotes after replay: %v", err)
 	}
 	if total != 1 {
-		t.Errorf("%d notes après rejeu, attendu 1 : le rejeu a doublé la note", total)
+		t.Errorf("%d notes after replay, want 1: the replay duplicated the note", total)
 	}
 }

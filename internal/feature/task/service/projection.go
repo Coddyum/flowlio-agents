@@ -4,17 +4,16 @@ package service
 //
 // | Élément | Résumé                                              | Ligne |
 // |---------|-----------------------------------------------------|-------|
-// | toTask  | Projette une tâche du store en vue API               | 18    |
-// | toNote  | Projette une note du store en vue API                | 33    |
+// | toTask  | Projects a store task onto the API view              | 17    |
+// | toNote  | Projects a store note onto the API view              | 32    |
 //
 // Fin du sommaire.
 // =====================================================================
 
 import "github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 
-// toTask projette une tâche du store en vue API. Les identifiants internes (UUID de tâche, de
-// team et de projet) ne franchissent pas cette frontière : un agent travaille sur des numéros
-// lisibles, jamais sur des UUID.
+// toTask projects a store task onto the API view. Internal identifiers (task, team and project
+// UUIDs) do not cross this boundary: an agent works on readable numbers, never on UUIDs.
 func toTask(t store.Task) Task {
 	return Task{
 		Number:    t.Number,
@@ -29,7 +28,7 @@ func toTask(t store.Task) Task {
 	}
 }
 
-// toNote projette une note du store en vue API.
+// toNote projects a store note onto the API view.
 func toNote(n store.Note) Note {
 	return Note{
 		Body:      n.Body,

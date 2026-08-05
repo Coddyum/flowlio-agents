@@ -8,16 +8,16 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 )
 
-// UpdateTask applique un patch partiel : un champ absent laisse la valeur en place.
+// UpdateTask applies a partial patch: an absent field leaves the value in place.
 //
-// Une tâche archivée n'est pas modifiable et remonte ErrNotFound, exactement comme un numéro
-// inexistant ou une tâche d'un autre projet. Cette indistinction est délibérée : distinguer
-// « existe mais archivée » de « n'existe pas » dirait à un agent quels numéros sont utilisés
-// dans un projet auquel il n'a pas accès.
+// An archived task cannot be modified and returns ErrNotFound, exactly like a non-existent number
+// or a task of another project. That indistinction is deliberate: telling "exists but archived"
+// apart from "does not exist" would tell an agent which numbers are in use in a project it has no
+// access to.
 //
-// Une note fournie est écrite dans la MÊME transaction que le patch. Séparées, les deux
-// écritures laissaient exister l'état « statut changé, motif perdu » : la note tombe alors que
-// le statut est déjà passé, et la session suivante lit un done que rien n'explique.
+// A note, when provided, is written in the SAME transaction as the patch. Kept apart, the two
+// writes allowed the state "status changed, reason lost" to exist: the note fails once the status
+// has already moved, and the next session reads a done that nothing explains.
 func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, error) {
 	if err := validateScope(in.TeamID, in.ProjectID); err != nil {
 		return Task{}, err
@@ -64,9 +64,9 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 		patch.Priority = in.Priority
 	}
 
-	// Le chemin sans transaction est celui du patch nominal : un titre, une priorité, une échéance.
-	// Il ne s'ouvre que si RIEN d'autre n'a besoin d'être écrit avec — ni note, ni libération
-	// d'arête. Une transaction sur ce chemin coûterait deux allers-retours de plus à chaque édition.
+	// The transaction-free path is the one of the nominal patch: a title, a priority, a deadline.
+	// It only opens if NOTHING else needs to be written along with it — no note, no edge release. A
+	// transaction on that path would cost two more round trips on every edit.
 	releases := releasesOnPatch(patch)
 	if in.Note == nil && !releases {
 		updated, err := s.store.UpdateTask(ctx, patch)
@@ -80,23 +80,23 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 	if in.Note != nil {
 		note = strings.TrimSpace(*in.Note)
 		if note == "" {
-			return Task{}, fmt.Errorf("%w: note vide", ErrInvalidInput)
+			return Task{}, fmt.Errorf("%w: empty note", ErrInvalidInput)
 		}
 		if err := validateBody("note", note); err != nil {
 			return Task{}, err
 		}
 	}
 
-	// La note s'écrit AVANT le patch, et cet ordre n'est pas indifférent : depuis que l'archivage
-	// est un champ du patch, patcher d'abord archiverait la tâche, et CreateTaskNote — dont la
-	// query porte `t.archived_at IS NULL` — refuserait d'écrire dans le fil d'une tâche qu'on vient
-	// de fermer. L'appel le plus courant d'une fin de session, « passe en done, voilà pourquoi, et
-	// archive », échouerait entièrement. Écrite d'abord, la note entre pendant que la tâche est
-	// encore active, ce qui est exactement le moment où elle a un sens.
+	// The note is written BEFORE the patch, and that order is not indifferent: ever since archiving
+	// became a field of the patch, patching first would archive the task, and CreateTaskNote —
+	// whose query carries `t.archived_at IS NULL` — would refuse to write into the thread of a task
+	// just closed. The most common end-of-session call, "move to done, here is why, and archive",
+	// would fail entirely. Written first, the note lands while the task is still active, which is
+	// exactly the moment it makes sense.
 	//
-	// Les deux partagent une transaction : une note refusée, ou une tâche archivée entre-temps,
-	// annulent l'ensemble. Le scope reste porté par chacune des deux queries — la transaction
-	// garantit l'atomicité, jamais la visibilité.
+	// Both share a transaction: a rejected note, or a task archived in the meantime, rolls back the
+	// whole thing. The scope stays carried by each of the two queries — the transaction guarantees
+	// atomicity, never visibility.
 	var updated store.Task
 	err := s.store.WithTx(ctx, func(tx store.Store) error {
 		if note != "" {
@@ -114,10 +114,10 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 			return nil
 		}
 
-		// La libération suit le patch dans la MÊME transaction, et c'est ce qui rend impossible
-		// l'état « la bloquante est done, la bloquée l'ignore ». Une tâche archivée force la
-		// libération : elle n'atteindra jamais rien, et laisser ses arêtes en place fabriquerait
-		// des tâches que plus rien ne peut débloquer.
+		// The release follows the patch in the SAME transaction, and that is what makes the state
+		// "the blocker is done, the blocked task ignores it" impossible. An archived task forces the
+		// release: it will never reach anything, and leaving its edges in place would manufacture
+		// tasks nothing can ever unblock.
 		return s.releaseBlocker(ctx, tx, updated, patch.Archive)
 	})
 	if err != nil {

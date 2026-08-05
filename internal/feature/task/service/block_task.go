@@ -4,8 +4,8 @@ package service
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | service.BlockTask  | Ouvre une arête de blocage entre deux tâches du projet       | 34    |
-// | alreadyReached     | Dit si une bloquante satisfait déjà la condition demandée    | 124   |
+// | service.BlockTask  | Opens a blocking edge between two tasks of the project       | 33    |
+// | alreadyReached     | Tells whether a blocker already satisfies the condition      | 123   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -19,24 +19,23 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
 )
 
-// BlockTask ouvre l'arête « in.Number est bloquée par in.Blocker jusqu'à ce que celle-ci atteigne
-// in.Until ».
+// BlockTask opens the edge "in.Number is blocked by in.Blocker until that one reaches in.Until".
 //
-// Tout se passe dans UNE transaction, et l'ordre des refus n'est pas indifférent : chacun rend un
-// motif que l'agent peut corriger, plutôt qu'une violation de contrainte qu'il ne saurait pas
-// lire. La base reste la garantie — la contrainte composite rend la dépendance inter-repos
-// inexprimable (D42), le CHECK refuse l'auto-blocage, l'index unique partiel refuse le doublon —
-// mais une garantie n'est pas un message d'erreur.
+// Everything happens in ONE transaction, and the order of the refusals is not indifferent: each
+// returns a reason the agent can act on, rather than a constraint violation it would not know how
+// to read. The database remains the guarantee — the composite constraint makes a cross-repo
+// dependency inexpressible (D42), the CHECK refuses self-blocking, the partial unique index
+// refuses the duplicate — but a guarantee is not an error message.
 //
-// La tâche bloquée passe `blocked` seulement si elle ne l'était pas déjà, et l'arête retient que
-// c'est ELLE qui l'y a mise. Sans cette trace, la libération ne saurait pas distinguer « bloquée
-// par l'arête » de « bloquée par un agent pour une autre raison ».
+// The blocked task moves to `blocked` only if it was not already, and the edge remembers that IT
+// is what put it there. Without that trace, the release could not tell "blocked by the edge" from
+// "blocked by an agent for another reason".
 func (s *service) BlockTask(ctx context.Context, in BlockTaskInput) (Task, error) {
 	if err := validateScope(in.TeamID, in.ProjectID); err != nil {
 		return Task{}, err
 	}
 	if in.Number == in.Blocker {
-		return Task{}, fmt.Errorf("%w: une tâche ne peut pas se bloquer elle-même", ErrInvalidInput)
+		return Task{}, fmt.Errorf("%w: a task cannot block itself", ErrInvalidInput)
 	}
 
 	until := strings.TrimSpace(in.Until)
@@ -44,7 +43,7 @@ func (s *service) BlockTask(ctx context.Context, in BlockTaskInput) (Task, error
 		until = statusDone
 	}
 	if !slices.Contains(releaseStatuses, until) {
-		return Task{}, fmt.Errorf("%w: condition de libération %q (attendu: %s)",
+		return Task{}, fmt.Errorf("%w: release condition %q (expected: %s)",
 			ErrInvalidInput, until, strings.Join(releaseStatuses, ", "))
 	}
 
@@ -56,7 +55,7 @@ func (s *service) BlockTask(ctx context.Context, in BlockTaskInput) (Task, error
 			return translateStore(err, "block task: blocked task")
 		}
 		if blocked.ArchivedAt != nil {
-			return fmt.Errorf("%w: la tâche %d est archivée", ErrInvalidInput, in.Number)
+			return fmt.Errorf("%w: task %d is archived", ErrInvalidInput, in.Number)
 		}
 
 		blocker, err := tx.TaskByNumber(ctx, in.TeamID, in.ProjectID, in.Blocker)
@@ -64,15 +63,15 @@ func (s *service) BlockTask(ctx context.Context, in BlockTaskInput) (Task, error
 			return translateStore(err, "block task: blocker")
 		}
 		if blocker.ArchivedAt != nil {
-			return fmt.Errorf("%w: la tâche bloquante %d est archivée et n'atteindra jamais %q",
+			return fmt.Errorf("%w: blocking task %d is archived and will never reach %q",
 				ErrInvalidInput, in.Blocker, until)
 		}
 
-		// Une arête née libérée serait un blocage qui ne bloque pas : la tâche passerait `blocked`
-		// sans que rien ne soit jamais journalisé pour l'en sortir. Le refus dit à l'agent ce qu'il
-		// vient d'apprendre — la bloquante est déjà passée.
+		// An edge born released would be a block that does not block: the task would move to
+		// `blocked` with nothing ever journalled to bring it back out. The refusal tells the agent
+		// what it has just learnt — the blocker has already moved past.
 		if alreadyReached(blocker.Status, until) {
-			return fmt.Errorf("%w: la tâche %d est déjà %s, il n'y a rien à attendre",
+			return fmt.Errorf("%w: task %d is already %s, there is nothing to wait for",
 				ErrInvalidInput, in.Blocker, blocker.Status)
 		}
 
@@ -81,8 +80,8 @@ func (s *service) BlockTask(ctx context.Context, in BlockTaskInput) (Task, error
 			return translateStore(err, "block task: active edges")
 		}
 		if wouldCycle(edges, blocked.ID, blocker.ID) {
-			return fmt.Errorf("%w: la tâche %d dépend déjà de %d, cette arête fermerait un cycle "+
-				"et les laisserait bloquées toutes les deux", ErrInvalidInput, in.Blocker, in.Number)
+			return fmt.Errorf("%w: task %d already depends on %d, this edge would close a cycle "+
+				"and leave both of them blocked", ErrInvalidInput, in.Blocker, in.Number)
 		}
 
 		setBlocked := blocked.Status != statusBlocked
@@ -116,11 +115,11 @@ func (s *service) BlockTask(ctx context.Context, in BlockTaskInput) (Task, error
 	return toTask(blocked), nil
 }
 
-// alreadyReached dit si une bloquante satisfait déjà la condition demandée.
+// alreadyReached tells whether a blocker already satisfies the requested condition.
 //
-// « Atteindre » est monotone, comme dans ReleaseDependenciesOfBlocker : une tâche `done` a dépassé
-// `in_progress`. Les deux lectures de cette règle doivent rester d'accord, sinon une arête refusée
-// ici pourrait être créée ailleurs sans jamais pouvoir se libérer.
+// "Reaching" is monotone, as in ReleaseDependenciesOfBlocker: a `done` task has moved past
+// `in_progress`. Both readings of that rule must stay in agreement, otherwise an edge refused here
+// could be created elsewhere and never be able to release.
 func alreadyReached(status, until string) bool {
 	if status == statusDone {
 		return true

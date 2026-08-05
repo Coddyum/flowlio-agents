@@ -6,26 +6,25 @@ import (
 	"fmt"
 )
 
-// WithTx exécute fn dans une transaction et ne commite que si fn réussit.
+// WithTx runs fn inside a transaction and only commits if fn succeeds.
 //
-// fn reçoit un Store qui partage la transaction : le service continue de ne voir qu'une
-// interface, et *sql.DB ne fuite nulle part au-dessus de cette couche.
+// fn receives a Store that shares the transaction: the service still only ever sees an interface,
+// and *sql.DB leaks nowhere above this layer.
 //
-// Le Rollback différé est inconditionnel : après un Commit réussi il est sans effet, et sur
-// n'importe quel chemin d'erreur — y compris une panique — il libère la transaction.
-// L'imbrication est refusée, pas absorbée. Ouvrir une seconde transaction prendrait une autre
-// connexion du pool, qui attendrait le verrou que celle-ci détient déjà sur la ligne du projet
-// (ClaimNextNumber) : un interblocage qu'aucun test mono-thread ne révèle. Et rejoindre
-// silencieusement la transaction existante ferait committer par l'extérieur les écritures d'un
-// appel interne dont l'erreur aurait été avalée.
+// The deferred Rollback is unconditional: after a successful Commit it has no effect, and on any
+// error path — a panic included — it releases the transaction.
+// Nesting is refused, not absorbed. Opening a second transaction would take another connection
+// from the pool, which would wait on the lock this one already holds on the project row
+// (ClaimNextNumber): a deadlock no single-threaded test reveals. And silently joining the existing
+// transaction would have the outside commit the writes of an inner call whose error was swallowed.
 func (s *store) WithTx(ctx context.Context, fn func(Store) error) error {
 	if s.inTx {
-		return errors.New("task store: transaction imbriquée")
+		return errors.New("task store: nested transaction")
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("task store: ouverture de transaction: %w", err)
+		return fmt.Errorf("task store: opening transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 

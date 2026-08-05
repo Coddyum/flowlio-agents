@@ -4,31 +4,31 @@ package service
 //
 // | Élément                | Résumé                                                    | Ligne |
 // |------------------------|-----------------------------------------------------------|-------|
-// | releasesOnPatch        | Dit si un patch peut libérer des arêtes                     | 50    |
-// | service.releaseBlocker | Libère ce qu'une tâche débloque en avançant, et notifie     | 66    |
-// | service.announceFreed  | Ramène à `todo` ce qui peut l'être, et journalise           | 80    |
+// | releasesOnPatch        | Tells whether a patch can release edges                     | 50    |
+// | service.releaseBlocker | Releases what a task frees by moving on, and notifies       | 66    |
+// | service.announceFreed  | Brings back to `todo` what can be, and journals it          | 80    |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// LE CŒUR DE LA FEATURE, et le point où elle cesse d'être un lien décoratif.
+// THE HEART OF THE FEATURE, and the point where it stops being a decorative link.
 //
-// Trois choses arrivent quand une bloquante avance, dans cet ordre, et TOUJOURS dans la
-// transaction de l'écriture qui les déclenche :
+// Three things happen when a blocker moves on, in this order, and ALWAYS inside the transaction of
+// the write that triggers them:
 //
-//  1. les arêtes qu'elle satisfait sont marquées libérées ;
-//  2. chaque tâche ainsi libérée repasse `todo` — mais SEULEMENT si toutes ses arêtes sont
-//     libérées ET qu'au moins une l'avait bloquée. Cette règle vit dans la query ClearTaskBlock,
-//     pour qu'aucun appelant ne puisse en oublier une branche ;
-//  3. un `task.unblocked` est journalisé, sujet = la tâche DÉBLOQUÉE, pas la bloquante. C'est ce
-//     que check_inbox rendra au projet.
+//  1. the edges it satisfies are marked released;
+//  2. each task thus freed moves back to `todo` — but ONLY if all of its edges are released AND at
+//     least one of them had blocked it. That rule lives in the ClearTaskBlock query, so that no
+//     caller can forget a branch of it;
+//  3. a `task.unblocked` is journalled, subject = the UNBLOCKED task, not the blocker. That is what
+//     check_inbox will hand back to the project.
 //
-// L'étape 3 a lieu même quand l'étape 2 n'a rien changé : une tâche que l'agent avait bloquée
-// lui-même pour une autre raison doit apprendre que son obstacle est levé, sans qu'on décide de
-// son statut à sa place. Notifier et décider sont deux gestes distincts, et un seul est automatisé.
+// Step 3 happens even when step 2 changed nothing: a task the agent had blocked itself for another
+// reason must learn its obstacle is lifted, without anyone deciding its status on its behalf.
+// Notifying and deciding are two distinct gestures, and only one of them is automated.
 //
-// Hors transaction, le défaut serait exactement celui que cette carte existe pour supprimer : la
-// bloquante commitée `done`, et la bloquée qui l'ignore pour toujours.
+// Outside a transaction, the defect would be exactly the one this card exists to remove: the
+// blocker committed `done`, and the blocked task ignoring it forever.
 
 import (
 	"context"
@@ -37,16 +37,16 @@ import (
 	"github.com/google/uuid"
 )
 
-// eventTaskUnblocked est le `kind` journalisé. Le format `domaine.fait` est imposé par une
-// contrainte CHECK de la table events.
+// eventTaskUnblocked is the journalled `kind`. The `domain.fact` shape is imposed by a CHECK
+// constraint on the events table.
 const eventTaskUnblocked = "task.unblocked"
 
-// releasesOnPatch dit si un patch est susceptible de libérer des arêtes, et donc s'il doit passer
-// par une transaction.
+// releasesOnPatch tells whether a patch is liable to release edges, and hence whether it has to go
+// through a transaction.
 //
-// Le but est de ne PAS payer une transaction sur le patch nominal — changer un titre, une
-// priorité. `todo` et `blocked` ne libèrent rien : ce ne sont pas des progrès, et une arête ne
-// peut pas les attendre (contrainte task_dependencies_until_is_progress).
+// The point is NOT to pay for a transaction on the nominal patch — changing a title, a priority.
+// `todo` and `blocked` release nothing: they are not progress, and an edge cannot wait for them
+// (task_dependencies_until_is_progress constraint).
 func releasesOnPatch(patch store.TaskPatch) bool {
 	if patch.Archive {
 		return true
@@ -57,12 +57,12 @@ func releasesOnPatch(patch store.TaskPatch) bool {
 	return *patch.Status == statusInProgress || *patch.Status == statusDone
 }
 
-// releaseBlocker libère les arêtes que blocker vient de satisfaire, puis annonce le résultat.
+// releaseBlocker releases the edges the blocker has just satisfied, then announces the outcome.
 //
-// force vient de l'archivage : une bloquante archivée n'atteindra jamais son statut de libération,
-// donc ses arêtes se libèrent quelle que soit leur condition. Sans ça, archiver une bloquante
-// fabriquerait des tâches que plus rien ne peut débloquer — des mortes-vivantes, et le seul défaut
-// de ce dispositif qu'aucun appel ultérieur ne rattraperait.
+// force comes from archiving: an archived blocker will never reach its release status, so its
+// edges are released whatever their condition. Without it, archiving a blocker would manufacture
+// tasks nothing can ever unblock — undead ones, and the only defect of this design no later call
+// would make up for.
 func (s *service) releaseBlocker(ctx context.Context, tx store.Store, blocker store.Task, force bool) error {
 	freed, err := tx.ReleaseBlockerEdges(ctx, blocker.ProjectID, blocker.ID, blocker.Status, force)
 	if err != nil {
@@ -71,12 +71,12 @@ func (s *service) releaseBlocker(ctx context.Context, tx store.Store, blocker st
 	return s.announceFreed(ctx, tx, blocker.TeamID, blocker.ProjectID, freed)
 }
 
-// announceFreed ramène à `todo` ce qui peut l'être, et journalise un `task.unblocked` par tâche
-// libérée.
+// announceFreed brings back to `todo` what can be, and journals one `task.unblocked` per freed
+// task.
 //
-// La déduplication n'est pas de la prudence : une bloquante peut porter DEUX arêtes vers la même
-// bloquée — une par `until_status` — et les libérer ensemble. Sans l'ensemble des tâches vues, la
-// même tâche recevrait deux événements pour un seul déblocage, et l'inbox le montrerait deux fois.
+// The deduplication is not caution: one blocker can carry TWO edges towards the same blocked task
+// — one per `until_status` — and release them together. Without the set of seen tasks, that task
+// would receive two events for a single unblocking, and the inbox would show it twice.
 func (s *service) announceFreed(ctx context.Context, tx store.Store, teamID, projectID uuid.UUID, freed []uuid.UUID) error {
 	seen := make(map[uuid.UUID]bool, len(freed))
 	for _, taskID := range freed {
@@ -89,8 +89,8 @@ func (s *service) announceFreed(ctx context.Context, tx store.Store, teamID, pro
 			return translateStore(err, "clear block")
 		}
 
-		// L'acteur est le projet lui-même : une dépendance ne traverse jamais un repo (D42), donc
-		// il n'existe pas de cas où l'auteur du déblocage soit un tiers.
+		// The actor is the project itself: a dependency never crosses a repo (D42), so no case
+		// exists where a third party is the author of the unblocking.
 		if err := tx.AppendEvent(ctx, store.Event{
 			TeamID:         teamID,
 			ProjectID:      projectID,

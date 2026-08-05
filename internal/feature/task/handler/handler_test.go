@@ -11,15 +11,15 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/service"
 )
 
-// Les deux plus grands champs qu'une mise à jour peut porter doivent tenir dans UNE requête.
+// The two largest fields an update can carry must fit in ONE request.
 //
-// `service.MaxBodyLen` borne chaque texte, `maxBodyBytes` borne la requête entière : deux bornes
-// différentes, qui doivent rester cohérentes. Elles ne l'étaient plus depuis que la note voyage
-// dans le patch — 2 × 64 KiB pèsent 131 093 octets contre 131 072 autorisés, et la requête était
-// rejetée AVANT toute validation, avec `http: request body too large` pour seule explication.
-// L'agent n'apprenait ni quel champ était en cause, ni quelle borne il avait dépassée.
+// `service.MaxBodyLen` bounds each text, `maxBodyBytes` bounds the whole request: two different
+// bounds, which have to stay consistent. They stopped being so once the note started travelling in
+// the patch — 2 × 64 KiB weigh 131,093 bytes against 131,072 allowed, and the request was rejected
+// BEFORE any validation, with `http: request body too large` as its only explanation. The agent
+// learnt neither which field was at fault nor which bound it had crossed.
 //
-// MUTATION : ramener maxBodyBytes à `128 << 10` fait tomber ce test.
+// MUTATION: bringing maxBodyBytes back to `128 << 10` makes this test fail.
 func TestLargestAcceptedFieldsFitInOneRequest(t *testing.T) {
 	payload, err := json.Marshal(map[string]any{
 		"title": strings.Repeat("t", 200),
@@ -27,7 +27,7 @@ func TestLargestAcceptedFieldsFitInOneRequest(t *testing.T) {
 		"note":  strings.Repeat("b", service.MaxBodyLen),
 	})
 	if err != nil {
-		t.Fatalf("encodage de la charge: %v", err)
+		t.Fatalf("encoding the payload: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/task/34", bytes.NewReader(payload))
@@ -35,25 +35,25 @@ func TestLargestAcceptedFieldsFitInOneRequest(t *testing.T) {
 
 	var in service.UpdateTaskInput
 	if err := New(nil).decodeBody(rec, req, &in); err != nil {
-		t.Fatalf("requête de %d octets refusée alors que chaque champ est dans sa borne: %v",
+		t.Fatalf("a %d-byte request was rejected although every field is within its bound: %v",
 			len(payload), err)
 	}
 	if in.Body == nil || len(*in.Body) != service.MaxBodyLen {
-		t.Errorf("description reçue tronquée: %d octets, attendu %d", len(*in.Body), service.MaxBodyLen)
+		t.Errorf("description received truncated: %d bytes, want %d", len(*in.Body), service.MaxBodyLen)
 	}
 	if in.Note == nil || len(*in.Note) != service.MaxBodyLen {
-		t.Errorf("note reçue tronquée: %d octets, attendu %d", len(*in.Note), service.MaxBodyLen)
+		t.Errorf("note received truncated: %d bytes, want %d", len(*in.Note), service.MaxBodyLen)
 	}
 }
 
-// Au-delà du garde-fou de transport, le message doit dire QUELLE borne a été dépassée. Sans lui,
-// `http: request body too large` laisse l'agent réessayer à l'identique.
+// Past the transport guardrail, the message must say WHICH bound was crossed. Without it,
+// `http: request body too large` leaves the agent retrying the very same call.
 //
-// MUTATION : rendre `errors.Join(service.ErrInvalidInput, err)` sur ce chemin fait tomber ce test.
+// MUTATION: returning `errors.Join(service.ErrInvalidInput, err)` on that path makes this test fail.
 func TestOversizedBodySaysWhichLimitWasHit(t *testing.T) {
 	payload, err := json.Marshal(map[string]any{"body": strings.Repeat("a", 16*service.MaxBodyLen)})
 	if err != nil {
-		t.Fatalf("encodage de la charge: %v", err)
+		t.Fatalf("encoding the payload: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/task/34", bytes.NewReader(payload))
@@ -62,24 +62,23 @@ func TestOversizedBodySaysWhichLimitWasHit(t *testing.T) {
 	var in service.UpdateTaskInput
 	err = New(nil).decodeBody(rec, req, &in)
 	if err == nil {
-		t.Fatalf("un corps de %d octets doit être refusé", len(payload))
+		t.Fatalf("a %d-byte body must be rejected", len(payload))
 	}
 	if !strings.Contains(err.Error(), "65536") {
-		t.Errorf("le message ne nomme pas la borne par champ: %v", err)
+		t.Errorf("the message does not name the per-field bound: %v", err)
 	}
 }
 
-// unserializable ne peut pas être encodé en JSON : les canaux n'ont pas de représentation.
+// unserializable cannot be encoded as JSON: channels have no representation.
 type unserializable struct {
 	Broken chan int `json:"broken"`
 }
 
-// Un échec de sérialisation doit produire une ERREUR, pas un succès à corps vide.
+// A serialisation failure must produce an ERROR, not an empty-bodied success.
 //
-// L'ordre inverse — écrire le statut puis encoder dans le flux — a été mesuré : le client
-// recevait 201 ou 200 avec zéro octet, et un agent en déduisait « aucune tâche » là où le serveur
-// savait qu'il avait échoué. Le statut ne doit donc jamais être engagé avant que la réponse ne
-// soit connue.
+// The reverse order — writing the status then encoding into the stream — was measured: the client
+// received 201 or 200 with zero bytes, and an agent read it as "no task" where the server knew it
+// had failed. The status must therefore never be committed before the response is known.
 func TestWriteJSONFailsLoudlyOnEncodingError(t *testing.T) {
 	h := New(nil)
 	rec := httptest.NewRecorder()
@@ -87,11 +86,11 @@ func TestWriteJSONFailsLoudlyOnEncodingError(t *testing.T) {
 	h.writeJSON(rec, http.StatusCreated, unserializable{Broken: make(chan int)})
 
 	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("code = %d, attendu %d : un échec d'encodage ne doit pas passer pour un succès",
+		t.Errorf("code = %d, want %d: an encoding failure must not pass for a success",
 			rec.Code, http.StatusInternalServerError)
 	}
 	if rec.Body.Len() == 0 {
-		t.Error("corps vide : le client ne peut pas distinguer l'échec d'une réponse légitime")
+		t.Error("empty body: the client cannot tell the failure from a legitimate response")
 	}
 }
 
@@ -102,9 +101,9 @@ func TestWriteJSONNominalCases(t *testing.T) {
 		value    any
 		wantBody string
 	}{
-		{"objet", http.StatusOK, map[string]int{"number": 34}, `{"number":34}`},
-		{"tableau vide", http.StatusOK, []int{}, `[]`},
-		{"sans corps", http.StatusNoContent, nil, ``},
+		{"object", http.StatusOK, map[string]int{"number": 34}, `{"number":34}`},
+		{"empty array", http.StatusOK, []int{}, `[]`},
+		{"no body", http.StatusNoContent, nil, ``},
 	}
 
 	for _, tc := range tests {
@@ -113,13 +112,13 @@ func TestWriteJSONNominalCases(t *testing.T) {
 			New(nil).writeJSON(rec, tc.code, tc.value)
 
 			if rec.Code != tc.code {
-				t.Errorf("code = %d, attendu %d", rec.Code, tc.code)
+				t.Errorf("code = %d, want %d", rec.Code, tc.code)
 			}
 			if got := rec.Body.String(); got != tc.wantBody {
-				t.Errorf("corps = %q, attendu %q", got, tc.wantBody)
+				t.Errorf("body = %q, want %q", got, tc.wantBody)
 			}
 			if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-				t.Errorf("Content-Type = %q, attendu application/json", ct)
+				t.Errorf("Content-Type = %q, want application/json", ct)
 			}
 		})
 	}

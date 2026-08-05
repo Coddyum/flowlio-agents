@@ -14,9 +14,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// fakeStore enregistre ce que le service lui demande, sans base de données. Ces tests portent
-// sur la validation et sur les valeurs par défaut : l'isolation, elle, se prouve contre Postgres
-// (voir store/store_integration_test.go), parce qu'elle est portée par les queries.
+// fakeStore records what the service asks of it, without a database. These tests are about
+// validation and default values: isolation itself is proven against Postgres (see
+// store/store_integration_test.go), because it is carried by the queries.
 type fakeStore struct {
 	claimed   int64
 	lastTask  store.NewTask
@@ -24,24 +24,24 @@ type fakeStore struct {
 	lastFiler store.TaskFilter
 	lastNote  string
 
-	// noteLimit est la borne que le service a demandée au store pour le fil de notes. C'est le
-	// seul endroit d'où on peut vérifier qu'il n'en réclame pas la totalité.
+	// noteLimit is the bound the service asked the store for on the note thread. It is the only
+	// place from which one can check that it does not claim the whole of it.
 	noteLimit int32
 
-	// archived reproduit la clause `archived_at IS NULL` que portent les VRAIES queries d'écriture.
-	// Sans elle, ce double accepterait une note sur une tâche archivée là où Postgres la refuse,
-	// et l'ordre des écritures dans UpdateTask ne serait vérifié par rien.
+	// archived reproduces the `archived_at IS NULL` clause the REAL write queries carry. Without
+	// it, this double would accept a note on an archived task where Postgres refuses it, and
+	// nothing would check the write order inside UpdateTask.
 	archived bool
 
-	// txCalls compte les ouvertures de transaction. C'est ce qui prouve qu'une écriture composée
-	// en ouvre une, et qu'une écriture simple n'en paie pas le coût.
+	// txCalls counts transaction openings. That is what proves a composed write opens one, and that
+	// a simple write does not pay its cost.
 	txCalls int
 
-	// Blocage. Ce double reste DÉLIBÉRÉMENT bête : la règle de retour à `todo` — toutes les arêtes
-	// libérées ET au moins une ayant posé le blocage — vit dans la query ClearTaskBlock, et la
-	// rejouer ici prouverait la réimplémentation, pas le produit. Elle se vérifie contre Postgres
-	// (store/dependency_integration_test.go). Ce qui se teste ici est ce que le SERVICE décide
-	// seul : les refus, et ce qu'il transmet au store.
+	// Blocking. This double stays DELIBERATELY dumb: the rule for going back to `todo` — every edge
+	// released AND at least one having set the block — lives in the ClearTaskBlock query, and
+	// replaying it here would prove the reimplementation, not the product. It is checked against
+	// Postgres (store/dependency_integration_test.go). What gets tested here is what the SERVICE
+	// decides on its own: the refusals, and what it passes on to the store.
 	statusByNumber  map[int64]string
 	archivedNumbers map[int64]bool
 	activeEdges     []store.Edge
@@ -55,8 +55,8 @@ type fakeStore struct {
 	noteErr  error
 }
 
-// taskID donne un identifiant stable par numéro : sans stabilité, les deux lectures d'une même
-// tâche dans une transaction désigneraient deux objets, et le refus d'auto-blocage passerait.
+// taskID gives a stable identifier per number: without stability, two reads of the same task inside
+// a transaction would name two objects, and the self-blocking refusal would go through.
 func (f *fakeStore) taskID(number int64) uuid.UUID {
 	return uuid.NewSHA1(uuid.Nil, []byte(strconv.FormatInt(number, 10)))
 }
@@ -148,7 +148,7 @@ func (f *fakeStore) TaskByNumber(_ context.Context, _, _ uuid.UUID, number int64
 	task := store.Task{
 		ID:       f.taskID(number),
 		Number:   number,
-		Title:    "tâche",
+		Title:    "task",
 		Status:   status,
 		Priority: "normal",
 	}
@@ -161,7 +161,7 @@ func (f *fakeStore) TaskByNumber(_ context.Context, _, _ uuid.UUID, number int64
 
 func (f *fakeStore) ListTasks(_ context.Context, filter store.TaskFilter) ([]store.Task, error) {
 	f.lastFiler = filter
-	return []store.Task{{Number: 1, Title: "tâche", Body: "corps volumineux"}}, nil
+	return []store.Task{{Number: 1, Title: "task", Body: "bulky body"}}, nil
 }
 
 func (f *fakeStore) UpdateTask(_ context.Context, patch store.TaskPatch) (store.Task, error) {
@@ -175,7 +175,7 @@ func (f *fakeStore) UpdateTask(_ context.Context, patch store.TaskPatch) (store.
 	if patch.Archive {
 		f.archived = true
 	}
-	return store.Task{Number: patch.Number, Title: "tâche", Status: "todo", Priority: "normal"}, nil
+	return store.Task{Number: patch.Number, Title: "task", Status: "todo", Priority: "normal"}, nil
 }
 
 func (f *fakeStore) AddNote(_ context.Context, _, _ uuid.UUID, _ int64, body string) (store.Note, error) {
@@ -192,14 +192,14 @@ func (f *fakeStore) AddNote(_ context.Context, _, _ uuid.UUID, _ int64, body str
 	return store.Note{Body: body}, nil
 }
 
-// ListNotes enregistre la borne reçue : c'est elle qui prouve que le service ne demande PAS le
-// fil entier, et le faux store est le seul endroit d'où on peut l'observer.
+// ListNotes records the bound it received: that is what proves the service does NOT ask for the
+// whole thread, and the fake store is the only place from which it can be observed.
 func (f *fakeStore) ListNotes(_ context.Context, _, _ uuid.UUID, _ int64, limit int32) ([]store.Note, int, error) {
 	f.noteLimit = limit
 	return []store.Note{{Body: "note"}}, 42, nil
 }
 
-// newService renvoie un service adossé au faux store, avec un scope de projet valide.
+// newService returns a service backed by the fake store, with a valid project scope.
 func newService() (service.Service, *fakeStore, uuid.UUID, uuid.UUID) {
 	fake := &fakeStore{}
 	return service.New(fake), fake, uuid.New(), uuid.New()
@@ -212,36 +212,36 @@ func TestCreateTaskValidation(t *testing.T) {
 		name string
 		in   service.CreateTaskInput
 	}{
-		{"titre vide", service.CreateTaskInput{TeamID: teamID, ProjectID: projectID}},
-		{"titre en blancs", service.CreateTaskInput{TeamID: teamID, ProjectID: projectID, Title: "   "}},
+		{"empty title", service.CreateTaskInput{TeamID: teamID, ProjectID: projectID}},
+		{"whitespace title", service.CreateTaskInput{TeamID: teamID, ProjectID: projectID, Title: "   "}},
 		{
-			"titre démesuré",
+			"oversized title",
 			service.CreateTaskInput{TeamID: teamID, ProjectID: projectID, Title: strings.Repeat("a", 201)},
 		},
 		{
-			"statut inconnu",
+			"unknown status",
 			service.CreateTaskInput{TeamID: teamID, ProjectID: projectID, Title: "x", Status: "wontfix"},
 		},
 		{
-			"priorité inconnue",
-			service.CreateTaskInput{TeamID: teamID, ProjectID: projectID, Title: "x", Priority: "critique"},
+			"unknown priority",
+			service.CreateTaskInput{TeamID: teamID, ProjectID: projectID, Title: "x", Priority: "critical"},
 		},
-		{"team absente", service.CreateTaskInput{ProjectID: projectID, Title: "x"}},
-		{"projet absent", service.CreateTaskInput{TeamID: teamID, Title: "x"}},
+		{"missing team", service.CreateTaskInput{ProjectID: projectID, Title: "x"}},
+		{"missing project", service.CreateTaskInput{TeamID: teamID, Title: "x"}},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := service.New(&fakeStore{})
 			if _, err := svc.CreateTask(context.Background(), tc.in); !errors.Is(err, service.ErrInvalidInput) {
-				t.Errorf("erreur = %v, attendu ErrInvalidInput", err)
+				t.Errorf("error = %v, want ErrInvalidInput", err)
 			}
 		})
 	}
 }
 
-// Un scope incomplet ne doit jamais atteindre le store : la query serait alors filtrée sur un
-// UUID nul, ce qui ne protège plus rien.
+// An incomplete scope must never reach the store: the query would then be filtered on a nil UUID,
+// which protects nothing any more.
 func TestScopeIsRequiredEverywhere(t *testing.T) {
 	ctx := context.Background()
 	id := uuid.New()
@@ -263,7 +263,7 @@ func TestScopeIsRequiredEverywhere(t *testing.T) {
 			_, err := s.UpdateTask(ctx, service.UpdateTaskInput{TeamID: id, Number: 1})
 			return err
 		},
-		"UpdateTask avec note": func(s service.Service) error {
+		"UpdateTask with a note": func(s service.Service) error {
 			note := "x"
 			_, err := s.UpdateTask(ctx, service.UpdateTaskInput{ProjectID: id, Number: 1, Note: &note})
 			return err
@@ -277,38 +277,38 @@ func TestScopeIsRequiredEverywhere(t *testing.T) {
 	for name, call := range tests {
 		t.Run(name, func(t *testing.T) {
 			if err := call(service.New(&fakeStore{})); !errors.Is(err, service.ErrInvalidInput) {
-				t.Errorf("erreur = %v, attendu ErrInvalidInput", err)
+				t.Errorf("error = %v, want ErrInvalidInput", err)
 			}
 		})
 	}
 }
 
-// Un agent qui ouvre une tâche sans préciser l'état veut le cas nominal.
+// An agent opening a task without naming a state wants the nominal case.
 func TestCreateTaskDefaults(t *testing.T) {
 	svc, fake, teamID, projectID := newService()
 
 	task, err := svc.CreateTask(context.Background(), service.CreateTaskInput{
 		TeamID:    teamID,
 		ProjectID: projectID,
-		Title:     "  tâche avec des blancs  ",
+		Title:     "  task with whitespace  ",
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
 	if task.Status != "todo" || task.Priority != "normal" {
-		t.Errorf("défauts = %s/%s, attendu todo/normal", task.Status, task.Priority)
+		t.Errorf("defaults = %s/%s, want todo/normal", task.Status, task.Priority)
 	}
-	if fake.lastTask.Title != "tâche avec des blancs" {
-		t.Errorf("titre = %q, attendu sans blancs de bord", fake.lastTask.Title)
+	if fake.lastTask.Title != "task with whitespace" {
+		t.Errorf("title = %q, want it trimmed", fake.lastTask.Title)
 	}
 	if fake.lastTask.Number != 1 {
-		t.Errorf("numéro = %d, attendu 1 (réservé dans la transaction)", fake.lastTask.Number)
+		t.Errorf("number = %d, want 1 (reserved inside the transaction)", fake.lastTask.Number)
 	}
 }
 
-// Le listing ne doit pas transporter la description : un agent qui parcourt son backlog paierait
-// en contexte ce qu'il ne lit pas.
+// The listing must not carry the description: an agent scanning its backlog would pay in context
+// for what it does not read.
 func TestListTasksOmitsBody(t *testing.T) {
 	svc, fake, teamID, projectID := newService()
 
@@ -320,13 +320,13 @@ func TestListTasksOmitsBody(t *testing.T) {
 		t.Fatalf("ListTasks: %v", err)
 	}
 	if len(tasks) != 1 {
-		t.Fatalf("%d tâches, attendu 1", len(tasks))
+		t.Fatalf("%d tasks, want 1", len(tasks))
 	}
 	if tasks[0].Body != "" {
-		t.Errorf("le listing transporte la description: %q", tasks[0].Body)
+		t.Errorf("the listing carries the description: %q", tasks[0].Body)
 	}
 	if fake.lastFiler.Limit != 50 {
-		t.Errorf("limite par défaut = %d, attendu 50", fake.lastFiler.Limit)
+		t.Errorf("default limit = %d, want 50", fake.lastFiler.Limit)
 	}
 }
 
@@ -336,10 +336,10 @@ func TestListTasksLimitIsClamped(t *testing.T) {
 		limit    int
 		expected int32
 	}{
-		{"absente", 0, 50},
-		{"négative", -3, 50},
-		{"dans les bornes", 10, 10},
-		{"au-dessus du maximum", 5000, 200},
+		{"missing", 0, 50},
+		{"negative", -3, 50},
+		{"within bounds", 10, 10},
+		{"above the maximum", 5000, 200},
 	}
 
 	for _, tc := range tests {
@@ -353,14 +353,14 @@ func TestListTasksLimitIsClamped(t *testing.T) {
 				t.Fatalf("ListTasks: %v", err)
 			}
 			if fake.lastFiler.Limit != tc.expected {
-				t.Errorf("limite = %d, attendu %d", fake.lastFiler.Limit, tc.expected)
+				t.Errorf("limit = %d, want %d", fake.lastFiler.Limit, tc.expected)
 			}
 		})
 	}
 }
 
-// Un champ absent du patch reste nil jusqu'au store : c'est ce qui garantit qu'une mise à jour
-// partielle n'écrase pas ce qu'elle ne mentionne pas.
+// A field absent from the patch stays nil all the way to the store: that is what guarantees a
+// partial update does not overwrite what it never mentions.
 func TestUpdateTaskPatchIsPartial(t *testing.T) {
 	svc, fake, teamID, projectID := newService()
 
@@ -375,13 +375,13 @@ func TestUpdateTaskPatchIsPartial(t *testing.T) {
 	}
 
 	if fake.lastPatch.Title != nil || fake.lastPatch.Body != nil || fake.lastPatch.Priority != nil {
-		t.Errorf("des champs absents du patch ont été transmis: %+v", fake.lastPatch)
+		t.Errorf("fields absent from the patch were passed on: %+v", fake.lastPatch)
 	}
 	if fake.lastPatch.Status == nil || *fake.lastPatch.Status != "done" {
-		t.Errorf("statut transmis = %v, attendu done", fake.lastPatch.Status)
+		t.Errorf("status passed on = %v, want done", fake.lastPatch.Status)
 	}
 	if fake.lastPatch.Number != 7 {
-		t.Errorf("numéro transmis = %d, attendu 7", fake.lastPatch.Number)
+		t.Errorf("number passed on = %d, want 7", fake.lastPatch.Number)
 	}
 }
 
@@ -392,23 +392,23 @@ func TestUpdateTaskValidation(t *testing.T) {
 	unknownPriority := "p0"
 
 	tests := map[string]service.UpdateTaskInput{
-		"titre vide":        {TeamID: teamID, ProjectID: projectID, Number: 1, Title: &blank},
-		"statut inconnu":    {TeamID: teamID, ProjectID: projectID, Number: 1, Status: &unknownStatus},
-		"priorité inconnue": {TeamID: teamID, ProjectID: projectID, Number: 1, Priority: &unknownPriority},
+		"empty title":      {TeamID: teamID, ProjectID: projectID, Number: 1, Title: &blank},
+		"unknown status":   {TeamID: teamID, ProjectID: projectID, Number: 1, Status: &unknownStatus},
+		"unknown priority": {TeamID: teamID, ProjectID: projectID, Number: 1, Priority: &unknownPriority},
 	}
 
 	for name, in := range tests {
 		t.Run(name, func(t *testing.T) {
 			svc := service.New(&fakeStore{})
 			if _, err := svc.UpdateTask(context.Background(), in); !errors.Is(err, service.ErrInvalidInput) {
-				t.Errorf("erreur = %v, attendu ErrInvalidInput", err)
+				t.Errorf("error = %v, want ErrInvalidInput", err)
 			}
 		})
 	}
 }
 
-// Une note explicitement vide est une erreur, pas un no-op : l'agent croirait avoir laissé une
-// trace là où la session suivante ne lira rien. Un champ ABSENT, lui, veut dire « pas de note ».
+// An explicitly empty note is an error, not a no-op: the agent would believe it left a trace where
+// the next session reads nothing. An ABSENT field, on the other hand, means "no note".
 func TestUpdateTaskRejectsEmptyNote(t *testing.T) {
 	svc, _, teamID, projectID := newService()
 
@@ -420,21 +420,21 @@ func TestUpdateTaskRejectsEmptyNote(t *testing.T) {
 			Number:    1,
 			Note:      &note,
 		}); !errors.Is(err, service.ErrInvalidInput) {
-			t.Errorf("note %q: erreur = %v, attendu ErrInvalidInput", body, err)
+			t.Errorf("note %q: error = %v, want ErrInvalidInput", body, err)
 		}
 	}
 }
 
-// « Passer en done et dire pourquoi » est UNE écriture. Si le patch et la note partaient
-// séparément, l'état « statut changé, motif perdu » resterait atteignable : la note tombe alors
-// que le done est déjà en base, et la session suivante lit un done que rien n'explique.
+// "Move to done and say why" is ONE write. Were the patch and the note to leave separately, the
+// state "status changed, reason lost" would stay reachable: the note fails while the done is
+// already in the database, and the next session reads a done that nothing explains.
 //
-// MUTATION : remplacer le WithTx d'update_task.go par deux appels directs au store fait tomber
-// ce test sur txCalls == 0.
+// MUTATION: replacing the WithTx of update_task.go with two direct store calls makes this test fail
+// on txCalls == 0.
 func TestUpdateTaskWritesNoteInTheSameTransaction(t *testing.T) {
 	svc, fake, teamID, projectID := newService()
 
-	status, note := "done", "  migration appliquée, reste la doc  "
+	status, note := "done", "  migration applied, docs still to do  "
 	task, err := svc.UpdateTask(context.Background(), service.UpdateTaskInput{
 		TeamID:    teamID,
 		ProjectID: projectID,
@@ -447,27 +447,26 @@ func TestUpdateTaskWritesNoteInTheSameTransaction(t *testing.T) {
 	}
 
 	if fake.txCalls != 1 {
-		t.Errorf("%d transaction(s) ouverte(s), attendu 1 : le patch et la note doivent être atomiques",
+		t.Errorf("%d transaction(s) opened, want 1: the patch and the note must be atomic",
 			fake.txCalls)
 	}
 	if fake.lastPatch.Status == nil || *fake.lastPatch.Status != "done" {
-		t.Errorf("statut transmis = %v, attendu done", fake.lastPatch.Status)
+		t.Errorf("status passed on = %v, want done", fake.lastPatch.Status)
 	}
-	if fake.lastNote != "migration appliquée, reste la doc" {
-		t.Errorf("note transmise = %q, attendue sans blancs de bord", fake.lastNote)
+	if fake.lastNote != "migration applied, docs still to do" {
+		t.Errorf("note passed on = %q, want it trimmed", fake.lastNote)
 	}
 	if task.Number != 7 {
-		t.Errorf("tâche renvoyée = #%d, attendu #7 : c'est le patch qui est renvoyé, pas la note",
+		t.Errorf("task returned = #%d, want #7: it is the patch that is returned, not the note",
 			task.Number)
 	}
 }
 
-// Le cas fréquent — un patch qui ne compose rien — ne doit pas payer l'aller-retour d'une
-// transaction.
+// The frequent case — a patch composing nothing — must not pay for a transaction round trip.
 //
-// L'exemple était `status: in_progress` jusqu'à ce que les arêtes de blocage existent : ce statut
-// LIBÈRE désormais, donc il compose. Le patch nominal est celui qui ne touche ni au fil de notes,
-// ni à l'archivage, ni à un statut de libération.
+// The example was `status: in_progress` until blocking edges came along: that status now RELEASES,
+// hence it composes. The nominal patch is the one touching neither the note thread, nor archiving,
+// nor a release status.
 func TestUpdateTaskWithoutCompositionDoesNotOpenTransaction(t *testing.T) {
 	svc, fake, teamID, projectID := newService()
 
@@ -482,24 +481,24 @@ func TestUpdateTaskWithoutCompositionDoesNotOpenTransaction(t *testing.T) {
 	}
 
 	if fake.txCalls != 0 {
-		t.Errorf("%d transaction(s) pour un patch simple, attendu 0", fake.txCalls)
+		t.Errorf("%d transaction(s) for a simple patch, want 0", fake.txCalls)
 	}
 	if fake.lastNote != "" {
-		t.Errorf("note écrite sans qu'on en demande une: %q", fake.lastNote)
+		t.Errorf("a note was written without one being asked for: %q", fake.lastNote)
 	}
 }
 
-// La contrepartie, et c'est elle qui compte : un patch qui peut libérer une arête DOIT ouvrir une
-// transaction. Hors transaction, le défaut serait celui que la feature existe pour supprimer — la
-// bloquante commitée `done`, et la bloquée qui l'ignore pour toujours.
+// The counterpart, and it is the one that matters: a patch able to release an edge MUST open a
+// transaction. Outside a transaction, the defect would be the one this feature exists to remove —
+// the blocker committed `done`, and the blocked task ignoring it forever.
 func TestUpdateTaskOpensTransactionWhenItCanRelease(t *testing.T) {
 	releasing := []struct {
 		name  string
 		patch service.UpdateTaskInput
 	}{
-		{"passage en in_progress", service.UpdateTaskInput{Status: ptr("in_progress")}},
-		{"passage en done", service.UpdateTaskInput{Status: ptr("done")}},
-		{"archivage", service.UpdateTaskInput{Archive: true}},
+		{"move to in_progress", service.UpdateTaskInput{Status: ptr("in_progress")}},
+		{"move to done", service.UpdateTaskInput{Status: ptr("done")}},
+		{"archiving", service.UpdateTaskInput{Archive: true}},
 	}
 
 	for _, tc := range releasing {
@@ -512,18 +511,18 @@ func TestUpdateTaskOpensTransactionWhenItCanRelease(t *testing.T) {
 				t.Fatalf("UpdateTask: %v", err)
 			}
 			if fake.txCalls != 1 {
-				t.Errorf("%d transaction(s), attendu 1 : la libération doit être écrite avec le patch",
+				t.Errorf("%d transaction(s), want 1: the release must be written with the patch",
 					fake.txCalls)
 			}
 		})
 	}
 }
 
-// ptr rend l'adresse d'une chaîne littérale, que les patches partiels réclament partout.
+// ptr returns the address of a string literal, which partial patches demand everywhere.
 func ptr(s string) *string { return &s }
 
-// Une note qui échoue doit faire échouer TOUT l'appel : un patch appliqué seul rendrait le
-// « et dire pourquoi » facultatif à l'insu de l'appelant.
+// A failing note must fail the WHOLE call: a patch applied on its own would make the "and say why"
+// optional without the caller knowing.
 func TestUpdateTaskFailsWholeWhenNoteFails(t *testing.T) {
 	fake := &fakeStore{noteErr: store.ErrNotFound}
 	svc := service.New(fake)
@@ -538,81 +537,82 @@ func TestUpdateTaskFailsWholeWhenNoteFails(t *testing.T) {
 		Note:      &note,
 	})
 	if !errors.Is(err, service.ErrNotFound) {
-		t.Fatalf("erreur = %v, attendu ErrNotFound remontée par la note", err)
+		t.Fatalf("error = %v, want the ErrNotFound raised by the note", err)
 	}
 	if fake.txCalls != 1 {
-		t.Errorf("%d transaction(s), attendu 1 — c'est elle qui annule le patch", fake.txCalls)
+		t.Errorf("%d transaction(s), want 1 — it is what rolls the patch back", fake.txCalls)
 	}
 }
 
-// Une absence en base doit remonter en ErrNotFound domaine, pas en erreur interne : le handler
-// en dépend pour répondre 404 plutôt que 500.
+// A missing row must surface as a domain ErrNotFound, not as an internal error: the handler relies
+// on it to answer 404 rather than 500.
 func TestStoreErrorsAreTranslated(t *testing.T) {
 	fake := &fakeStore{writeErr: store.ErrNotFound}
 	svc := service.New(fake)
 	teamID, projectID := uuid.New(), uuid.New()
 
 	if _, err := svc.GetTask(context.Background(), teamID, projectID, 42); !errors.Is(err, service.ErrNotFound) {
-		t.Errorf("GetTask: erreur = %v, attendu ErrNotFound", err)
+		t.Errorf("GetTask: error = %v, want ErrNotFound", err)
 	}
 
 	fake.writeErr = store.ErrConflict
 	if _, err := svc.UpdateTask(context.Background(), service.UpdateTaskInput{
 		TeamID: teamID, ProjectID: projectID, Number: 42, Archive: true,
 	}); !errors.Is(err, service.ErrConflict) {
-		t.Errorf("UpdateTask(archive): erreur = %v, attendu ErrConflict", err)
+		t.Errorf("UpdateTask(archive): error = %v, want ErrConflict", err)
 	}
 }
 
-// Une échéance dont l'année sort de [0, 9999] doit être refusée à l'entrée.
+// A deadline whose year falls outside [0, 9999] must be refused at the door.
 //
-// Sans cette barrière, la tâche s'insère très bien puis rend illisible le listing du projet
-// entier : time.Time refuse d'encoder une telle année, et l'encodage a lieu APRÈS l'écriture en
-// base. Le serveur répondait 200 avec un corps vide, et un agent en concluait « backlog vide ».
+// Without this barrier, the task inserts just fine then makes the entire project listing
+// unreadable: time.Time refuses to encode such a year, and the encoding happens AFTER the write to
+// the database. The server answered 200 with an empty body, and an agent concluded "empty backlog".
 func TestDeadlineYearIsBounded(t *testing.T) {
 	teamID, projectID := uuid.New(), uuid.New()
 
-	// La charge exacte qui reproduisait le défaut : l'année écrite est 9999, mais le décalage de
-	// fuseau la fait basculer en l'an 10000 une fois ramenée en UTC.
+	// The exact payload that reproduced the defect: the year written is 9999, but the time zone
+	// offset tips it into year 10000 once brought back to UTC.
 	overflow := time.Date(9999, 12, 31, 23, 30, 0, 0, time.FixedZone("test", -5*60*60))
 	if overflow.UTC().Year() != 10000 {
-		t.Fatalf("la charge de test ne déborde plus : année UTC = %d", overflow.UTC().Year())
+		t.Fatalf("the test payload no longer overflows: UTC year = %d", overflow.UTC().Year())
 	}
 
 	svc := service.New(&fakeStore{})
 	if _, err := svc.CreateTask(context.Background(), service.CreateTaskInput{
 		TeamID: teamID, ProjectID: projectID, Title: "x", Deadline: &overflow,
 	}); !errors.Is(err, service.ErrInvalidInput) {
-		t.Errorf("CreateTask: erreur = %v, attendu ErrInvalidInput", err)
+		t.Errorf("CreateTask: error = %v, want ErrInvalidInput", err)
 	}
 
 	if _, err := svc.UpdateTask(context.Background(), service.UpdateTaskInput{
 		TeamID: teamID, ProjectID: projectID, Number: 1, Deadline: &overflow,
 	}); !errors.Is(err, service.ErrInvalidInput) {
-		t.Errorf("UpdateTask: erreur = %v, attendu ErrInvalidInput", err)
+		t.Errorf("UpdateTask: error = %v, want ErrInvalidInput", err)
 	}
 
-	// Une échéance ordinaire reste acceptée, et ce qui est accepté doit être sérialisable :
-	// c'est l'invariant réel que la validation protège.
+	// An ordinary deadline stays accepted, and what is accepted must be serialisable: that is the
+	// real invariant the validation protects.
 	sane := time.Date(2027, 3, 1, 12, 0, 0, 0, time.UTC)
 	task, err := svc.CreateTask(context.Background(), service.CreateTaskInput{
 		TeamID: teamID, ProjectID: projectID, Title: "x", Deadline: &sane,
 	})
 	if err != nil {
-		t.Fatalf("échéance ordinaire refusée: %v", err)
+		t.Fatalf("ordinary deadline refused: %v", err)
 	}
 	if _, err := json.Marshal(task); err != nil {
-		t.Errorf("tâche acceptée mais non sérialisable: %v", err)
+		t.Errorf("task accepted but not serialisable: %v", err)
 	}
 }
 
-// GetTask demande au store une FENÊTRE, pas le fil entier, et dit à l'agent ce qu'il ne lit pas.
+// GetTask asks the store for a WINDOW, not the whole thread, and tells the agent what it is not
+// reading.
 //
-// La borne doit être portée par la query : un `[:10]` en Go aurait quand même tiré 62,6 Mio
-// depuis Postgres, ce qui est exactement le coût qu'on refuse. Le seul endroit d'où on peut
-// vérifier que le service ne réclame pas tout, c'est ce que le store a reçu.
+// The bound has to be carried by the query: a `[:10]` in Go would still have pulled 62.6 MiB out of
+// Postgres, which is exactly the cost being refused. The only place from which one can check the
+// service does not claim everything is what the store received.
 //
-// MUTATION : passer 0 (ou rien) comme borne à store.ListNotes fait tomber ce test.
+// MUTATION: passing 0 (or nothing) as the bound to store.ListNotes makes this test fail.
 func TestGetTaskAsksForABoundedThread(t *testing.T) {
 	svc, fake, teamID, projectID := newService()
 
@@ -622,46 +622,46 @@ func TestGetTaskAsksForABoundedThread(t *testing.T) {
 	}
 
 	if fake.noteLimit <= 0 {
-		t.Errorf("borne demandée au store = %d : le service réclame le fil entier", fake.noteLimit)
+		t.Errorf("bound asked of the store = %d: the service claims the whole thread", fake.noteLimit)
 	}
 	if fake.noteLimit > 50 {
-		t.Errorf("borne demandée au store = %d : trop large pour un contexte d'agent", fake.noteLimit)
+		t.Errorf("bound asked of the store = %d: too wide for an agent context", fake.noteLimit)
 	}
 	if detail.NotesTotal != 42 {
-		t.Errorf("notes_total = %d, attendu 42 : l'agent ne sait pas qu'il ne lit qu'une fenêtre",
+		t.Errorf("notes_total = %d, want 42: the agent does not know it is only reading a window",
 			detail.NotesTotal)
 	}
 }
 
-// « Passe en done, voilà pourquoi, et archive » est UNE écriture, et la note s'écrit d'abord.
+// "Move to done, here is why, and archive" is ONE write, and the note is written first.
 //
-// L'ordre n'est pas indifférent depuis que l'archivage est un champ du patch : patcher d'abord
-// ferme la tâche, et l'écriture de la note — dont la query porte `archived_at IS NULL` — est
-// refusée derrière. L'appel le plus courant d'une fin de session échouerait entièrement.
+// The order stopped being indifferent once archiving became a field of the patch: patching first
+// closes the task, and writing the note — whose query carries `archived_at IS NULL` — is refused
+// behind it. The most common end-of-session call would fail entirely.
 //
-// MUTATION : remettre `tx.UpdateTask` avant `tx.AddNote` fait tomber ce test.
+// MUTATION: putting `tx.UpdateTask` back before `tx.AddNote` makes this test fail.
 func TestEndOfTaskWritesTheNoteBeforeArchiving(t *testing.T) {
 	svc, fake, teamID, projectID := newService()
 
 	done := "done"
-	note := "livré"
+	note := "delivered"
 	task, err := svc.UpdateTask(context.Background(), service.UpdateTaskInput{
 		TeamID: teamID, ProjectID: projectID, Number: 1,
 		Status: &done, Note: &note, Archive: true,
 	})
 	if err != nil {
-		t.Fatalf("fin de tâche: %v", err)
+		t.Fatalf("end of task: %v", err)
 	}
 	if task.Number != 1 {
-		t.Errorf("numéro = %d, attendu 1", task.Number)
+		t.Errorf("number = %d, want 1", task.Number)
 	}
-	if fake.lastNote != "livré" {
-		t.Errorf("note écrite = %q, attendu « livré »", fake.lastNote)
+	if fake.lastNote != "delivered" {
+		t.Errorf("note written = %q, want \"delivered\"", fake.lastNote)
 	}
 	if !fake.lastPatch.Archive {
-		t.Error("le patch ne porte pas l'archivage : c'est un second aller-retour qui revient")
+		t.Error("the patch does not carry the archiving: that is a second round trip coming back")
 	}
 	if fake.txCalls != 1 {
-		t.Errorf("%d transactions, attendu 1 : les deux écritures doivent tenir ensemble", fake.txCalls)
+		t.Errorf("%d transactions, want 1: both writes must hold together", fake.txCalls)
 	}
 }
