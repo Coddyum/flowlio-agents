@@ -10,13 +10,26 @@ Référencée par `CLAUDE.md`. Détail de la brique "Conventions de code".
 - **Messages de commit : anglais.** Sans exception, depuis le 2026-08-05.
 - **Tout texte porté par le code : anglais** — commentaires, descriptions de `// SOMMAIRE`, noms
   d'identifiants, messages d'erreur, aide CLI.
-- **Un fichier neuf naît en anglais**, même si ses voisins sont en français. L'existant est un
-  stock à écouler (carte FLWL-49 au board), pas une convention à suivre : ne jamais « harmoniser »
-  un fichier neuf vers le français au nom de la cohérence locale.
+- **Un fichier neuf naît en anglais**, même si ses voisins sont en français. Ne jamais
+  « harmoniser » un fichier neuf vers le français au nom de la cohérence locale.
+- **`cmd/` et `internal/` sont en anglais depuis le 2026-08-05** — aucun français n'y subsiste,
+  marqueurs de sommaire exceptés. Une régression s'y traite comme une faute de style ordinaire,
+  pas comme une dette.
+- **Il reste `docs/` et `sql/`, et ils se traduisent AU PASSAGE, jamais en séance dédiée.** Arbitré
+  par Maxence le 2026-08-06 : trois heures de traduction pure ne font pas avancer le produit. La
+  règle mécanique qui remplace la carte : **un fichier de `docs/` ou `sql/` qu'on modifie pour une
+  autre raison part en anglais dans le même commit.** On ne traduit pas un fichier qu'on n'avait
+  pas de raison d'ouvrir.
 - Exceptions, et elles seules : les **marqueurs littéraux** du bloc sommaire
   (`SOMMAIRE (lire en premier…)`, `Fin du sommaire.`), vérifiés tels quels par
   `scripts/check-sommaire.sh` ; les **descriptions de tâches Flowlio** et les échanges avec
   Maxence, qui ne sont pas du code.
+
+> **Un titre traduit sans sa citation est pire qu'un titre français** : la citation pointe une
+> section qui n'existe plus. Avant de renommer un `##` dans `docs/`, chercher qui le cite —
+> `grep -rn '§ <titre>' --include='*.go' --include='*.sql' --include='*.md'` — et tout changer d'un
+> geste. Les citations de `sql/queries/` sont recopiées par sqlc dans `internal/database/` : un
+> `make sqlc` fait partie du geste.
 
 ## Nommage
 
