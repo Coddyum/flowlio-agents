@@ -7,15 +7,15 @@ package main
 // | callParams         | Body of a tools/call call                                    | 35    |
 // | mcpServer.callTool | Runs a tool and wraps its result                             | 45    |
 // | mcpServer.invoke   | Routes to the implementation of the requested tool           | 68    |
-// | writeResult        | Wraps a write return in the {ref, object} shape              | 97    |
-// | textResult         | Wraps a tool result for the MCP client                       | 112   |
-// | errText            | Wraps a tool error so the agent can read it                  | 128   |
-// | parseDeadline      | Reads an RFC 3339 deadline, absent when the string is empty  | 149   |
+// | writeResult        | Wraps a write return in the {ref, object} shape              | 101   |
+// | textResult         | Wraps a tool result for the MCP client                       | 116   |
+// | errText            | Wraps a tool error so the agent can read it                  | 132   |
+// | parseDeadline      | Reads an RFC 3339 deadline, absent when the string is empty  | 153   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
-// The tools/call plumbing. The implementations of the eight tools live in mcp_task_tools.go and
+// The tools/call plumbing. The implementations of the ten tools live in mcp_task_tools.go and
 // mcp_issue_tools.go.
 
 import (
@@ -75,6 +75,10 @@ func (s *mcpServer) invoke(ctx context.Context, name string, args json.RawMessag
 		return s.createTask(ctx, args)
 	case "update_task":
 		return s.updateTask(ctx, args)
+	case "block_task":
+		return s.blockTask(ctx, args)
+	case "unblock_task":
+		return s.unblockTask(ctx, args)
 	case "create_issue":
 		return s.createIssue(ctx, args)
 	case "list_issues":

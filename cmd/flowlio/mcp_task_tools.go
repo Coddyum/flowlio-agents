@@ -4,13 +4,15 @@ package main
 //
 // | Élément                 | Résumé                                                | Ligne |
 // |-------------------------|-------------------------------------------------------|-------|
-// | mcpServer.listTasks     | Backlog of the current project                          | 38    |
-// | mcpServer.createTask    | Opens a task and returns its key                        | 72    |
-// | mcpServer.updateTask    | Edits a task, notes it, or archives it                  | 111   |
-// | mcpServer.numberFromKey | Resolves a readable key within the token's project      | 177   |
-// | mcpServer.taskPath      | Composes the API path of a task                         | 200   |
-// | mcpServer.taskRef       | Composes the readable reference of a number             | 205   |
-// | mcpServer.withRefs      | Adds its reference to every task of a listing           | 213   |
+// | mcpServer.listTasks     | Backlog of the current project                          | 40    |
+// | mcpServer.createTask    | Opens a task and returns its key                        | 74    |
+// | mcpServer.updateTask    | Edits a task, notes it, or archives it                  | 113   |
+// | mcpServer.blockTask     | Records that a task waits on another of the same project| 179   |
+// | mcpServer.unblockTask   | Lifts one recorded dependency by hand                   | 212   |
+// | mcpServer.numberFromKey | Resolves a readable key within the token's project      | 244   |
+// | mcpServer.taskPath      | Composes the API path of a task                         | 267   |
+// | mcpServer.taskRef       | Composes the readable reference of a number             | 272   |
+// | mcpServer.withRefs      | Adds its reference to every task of a listing           | 280   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -164,6 +166,71 @@ func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, 
 
 	var task taskservice.Task
 	if err := s.api.Do(ctx, http.MethodPatch, s.taskPath(number), payload, &task); err != nil {
+		return nil, err
+	}
+	return writeResult("task", s.taskRef(task.Number), task), nil
+}
+
+// blockTask records that a task waits on another task of the SAME project.
+//
+// There is no cross-repo form, and that is not a gap: a dependency that crosses a repo already has
+// its object, the issue. The guard holds in the database — both ends of the edge share one
+// project_id column — so it cannot be worked around from here either.
+func (s *mcpServer) blockTask(ctx context.Context, args json.RawMessage) (any, error) {
+	var in struct {
+		Ref   string `json:"ref"`
+		On    string `json:"on"`
+		Until string `json:"until"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, errors.New("unreadable arguments")
+	}
+
+	number, err := s.numberFromKey(in.Ref)
+	if err != nil {
+		return nil, err
+	}
+	blocker, err := s.numberFromKey(in.On)
+	if err != nil {
+		return nil, err
+	}
+
+	payload := taskservice.BlockTaskInput{Blocker: blocker, Until: strings.TrimSpace(in.Until)}
+
+	var task taskservice.Task
+	if err := s.api.Do(ctx, http.MethodPost, s.taskPath(number)+"/blockers", payload, &task); err != nil {
+		return nil, err
+	}
+	return writeResult("task", s.taskRef(task.Number), task), nil
+}
+
+// unblockTask lifts one recorded dependency by hand, without waiting for the blocking task to move.
+//
+// Replaying it on an already-lifted dependency succeeds and returns the task as it stands: an agent
+// that lost its context and replays is not making a mistake, and failing there would break a
+// session resume on an action already done.
+func (s *mcpServer) unblockTask(ctx context.Context, args json.RawMessage) (any, error) {
+	var in struct {
+		Ref string `json:"ref"`
+		On  string `json:"on"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, errors.New("unreadable arguments")
+	}
+
+	number, err := s.numberFromKey(in.Ref)
+	if err != nil {
+		return nil, err
+	}
+	blocker, err := s.numberFromKey(in.On)
+	if err != nil {
+		return nil, err
+	}
+
+	path := s.taskPath(number) + "/blockers/" + strconv.FormatInt(blocker, 10)
+
+	var task taskservice.Task
+	if err := s.api.Do(ctx, http.MethodDelete, path, nil, &task); err != nil {
 		return nil, err
 	}
 	return writeResult("task", s.taskRef(task.Number), task), nil

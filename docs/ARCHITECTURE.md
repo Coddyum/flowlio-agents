@@ -79,6 +79,22 @@ pourrait être contourné. Un token admin, qui n'est lié à aucun projet, reço
 l'insertion d'une note, alimentée par un `SELECT` scopé sur la tâche. L'isolation entre projets
 d'une même team est couverte par `internal/feature/task/store/store_integration_test.go`.
 
+**Dépendances entre tâches** (`task_dependencies`, `sql/queries/dependencies.sql`) : une arête dit
+« A est bloquée par B jusqu'à ce que B atteigne S ». Quand B l'atteint — ou est archivée, puisqu'elle
+n'atteindra alors plus jamais rien — l'arête est libérée, un `task.unblocked` est journalisé sur la
+tâche DÉBLOQUÉE, et celle-ci repasse `todo` **si et seulement si** toutes ses arêtes sont levées et
+qu'au moins une l'avait bloquée (`set_blocked`). Ces trois conditions vivent dans la query
+`ClearTaskBlock`, indissociables, pour qu'aucun appelant ne puisse en oublier une. Le tout est écrit
+dans la transaction du patch qui le déclenche : hors transaction, l'état « la bloquante est `done`,
+la bloquée l'ignore » redeviendrait atteignable.
+
+**Une arête ne traverse jamais un repo** (D42), et ce n'est pas le service qui le garantit : les
+deux clés étrangères composites de la table partagent la même colonne `project_id`, donc la
+dépendance inter-projets est **inexprimable**, pas seulement refusée. Prouvé sans passer par le
+service dans `store/dependency_integration_test.go`. Le besoin inter-repos a déjà son objet :
+l'issue. Un cycle est refusé à l'écriture par un parcours en Go du graphe actif du projet
+(`service/cycle.go`) — fonction pure, donc prouvable sans base.
+
 Portées `overview` : **les deux routes exigent un token `admin`** (`AdminOnly`, lié une fois dans
 `module.go`). Il n'y a pas de gate mixte, et il ne faut pas en introduire une : c'est la seule
 surface du produit qui lit une team ENTIÈRE, y compris le fil d'une conversation entre deux repos
@@ -163,7 +179,7 @@ Depuis `overview`, « porter son scope » ne veut plus dire une seule chose. Le 
 | | Règle A — projet | Règle B — team |
 | --- | --- | --- |
 | Prédicat | `team_id = @team_id AND project_id = @project_id` | `team_id = @team_id` **seul** |
-| Où | `tasks.sql`, `issues.sql`, `inbox.sql`, `ref.sql`, `trust.sql`, et les queries de token projet de `tokens.sql` | `overview.sql` |
+| Où | `tasks.sql`, `dependencies.sql`, `issues.sql`, `inbox.sql`, `ref.sql`, `trust.sql`, et les queries de token projet de `tokens.sql` | `overview.sql` |
 | Sens du `team_id` | vient du principal (`Principal.TeamID`) | vient d'une **résolution serveur** du slug `?team=` (`OverviewTeamBySlug`), jamais d'un UUID client |
 | Écriture | autorisée | **interdite** — lecture seule, vérifié par `scripts/check-overview-scope.sh` dans `make lint` |
 | Gate | `requireProjectScope` | `AdminOnly` |

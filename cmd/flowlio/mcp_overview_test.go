@@ -116,6 +116,8 @@ func TestMCPToolSurfaceIsClosed(t *testing.T) {
 		"get":          true,
 		"create_task":  true,
 		"update_task":  true,
+		"block_task":   true,
+		"unblock_task": true,
 		"create_issue": true,
 		"list_issues":  true,
 		"answer_issue": true,

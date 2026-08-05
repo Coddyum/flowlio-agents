@@ -125,7 +125,7 @@ make up-dev                   # migrations (needs golang-migrate)
 make run                      # starts the API
 ```
 
-## The MCP surface — eight tools, on purpose
+## The MCP surface — ten tools, on purpose
 
 Every extra tool costs context tokens on **every** agent turn, so the surface is deliberately
 small:
@@ -136,6 +136,8 @@ small:
 | `get(ref)` | a task with its notes, or an issue with its thread — untyped on purpose |
 | `create_task` | new task, returns its reference |
 | `update_task` | status, priority, deadline, body, progress note, archive — one transaction |
+| `block_task` | this task waits on another task of the same repo, until it reaches a status |
+| `unblock_task` | lifts one recorded dependency by hand |
 | `create_issue` | a question to a sibling repo |
 | `list_issues` | the questions exchanged |
 | `answer_issue` | reply, and close if that settles it |

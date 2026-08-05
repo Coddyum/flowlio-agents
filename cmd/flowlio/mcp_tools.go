@@ -8,14 +8,14 @@ package main
 // | object          | Builds a JSON object schema                                    | 57    |
 // | prop            | Builds a JSON schema property                                  | 69    |
 // | enumProp        | Builds a property constrained to a set of values                | 78    |
-// | tools           | The eight exposed tools, and nothing more                       | 87    |
-// | toolsListResult | The tools/list response                                        | 212   |
+// | tools           | The ten exposed tools, and nothing more                         | 88    |
+// | toolsListResult | The tools/list response                                        | 238   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
 // The MCP surface is a BUDGET, not a wish list: every tool is re-injected into the agent's context
-// on EVERY turn. Eight tools, short descriptions, no decorative parameter. Anything added here is
+// on EVERY turn. Ten tools, short descriptions, no decorative parameter. Anything added here is
 // paid for by every session, forever.
 //
 // What these tools deliberately do NOT expose:
@@ -83,7 +83,8 @@ func enumProp(values []string, description string) map[string]any {
 	}
 }
 
-// tools is the exposed surface. Eight tools, settled in docs/DESIGN-M3.md.
+// tools is the exposed surface. Ten tools: the eight settled in docs/DESIGN-M3.md, plus the two
+// that carry task dependencies.
 func tools() []toolDef {
 	return []toolDef{
 		{
@@ -155,6 +156,31 @@ func tools() []toolDef {
 			}, "ref"),
 		},
 		{
+			Name: "block_task",
+			Description: "Records that a task cannot move until another task of THIS project " +
+				"reaches a status. When it does, the blocked task is released, comes back to todo " +
+				"if this is what had blocked it, and shows up in check_inbox. There is no " +
+				"cross-project form: to depend on a sibling repo, open an issue.",
+			InputSchema: object(map[string]any{
+				"ref": prop("string",
+					"Reference of the task that waits, for example CORE-34."),
+				"on": prop("string",
+					"Reference of the task it waits on, in the same project."),
+				"until": enumProp([]string{"in_progress", "done"},
+					"Status the blocking task must reach. Default: done."),
+			}, "ref", "on"),
+		},
+		{
+			Name: "unblock_task",
+			Description: "Lifts one recorded dependency by hand, without waiting for the blocking " +
+				"task to move. The other dependencies of the task stay in place. Lifting one that " +
+				"was already lifted is not an error.",
+			InputSchema: object(map[string]any{
+				"ref": prop("string", "Reference of the blocked task, for example CORE-34."),
+				"on":  prop("string", "Reference of the dependency to lift."),
+			}, "ref", "on"),
+		},
+		{
 			Name: "create_issue",
 			Description: "Asks a sibling project of the team a question, and returns its reference. " +
 				"Use it when only the other repo can answer — for your own work, open a task.",
@@ -200,9 +226,9 @@ func tools() []toolDef {
 		{
 			Name: "check_inbox",
 			Description: "What is waiting for you: incoming questions to handle, your questions that " +
-				"got an answer, and your tasks in progress. No parameters. Call it at the start of " +
-				"a session. The reference state stays list_issues and list_tasks: this call is a " +
-				"starting point, not a full inventory.",
+				"got an answer, your tasks in progress, and the tasks nothing blocks any more. No " +
+				"parameters. Call it at the start of a session. The reference state stays " +
+				"list_issues and list_tasks: this call is a starting point, not a full inventory.",
 			InputSchema: object(map[string]any{}),
 		},
 	}

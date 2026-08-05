@@ -140,7 +140,7 @@ func TestProtocolErrors(t *testing.T) {
 // qu'il est celui dans lequel un agent découvre le produit.
 func TestToolSurfaceIsSmallAndWellFormed(t *testing.T) {
 	expected := []string{
-		"list_tasks", "get", "create_task", "update_task",
+		"list_tasks", "get", "create_task", "update_task", "block_task", "unblock_task",
 		"create_issue", "list_issues", "answer_issue", "check_inbox",
 	}
 
