@@ -2,11 +2,11 @@ package bootstrap_test
 
 // SOMMAIRE (lire en premier, sauter directement au bon passage)
 //
-// | Élément                        | Résumé                                            | Ligne |
-// |--------------------------------|----------------------------------------------------|-------|
-// | newRealStore                   | Mounts the bootstrap store on the real database     | 30    |
-// | liveAdminTokens                | Counts the admin tokens Postgres still accepts      | 51    |
-// | TestRotateAdminTokenReplaces   | The rotation revokes every live admin token         | 69    |
+// | Élément                      | Résumé                                              | Ligne |
+// |------------------------------|------------------------------------------------------|-------|
+// | newRealStore                 | Mounts the store on a transaction that is rolled back  | 41    |
+// | liveAdminTokens              | Counts the admin tokens the installation would accept  | 72    |
+// | TestRotateAdminTokenReplaces | The rotation revokes EVERY live admin token            | 90    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -14,6 +14,16 @@ package bootstrap_test
 // The revocation is a WHERE clause, so it is proven against Postgres. An in-memory double would
 // only replay the predicate, and the defect this guards against is precisely the predicate drifting
 // — a rotation that leaves the lost token live looks identical from the outside.
+//
+// EVERYTHING RUNS IN A TRANSACTION THAT IS ROLLED BACK, and that is not tidiness.
+//
+// `RevokeAdminTokens` names no identifier: it takes every live admin token of the installation,
+// because whoever runs a rotation cannot designate the one they lost. Run against the development
+// database — which is what `make test-integration` does — a test of that query touches the
+// developer's own admin token. The first version of this file "isolated" itself with a
+// `DELETE FROM tokens WHERE scope = 'admin'`, and it destroyed the credential of the instance it
+// was running on. A test whose subject is a global write has no business writing outside a
+// transaction.
 
 import (
 	"context"
@@ -26,8 +36,9 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// newRealStore mounts the bootstrap store on the real database.
-func newRealStore(t *testing.T) (bootstrap.Store, *sql.DB) {
+// newRealStore mounts the bootstrap store on a REAL transaction, rolled back when the test ends.
+// The returned *sql.Tx is what the assertions read: the rows never exist outside it.
+func newRealStore(t *testing.T) (bootstrap.Store, *sql.Tx) {
 	t.Helper()
 
 	dsn := os.Getenv("FLOWLIO_TEST_DATABASE_URL")
@@ -39,20 +50,30 @@ func newRealStore(t *testing.T) (bootstrap.Store, *sql.DB) {
 	if err != nil {
 		t.Fatalf("opening the database: %v", err)
 	}
-	if err := db.Ping(); err != nil {
-		t.Fatalf("database unreachable: %v", err)
-	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	return bootstrap.NewStore(database.New(db)), db
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("opening the transaction: %v", err)
+	}
+	t.Cleanup(func() {
+		// Rollback, never commit: this test revokes every admin token it can see, including the ones
+		// of the instance running it.
+		if err := tx.Rollback(); err != nil {
+			t.Errorf("rolling back: %v", err)
+		}
+	})
+
+	return bootstrap.NewStore(database.New(tx)), tx
 }
 
-// liveAdminTokens counts the admin tokens the installation would still accept.
-func liveAdminTokens(t *testing.T, db *sql.DB) int {
+// liveAdminTokens counts the admin tokens the installation would still accept, as seen from inside
+// the transaction.
+func liveAdminTokens(t *testing.T, tx *sql.Tx) int {
 	t.Helper()
 
 	var count int
-	if err := db.QueryRow(
+	if err := tx.QueryRow(
 		"SELECT count(*) FROM tokens WHERE scope = 'admin' AND revoked_at IS NULL",
 	).Scan(&count); err != nil {
 		t.Fatalf("counting the live admin tokens: %v", err)
@@ -67,19 +88,13 @@ func liveAdminTokens(t *testing.T, db *sql.DB) int {
 // leaving the lost credential live on an installation anyone can reach — which is the situation
 // being fixed, with one more key in circulation.
 func TestRotateAdminTokenReplaces(t *testing.T) {
-	st, db := newRealStore(t)
+	st, tx := newRealStore(t)
 	ctx := context.Background()
 
-	// The table is shared with whatever else the suite left behind: this test owns the admin tokens
-	// it finds, so it starts from a state it wrote itself.
-	if _, err := db.Exec("DELETE FROM tokens WHERE scope = 'admin'"); err != nil {
-		t.Fatalf("clearing the admin tokens: %v", err)
-	}
-	t.Cleanup(func() {
-		if _, err := db.Exec("DELETE FROM tokens WHERE scope = 'admin'"); err != nil {
-			t.Errorf("cleaning up the admin tokens: %v", err)
-		}
-	})
+	// The baseline is whatever the installation already holds. Counting it instead of deleting it is
+	// what makes the assertion "every live token, not just mine" — and what keeps this test from
+	// touching a credential it does not own.
+	baseline := liveAdminTokens(t, tx)
 
 	if err := st.CreateAdminToken(ctx, "lost", "aaaaaaaaaaaa", "hash-a"); err != nil {
 		t.Fatalf("seeding the lost token: %v", err)
@@ -92,19 +107,19 @@ func TestRotateAdminTokenReplaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RotateAdminToken: %v", err)
 	}
-	if revoked != 2 {
-		t.Errorf("%d token(s) revoked, want 2", revoked)
+	if want := int64(baseline + 2); revoked != want {
+		t.Errorf("%d token(s) revoked, want %d — the rotation must reach every live one", revoked, want)
 	}
 	if token == "" {
 		t.Fatal("no new token was issued")
 	}
-	if n := liveAdminTokens(t, db); n != 1 {
+	if n := liveAdminTokens(t, tx); n != 1 {
 		t.Fatalf("%d live admin token(s) after the rotation, want exactly 1", n)
 	}
 
 	// The one that survives is the new one, not either of the seeded pair.
 	var prefix string
-	if err := db.QueryRow(
+	if err := tx.QueryRow(
 		"SELECT prefix FROM tokens WHERE scope = 'admin' AND revoked_at IS NULL",
 	).Scan(&prefix); err != nil {
 		t.Fatalf("reading the surviving token: %v", err)
@@ -113,16 +128,15 @@ func TestRotateAdminTokenReplaces(t *testing.T) {
 		t.Errorf("the surviving token is a seeded one (%s): the rotation revoked the wrong rows", prefix)
 	}
 
-	// Rotating again on an installation whose admin tokens are all revoked still issues one: the
-	// "already bootstrapped" condition belongs to the first run, and reintroducing it here would
-	// leave a locked-out installation locked out.
+	// Rotating again still issues one: the "already bootstrapped" condition belongs to the first run,
+	// and reintroducing it in the recovery path would leave a locked-out installation locked out.
 	if _, revoked, err = bootstrap.RotateAdminToken(ctx, st); err != nil {
 		t.Fatalf("second rotation: %v", err)
 	}
 	if revoked != 1 {
 		t.Errorf("%d token(s) revoked on the second rotation, want 1", revoked)
 	}
-	if n := liveAdminTokens(t, db); n != 1 {
+	if n := liveAdminTokens(t, tx); n != 1 {
 		t.Errorf("%d live admin token(s) after the second rotation, want 1", n)
 	}
 }

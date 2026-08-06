@@ -185,6 +185,16 @@ func addToken(t *testing.T, db *sql.DB, tm team, key string, lastUsed *time.Time
 	); err != nil {
 		t.Fatalf("creating the token: %v", err)
 	}
+
+	// An admin token carries no team, so deleting the fixture team does NOT take it with it: it
+	// outlives the test and stays in the development database, where the next reader has to work out
+	// which of the admin tokens is theirs. Project tokens go away by cascade; this one has to say so
+	// itself.
+	t.Cleanup(func() {
+		if _, err := db.Exec("DELETE FROM tokens WHERE prefix = $1", prefix); err != nil {
+			t.Errorf("cleaning up token %s: %v", prefix, err)
+		}
+	})
 }
 
 // refs yields the set of references of an issue queue, to compare EXACT SETS.
