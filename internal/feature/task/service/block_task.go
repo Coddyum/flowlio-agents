@@ -5,7 +5,7 @@ package service
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
 // | service.BlockTask  | Opens a blocking edge between two tasks of the project       | 33    |
-// | alreadyReached     | Tells whether a blocker already satisfies the condition      | 123   |
+// | alreadyReached     | Tells whether a blocker already satisfies the condition      | 125   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -92,6 +92,8 @@ func (s *service) BlockTask(ctx context.Context, in BlockTaskInput) (Task, error
 			BlockerTaskID: blocker.ID,
 			UntilStatus:   until,
 			SetBlocked:    setBlocked,
+			// The API surface owns this edge: no description edit releases it (D47).
+			Origin: store.OriginAPI,
 		}); err != nil {
 			return translateStore(err, "block task: create dependency")
 		}

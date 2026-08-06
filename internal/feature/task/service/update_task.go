@@ -65,10 +65,15 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 	}
 
 	// The transaction-free path is the one of the nominal patch: a title, a priority, a deadline.
-	// It only opens if NOTHING else needs to be written along with it — no note, no edge release. A
-	// transaction on that path would cost two more round trips on every edit.
+	// It only opens if NOTHING else needs to be written along with it — no note, no edge release,
+	// no description. A transaction on that path would cost two more round trips on every edit.
+	//
+	// A body always takes the transaction, even one carrying no `#blocked-by` line: what the diff
+	// compares it against is the STORED body, which is unknown until read. Editing a description is
+	// rarer than editing a title, and the alternative — reading the task first, outside any
+	// transaction — would compare against a body another write may already have replaced.
 	releases := releasesOnPatch(patch)
-	if in.Note == nil && !releases {
+	if in.Note == nil && !releases && in.Body == nil {
 		updated, err := s.store.UpdateTask(ctx, patch)
 		if err != nil {
 			return Task{}, translateStore(err, "update task")
@@ -99,6 +104,17 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 	// atomicity, never visibility.
 	var updated store.Task
 	err := s.store.WithTx(ctx, func(tx store.Store) error {
+		// The stored description is read before anything is written to it: it is one half of the
+		// `#blocked-by` diff, and the patch is about to overwrite it.
+		previous := ""
+		if in.Body != nil {
+			current, err := tx.TaskByNumber(ctx, in.TeamID, in.ProjectID, in.Number)
+			if err != nil {
+				return translateStore(err, "update task: current description")
+			}
+			previous = current.Body
+		}
+
 		if note != "" {
 			if _, err := tx.AddNote(ctx, in.TeamID, in.ProjectID, in.Number, note); err != nil {
 				return translateStore(err, "update task")
@@ -110,6 +126,22 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 		if err != nil {
 			return translateStore(err, "update task")
 		}
+
+		// The description is compiled after the patch has written it: a line refused here rolls back
+		// the body that carries it, so the text and the graph never disagree.
+		if in.Body != nil {
+			updated, err = s.syncBodyEdges(ctx, tx, bodyEdges{
+				task:           updated,
+				previous:       previous,
+				next:           *in.Body,
+				statusExplicit: in.Status != nil,
+				archiving:      in.Archive,
+			})
+			if err != nil {
+				return err
+			}
+		}
+
 		if !releases {
 			return nil
 		}

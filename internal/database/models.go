@@ -301,6 +301,7 @@ type TaskDependency struct {
 	SetBlocked    bool         `json:"set_blocked"`
 	CreatedAt     time.Time    `json:"created_at"`
 	ReleasedAt    sql.NullTime `json:"released_at"`
+	Origin        string       `json:"origin"`
 }
 
 type TaskNote struct {

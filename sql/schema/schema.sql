@@ -199,7 +199,9 @@ CREATE TABLE public.task_dependencies (
     set_blocked boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     released_at timestamp with time zone,
+    origin text DEFAULT 'api'::text NOT NULL,
     CONSTRAINT task_dependencies_not_self CHECK ((task_id <> blocker_task_id)),
+    CONSTRAINT task_dependencies_origin_known CHECK ((origin = ANY (ARRAY['api'::text, 'body'::text]))),
     CONSTRAINT task_dependencies_until_is_progress CHECK ((until_status = ANY (ARRAY['in_progress'::public.task_status, 'done'::public.task_status])))
 );
 

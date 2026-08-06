@@ -50,6 +50,13 @@ type fakeStore struct {
 	cleared         []uuid.UUID
 	releasedPairs   int
 
+	// Description compiler. bodyByNumber is the STORED description, the half of the `#blocked-by`
+	// diff the service reads before overwriting it; heldDeps is what already blocks the task.
+	projectKey     string
+	bodyByNumber   map[int64]string
+	heldDeps       []store.Dependency
+	releasedByBody []uuid.UUID
+
 	claimErr error
 	writeErr error
 	noteErr  error
@@ -94,6 +101,35 @@ func (f *fakeStore) ReleaseEdge(_ context.Context, _, taskID, blockerTaskID uuid
 	return nil, nil
 }
 
+// ReleaseBodyEdge only releases what a description opened: the double carries the origin predicate
+// of its query, otherwise the very rule under test would live nowhere in these tests.
+func (f *fakeStore) ReleaseBodyEdge(_ context.Context, _, taskID, blockerTaskID uuid.UUID) ([]uuid.UUID, error) {
+	for _, dep := range f.heldDeps {
+		if dep.TaskID == taskID && dep.BlockerTaskID == blockerTaskID && dep.Origin == store.OriginBody {
+			f.releasedByBody = append(f.releasedByBody, taskID)
+			return []uuid.UUID{taskID}, nil
+		}
+	}
+	return nil, nil
+}
+
+func (f *fakeStore) TaskDependencies(_ context.Context, _, taskID uuid.UUID) ([]store.Dependency, error) {
+	held := make([]store.Dependency, 0, len(f.heldDeps))
+	for _, dep := range f.heldDeps {
+		if dep.TaskID == taskID {
+			held = append(held, dep)
+		}
+	}
+	return held, nil
+}
+
+func (f *fakeStore) ProjectKey(context.Context, uuid.UUID, uuid.UUID) (string, error) {
+	if f.projectKey == "" {
+		return "TEST", nil
+	}
+	return f.projectKey, nil
+}
+
 func (f *fakeStore) ClearBlock(_ context.Context, _, _, taskID uuid.UUID) (bool, error) {
 	f.cleared = append(f.cleared, taskID)
 	return true, nil
@@ -127,6 +163,7 @@ func (f *fakeStore) CreateTask(_ context.Context, in store.NewTask) (store.Task,
 	}
 	f.lastTask = in
 	return store.Task{
+		ID:       f.taskID(in.Number),
 		Number:   in.Number,
 		Title:    in.Title,
 		Body:     in.Body,
@@ -149,6 +186,7 @@ func (f *fakeStore) TaskByNumber(_ context.Context, _, _ uuid.UUID, number int64
 		ID:       f.taskID(number),
 		Number:   number,
 		Title:    "task",
+		Body:     f.bodyByNumber[number],
 		Status:   status,
 		Priority: "normal",
 	}
@@ -175,7 +213,17 @@ func (f *fakeStore) UpdateTask(_ context.Context, patch store.TaskPatch) (store.
 	if patch.Archive {
 		f.archived = true
 	}
-	return store.Task{Number: patch.Number, Title: "task", Status: "todo", Priority: "normal"}, nil
+	status := "todo"
+	if patch.Status != nil {
+		status = *patch.Status
+	}
+	return store.Task{
+		ID:       f.taskID(patch.Number),
+		Number:   patch.Number,
+		Title:    "task",
+		Status:   status,
+		Priority: "normal",
+	}, nil
 }
 
 func (f *fakeStore) AddNote(_ context.Context, _, _ uuid.UUID, _ int64, body string) (store.Note, error) {

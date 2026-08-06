@@ -1,20 +1,23 @@
--- RÈGLE DE SCOPE DE CE FICHIER : project_id sur toute lecture comme sur toute écriture, et
--- team_id partout où une tâche est atteinte par autre chose que son identifiant.
+-- SCOPE RULE OF THIS FILE: project_id on every read as on every write, and team_id everywhere a
+-- task is reached by anything other than its identifier.
 --
--- Une arête ne peut pas relier deux projets : les deux clés étrangères composites de
--- task_dependencies partagent la MÊME colonne project_id, donc la dépendance inter-repos est
--- inexprimable en base, pas seulement refusée par le service (D42). Les prédicats de ce fichier
--- ne sont pas cette garantie — ils empêchent d'ATTEINDRE une arête d'un autre projet, ce qui est
--- une question différente.
+-- An edge cannot join two projects: both composite foreign keys of task_dependencies share the
+-- SAME project_id column, so a cross-repo dependency is inexpressible in the database, not merely
+-- refused by the service (D42). The predicates in this file are not that guarantee — they prevent
+-- REACHING an edge of another project, which is a different question.
 
--- CreateTaskDependency ouvre une arête « task_id est bloquée par blocker_task_id ».
+-- CreateTaskDependency opens an edge "task_id is blocked by blocker_task_id".
 --
--- project_id est lu depuis la tâche bloquée plutôt que fourni : c'est ce qui fait entrer les deux
--- extrémités dans la même clé étrangère composite. Un blocker d'un autre projet fait alors
--- échouer la contrainte, sans qu'aucun prédicat n'ait à le vérifier.
+-- project_id is read from the blocked task rather than supplied: that is what brings both
+-- endpoints into the same composite foreign key. A blocker from another project then fails the
+-- constraint, without any predicate having to check for it.
+--
+-- origin records WHICH surface opened the edge, and it is only knowable here: afterwards, an edge
+-- opened by block_task and one compiled from a `#blocked-by` line of a description are
+-- indistinguishable. It is what makes a body edit unable to release what an agent decided (D47).
 -- name: CreateTaskDependency :one
-INSERT INTO task_dependencies (project_id, task_id, blocker_task_id, until_status, set_blocked)
-SELECT t.project_id, t.id, @blocker_task_id, @until_status::task_status, @set_blocked::boolean
+INSERT INTO task_dependencies (project_id, task_id, blocker_task_id, until_status, set_blocked, origin)
+SELECT t.project_id, t.id, @blocker_task_id, @until_status::task_status, @set_blocked::boolean, @origin::text
 FROM tasks t
 WHERE t.id = @task_id
   AND t.team_id = @team_id
@@ -22,16 +25,16 @@ WHERE t.id = @task_id
   AND t.archived_at IS NULL
 RETURNING *;
 
--- ReleaseDependenciesOfBlocker libère les arêtes qu'une tâche vient de débloquer en changeant de
--- statut, et rend les tâches concernées.
+-- ReleaseDependenciesOfBlocker releases the edges a task has just freed by changing status, and
+-- returns the tasks concerned.
 --
--- « Atteindre » un statut est monotone et non une égalité : une bloquante qui saute de `todo` à
--- `done` libère aussi les arêtes qui n'attendaient que `in_progress`. L'égalité stricte
--- fabriquerait des arêtes que plus rien ne peut libérer — exactement la tâche morte-vivante que
--- cette carte existe pour empêcher.
+-- "Reaching" a status is monotone and not an equality: a blocker jumping from `todo` to `done`
+-- also releases the edges that were only waiting for `in_progress`. Strict equality would
+-- manufacture edges nothing can ever release — exactly the undead task this feature exists to
+-- prevent.
 --
--- `force` couvre l'archivage : une bloquante archivée n'atteindra jamais rien, ses arêtes se
--- libèrent donc quelle que soit leur condition.
+-- `force` covers archiving: an archived blocker will never reach anything, so its edges are
+-- released whatever their condition.
 -- name: ReleaseDependenciesOfBlocker :many
 UPDATE task_dependencies d
 SET released_at = now()
@@ -45,9 +48,13 @@ WHERE d.blocker_task_id = @blocker_task_id
   )
 RETURNING d.task_id;
 
--- ReleaseDependencyPair libère UNE arête nommée, ce que fait unblock_task.
--- Zéro ligne rendue signifie « cette arête n'existe pas, ou elle est déjà libérée » : les deux
--- sont le même non-événement pour l'appelant.
+-- ReleaseDependencyPair releases ONE named edge, which is what unblock_task does.
+-- Zero rows returned means "this edge does not exist, or is already released": both are the same
+-- non-event to the caller.
+--
+-- No origin predicate here, and that is deliberate: unblock_task is an explicit act naming its
+-- edge, so it lifts whatever opened it. Provenance bounds the surface that writes WITHOUT naming
+-- an edge — a description patch, below.
 -- name: ReleaseDependencyPair :many
 UPDATE task_dependencies d
 SET released_at = now()
@@ -57,18 +64,34 @@ WHERE d.task_id = @task_id
   AND d.released_at IS NULL
 RETURNING d.task_id;
 
--- ClearTaskBlock ramène une tâche de `blocked` à `todo`, et SEULEMENT si c'est une arête qui l'y
--- avait mise.
+-- ReleaseBodyDependencyPair releases the edge a `#blocked-by` line had opened, when that line
+-- disappears from a description.
 --
--- Les trois conditions sont indissociables et tiennent dans la query pour qu'aucune ne puisse
--- être oubliée par un appelant :
---   - status = 'blocked'  : un agent qui a déjà repris la tâche à la main n'est pas écrasé ;
---   - aucune arête active : être libéré par une arête sur trois ne débloque rien ;
---   - au moins un set_blocked : une tâche que l'agent avait bloquée pour une autre raison garde
---     son statut. On notifie, on ne décide pas à sa place.
+-- The origin predicate is the whole point (D47). Without it, deleting a line — or pasting over a
+-- description that carried one — would lift a block opened by block_task, which nobody editing
+-- that text ever decided. Zero rows is a nominal case: the pair is either free already, or held by
+-- an edge this surface does not own.
+-- name: ReleaseBodyDependencyPair :many
+UPDATE task_dependencies d
+SET released_at = now()
+WHERE d.task_id = @task_id
+  AND d.blocker_task_id = @blocker_task_id
+  AND d.project_id = @project_id
+  AND d.released_at IS NULL
+  AND d.origin = 'body'
+RETURNING d.task_id;
+
+-- ClearTaskBlock brings a task back from `blocked` to `todo`, and ONLY if an edge is what put it
+-- there.
 --
--- Zéro ligne rendue est un résultat normal, pas une erreur : c'est le cas « on notifie et on ne
--- touche pas au statut ».
+-- The three conditions are inseparable and live in the query so that no caller can forget one:
+--   - status = 'blocked'       : an agent that already took the task back by hand is not overwritten;
+--   - no active edge left      : being released by one edge out of three unblocks nothing;
+--   - at least one set_blocked : a task the agent had blocked for another reason keeps its status.
+--     We notify, we do not decide on its behalf.
+--
+-- Zero rows returned is a normal result, not an error: it is the "notify and leave the status
+-- alone" case.
 -- name: ClearTaskBlock :many
 UPDATE tasks t
 SET status = 'todo', updated_at = now()
@@ -87,20 +110,41 @@ WHERE t.id = @task_id
   )
 RETURNING t.number;
 
--- ListActiveDependencyEdges rend le graphe de blocage ACTIF du projet, et sert à une seule chose :
--- refuser un cycle avant de l'écrire. A bloque B qui bloque A laisserait les deux `blocked` pour
--- toujours, sans que rien ne le dise.
+-- ListActiveDependencyEdges returns the project's ACTIVE blocking graph, and serves one purpose
+-- only: refusing a cycle before writing it. A blocking B blocking A would leave both of them
+-- `blocked` forever, with nothing saying so.
 --
--- Le graphe entier plutôt qu'un parcours récursif en SQL, pour deux raisons. La première est que
--- sqlc ne résout pas les colonnes d'une CTE récursive. La seconde vaut mieux que la première : le
--- parcours devient une fonction Go pure, donc prouvable sans Postgres — et « un cycle est refusé »
--- est précisément le genre de garantie qu'on veut voir tenir dans un test qui ne dépend de rien.
+-- The whole graph rather than a recursive SQL traversal, for two reasons. The first is that sqlc
+-- does not resolve the columns of a recursive CTE. The second is worth more than the first: the
+-- traversal becomes a pure Go function, hence provable without Postgres — and "a cycle is refused"
+-- is precisely the kind of guarantee one wants to see hold in a test that depends on nothing.
 --
--- La taille est bornée par la nature de l'objet : ce sont les blocages NON LIBÉRÉS d'un seul repo,
--- pas son historique. Les arêtes libérées sont exclues — elles ne bloquent plus, donc elles ne
--- peuvent pas fermer un cycle.
+-- The size is bounded by the nature of the object: those are one repo's UNRELEASED blocks, not its
+-- history. Released edges are excluded — they no longer block, so they cannot close a cycle.
 -- name: ListActiveDependencyEdges :many
 SELECT d.task_id, d.blocker_task_id
 FROM task_dependencies d
 WHERE d.project_id = @project_id
   AND d.released_at IS NULL;
+
+-- ListTaskActiveDependencies returns the active edges of ONE blocked task, whole rows this time.
+--
+-- The graph query above keeps nothing but the endpoints, which is all a cycle traversal needs.
+-- Compiling a description needs more: a `#blocked-by` line naming a pair that is already blocked
+-- has to be told apart — does it describe the edge that exists, or contradict it? — and the
+-- difference is carried by until_status.
+-- name: ListTaskActiveDependencies :many
+SELECT d.*
+FROM task_dependencies d
+WHERE d.project_id = @project_id
+  AND d.task_id = @task_id
+  AND d.released_at IS NULL;
+
+-- TaskProjectKey resolves the key of the token's project (CORE, FRNT…), needed to read a reference
+-- a human wrote: `@CORE-34` names a task of THIS project, and any other key has to be refused
+-- rather than silently read as a local number.
+--
+-- Scoped by team_id like every project read, even though the identifier already comes from the
+-- token.
+-- name: TaskProjectKey :one
+SELECT key FROM projects WHERE id = $1 AND team_id = $2;

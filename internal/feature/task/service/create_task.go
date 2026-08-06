@@ -66,7 +66,16 @@ func (s *service) CreateTask(ctx context.Context, in CreateTaskInput) (Task, err
 		if err != nil {
 			return translateStore(err, "create task")
 		}
-		return nil
+
+		// The description is compiled AFTER the insert, and it cannot be otherwise: a `#blocked-by`
+		// line names the task it blocks, which has no identifier until this point. An unreadable line
+		// rolls the whole thing back, number included — the task is not created half-blocked.
+		created, err = s.syncBodyEdges(ctx, tx, bodyEdges{
+			task:           created,
+			next:           in.Body,
+			statusExplicit: in.Status != "",
+		})
+		return err
 	})
 	if err != nil {
 		return Task{}, err

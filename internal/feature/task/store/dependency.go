@@ -4,21 +4,25 @@ package store
 //
 // | Élément                   | Résumé                                                | Ligne |
 // |---------------------------|-------------------------------------------------------|-------|
-// | store.CreateDependency    | Opens a blocking edge between two tasks                 | 37    |
-// | store.ReleaseBlockerEdges | Releases the edges a task has just freed                | 57    |
-// | store.ReleaseEdge         | Releases one named edge                                 | 72    |
-// | store.ClearBlock          | Brings a task blocked by an edge back to `todo`         | 89    |
-// | store.ActiveEdges         | Returns the project's active blocking graph             | 103   |
-// | toDependency              | Projects a generated row onto the domain type           | 117   |
+// | store.CreateDependency    | Opens a blocking edge between two tasks                 | 41    |
+// | store.ReleaseBlockerEdges | Releases the edges a task has just freed                | 68    |
+// | store.ReleaseEdge         | Releases one named edge                                 | 83    |
+// | store.ReleaseBodyEdge     | Releases the edge a description line had opened         | 100   |
+// | store.TaskDependencies    | Returns the active edges blocking one task              | 114   |
+// | store.ClearBlock          | Brings a task blocked by an edge back to `todo`         | 135   |
+// | store.ActiveEdges         | Returns the project's active blocking graph             | 149   |
+// | store.ProjectKey          | Resolves the readable key of the token's project        | 164   |
+// | toDependency              | Projects a generated row onto the domain type           | 176   |
 //
-// The two ReleasedEdge projection loops look alike without being factorable: sqlc generates a
-// DISTINCT row type per query, and a single line of code separates them.
+// The ReleasedEdge projection loops look alike without being factorable: sqlc generates a DISTINCT
+// row type per query, and a single line of code separates them.
 //
 // Fin du sommaire.
 // =====================================================================
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/Coddyum/flowlio-agents/internal/database"
 	"github.com/google/uuid"
@@ -35,6 +39,12 @@ import (
 // yields ErrNotFound. An active edge already open on the same pair yields ErrConflict: replaying
 // block_task does not manufacture a second block to release.
 func (s *store) CreateDependency(ctx context.Context, in NewDependency) (Dependency, error) {
+	// An unnamed origin is a programming defect, and without this guard it would surface as the
+	// CHECK constraint firing — a conflict, which reads as the caller's fault when it is ours.
+	if in.Origin != OriginAPI && in.Origin != OriginBody {
+		return Dependency{}, fmt.Errorf("%w: dependency opened with origin %q", ErrCorrupted, in.Origin)
+	}
+
 	row, err := s.q.CreateTaskDependency(ctx, database.CreateTaskDependencyParams{
 		TaskID:        in.TaskID,
 		BlockerTaskID: in.BlockerTaskID,
@@ -42,6 +52,7 @@ func (s *store) CreateDependency(ctx context.Context, in NewDependency) (Depende
 		ProjectID:     in.ProjectID,
 		UntilStatus:   database.TaskStatus(in.UntilStatus),
 		SetBlocked:    in.SetBlocked,
+		Origin:        in.Origin,
 	})
 	if err != nil {
 		return Dependency{}, translate(err, "create dependency")
@@ -81,6 +92,41 @@ func (s *store) ReleaseEdge(ctx context.Context, projectID, taskID, blockerTaskI
 	return freed, nil
 }
 
+// ReleaseBodyEdge releases the edge a `#blocked-by` line had opened, and only that one.
+//
+// An empty list covers two cases that are the same non-event here: the pair carries no active edge
+// at all, or it carries one this surface did not open. Deleting a line never lifts a block decided
+// through block_task (D47).
+func (s *store) ReleaseBodyEdge(ctx context.Context, projectID, taskID, blockerTaskID uuid.UUID) ([]uuid.UUID, error) {
+	freed, err := s.q.ReleaseBodyDependencyPair(ctx, database.ReleaseBodyDependencyPairParams{
+		TaskID:        taskID,
+		BlockerTaskID: blockerTaskID,
+		ProjectID:     projectID,
+	})
+	if err != nil {
+		return nil, translate(err, "release body edge")
+	}
+	return freed, nil
+}
+
+// TaskDependencies returns the active edges blocking one task, whole rows: the caller compiling a
+// description needs the release condition of each, not just its endpoints.
+func (s *store) TaskDependencies(ctx context.Context, projectID, taskID uuid.UUID) ([]Dependency, error) {
+	rows, err := s.q.ListTaskActiveDependencies(ctx, database.ListTaskActiveDependenciesParams{
+		ProjectID: projectID,
+		TaskID:    taskID,
+	})
+	if err != nil {
+		return nil, translate(err, "task dependencies")
+	}
+
+	deps := make([]Dependency, 0, len(rows))
+	for _, row := range rows {
+		deps = append(deps, toDependency(row))
+	}
+	return deps, nil
+}
+
 // ClearBlock brings the task back from `blocked` to `todo`. All three conditions — status still
 // blocked, no active edge left, at least one edge having set the block — live in the query.
 //
@@ -113,6 +159,19 @@ func (s *store) ActiveEdges(ctx context.Context, projectID uuid.UUID) ([]Edge, e
 	return edges, nil
 }
 
+// ProjectKey returns the readable key of the project, scoped by team like every project read even
+// though both identifiers already come from the token.
+func (s *store) ProjectKey(ctx context.Context, teamID, projectID uuid.UUID) (string, error) {
+	key, err := s.q.TaskProjectKey(ctx, database.TaskProjectKeyParams{
+		ID:     projectID,
+		TeamID: teamID,
+	})
+	if err != nil {
+		return "", translate(err, "project key")
+	}
+	return key, nil
+}
+
 // toDependency projects a generated row onto the domain type.
 func toDependency(row database.TaskDependency) Dependency {
 	return Dependency{
@@ -122,6 +181,7 @@ func toDependency(row database.TaskDependency) Dependency {
 		BlockerTaskID: row.BlockerTaskID,
 		UntilStatus:   string(row.UntilStatus),
 		SetBlocked:    row.SetBlocked,
+		Origin:        row.Origin,
 		CreatedAt:     row.CreatedAt,
 		ReleasedAt:    fromNullTime(row.ReleasedAt),
 	}

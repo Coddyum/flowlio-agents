@@ -33,6 +33,7 @@ func TestDependencyCannotCrossProjects(t *testing.T) {
 		TaskID:        blocked.ID,
 		BlockerTaskID: foreign.ID,
 		UntilStatus:   "done",
+		Origin:        store.OriginAPI,
 		SetBlocked:    true,
 	})
 	if !errors.Is(err, store.ErrConflict) {
@@ -66,6 +67,7 @@ func TestDependencyCannotBeSelfReferential(t *testing.T) {
 		TaskID:        task.ID,
 		BlockerTaskID: task.ID,
 		UntilStatus:   "done",
+		Origin:        store.OriginAPI,
 	})
 	if !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("error = %v, want ErrConflict on self-blocking", err)
@@ -89,6 +91,7 @@ func TestDependencyPairIsUniqueWhileActiveOnly(t *testing.T) {
 		TaskID:        blocked.ID,
 		BlockerTaskID: blocker.ID,
 		UntilStatus:   "done",
+		Origin:        store.OriginAPI,
 		SetBlocked:    true,
 	}
 
@@ -105,6 +108,71 @@ func TestDependencyPairIsUniqueWhileActiveOnly(t *testing.T) {
 	if _, err := st.CreateDependency(ctx, edge); err != nil {
 		t.Fatalf("reopening after release: %v — the uniqueness must be partial", err)
 	}
+}
+
+// The origin predicate, proven where it lives: in the ReleaseBodyDependencyPair query (D47).
+//
+// This is the decision of the card reduced to its smallest form. An edge opened through the API is
+// out of reach of the release a description patch performs, and an edge opened by a description
+// line is not: the two surfaces do not share a lifecycle, so neither may undo the other's writes.
+//
+// Checked at the store level and not only through the service, because the rule IS the predicate:
+// dropped from the query, every test above still passes and the guarantee is gone.
+func TestBodyReleaseOnlyReachesBodyEdges(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name   string
+		origin string
+		// freed says whether a description patch may release that edge.
+		freed bool
+	}{
+		{name: "an edge opened by block_task survives a body edit", origin: store.OriginAPI, freed: false},
+		{name: "an edge opened by a description line is released by it", origin: store.OriginBody, freed: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st, db := newStore(t)
+			sc := newProject(t, db, "ORG")
+
+			blocked := createTask(t, st, sc, "blocked")
+			blocker := createTask(t, st, sc, "blocker")
+
+			if _, err := st.CreateDependency(ctx, store.NewDependency{
+				TeamID: sc.teamID, ProjectID: sc.projectID,
+				TaskID: blocked.ID, BlockerTaskID: blocker.ID,
+				UntilStatus: "done", SetBlocked: true, Origin: tc.origin,
+			}); err != nil {
+				t.Fatalf("edge: %v", err)
+			}
+
+			freed, err := st.ReleaseBodyEdge(ctx, sc.projectID, blocked.ID, blocker.ID)
+			if err != nil {
+				t.Fatalf("ReleaseBodyEdge: %v", err)
+			}
+			if got := len(freed) == 1; got != tc.freed {
+				t.Errorf("released = %v, want %v", got, tc.freed)
+			}
+
+			held, err := st.TaskDependencies(ctx, sc.projectID, blocked.ID)
+			if err != nil {
+				t.Fatalf("TaskDependencies: %v", err)
+			}
+			if active := len(held) == 1; active == tc.freed {
+				t.Errorf("%d active edge(s) left, want %d", len(held), 1-boolToInt(tc.freed))
+			}
+		})
+	}
+}
+
+// boolToInt reads the expectation above as a count, so the failure message says how many edges were
+// expected rather than which boolean was wrong.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // The rule for going back to `todo`, proven where it lives: in the ClearTaskBlock query. All three
@@ -165,7 +233,7 @@ func TestClearBlockObeysItsThreeConditions(t *testing.T) {
 			if _, err := st.CreateDependency(ctx, store.NewDependency{
 				TeamID: sc.teamID, ProjectID: sc.projectID,
 				TaskID: blocked.ID, BlockerTaskID: blocker.ID,
-				UntilStatus: "done", SetBlocked: tc.setBlocked,
+				UntilStatus: "done", SetBlocked: tc.setBlocked, Origin: store.OriginAPI,
 			}); err != nil {
 				t.Fatalf("main edge: %v", err)
 			}
@@ -175,7 +243,7 @@ func TestClearBlockObeysItsThreeConditions(t *testing.T) {
 				if _, err := st.CreateDependency(ctx, store.NewDependency{
 					TeamID: sc.teamID, ProjectID: sc.projectID,
 					TaskID: blocked.ID, BlockerTaskID: other.ID,
-					UntilStatus: "done", SetBlocked: false,
+					UntilStatus: "done", SetBlocked: false, Origin: store.OriginAPI,
 				}); err != nil {
 					t.Fatalf("secondary edge: %v", err)
 				}
@@ -250,7 +318,7 @@ func TestReleaseIsMonotone(t *testing.T) {
 		if _, err := st.CreateDependency(ctx, store.NewDependency{
 			TeamID: sc.teamID, ProjectID: sc.projectID,
 			TaskID: edge.task.ID, BlockerTaskID: blocker.ID,
-			UntilStatus: edge.until, SetBlocked: true,
+			UntilStatus: edge.until, SetBlocked: true, Origin: store.OriginAPI,
 		}); err != nil {
 			t.Fatalf("edge %s: %v", edge.until, err)
 		}
@@ -280,7 +348,7 @@ func TestReleaseDoesNotOvershoot(t *testing.T) {
 	if _, err := st.CreateDependency(ctx, store.NewDependency{
 		TeamID: sc.teamID, ProjectID: sc.projectID,
 		TaskID: blocked.ID, BlockerTaskID: blocker.ID,
-		UntilStatus: "done", SetBlocked: true,
+		UntilStatus: "done", SetBlocked: true, Origin: store.OriginAPI,
 	}); err != nil {
 		t.Fatalf("edge: %v", err)
 	}

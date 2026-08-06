@@ -88,6 +88,20 @@ query, inseparable, so that no caller can forget one. All of it is written insid
 of the patch that triggers it: outside a transaction, the state "the blocker is `done`, the blocked
 task does not know" would become reachable again.
 
+**Two surfaces open an edge, and each owns what it opened** (D47). `block_task` / `unblock_task`
+are the nominal path for an agent. The other is a line in a description, compiled at write time:
+
+```
+#blocked-by @CORE-34 until #done
+```
+
+One `@`, one `until`, alone on its line, outside any code fence. A line **detected but unreadable
+refuses the entire write**, description included — ignoring it would make a typo indistinguishable
+from a task carrying no dependency. What is compiled is the **diff** between the stored body and
+the one being written: a line appearing opens the edge, a line disappearing releases it — and only
+if a line had opened it. The `origin` column carries that ownership, so no description edit ever
+lifts a block an agent decided (`service/blocked_by.go`, `service/blocked_by_sync.go`).
+
 **An edge never crosses a repo** (D42), and it is not the service that guarantees it: the table's
 two composite foreign keys share the same `project_id` column, so a cross-project dependency is
 **inexpressible**, not merely refused. Proven without going through the service in
