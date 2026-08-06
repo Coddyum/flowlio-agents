@@ -32,6 +32,10 @@ import (
 type fakeWorkspace struct {
 	teams map[string]service.Team
 	calls []string
+
+	// gotPinned is the team `ListTeams` was scoped to. That argument is the whole assertion of
+	// part 2: the route used to name no scope at all.
+	gotPinned uuid.UUID
 }
 
 func (f *fakeWorkspace) note(name string) { f.calls = append(f.calls, name) }
@@ -50,8 +54,9 @@ func (f *fakeWorkspace) CreateTeam(context.Context, service.CreateTeamInput) (se
 	return service.Team{}, nil
 }
 
-func (f *fakeWorkspace) ListTeams(context.Context) ([]service.Team, error) {
+func (f *fakeWorkspace) ListTeams(_ context.Context, pinned uuid.UUID) ([]service.Team, error) {
 	f.note("ListTeams")
+	f.gotPinned = pinned
 	return nil, nil
 }
 
@@ -125,6 +130,10 @@ func tokenServer(t *testing.T, rec auth.TokenRecord, svc service.Service) (http.
 	admin := authSvc.AdminOnly
 
 	mux := http.NewServeMux()
+	// The two `/teams` routes resolve NO slug and therefore never reach teamFor: they are absent
+	// from teamForRoutes and covered by their own tests, further down.
+	mux.Handle("POST /teams", admin(http.HandlerFunc(h.CreateTeam)))
+	mux.Handle("GET /teams", admin(http.HandlerFunc(h.ListTeams)))
 	mux.Handle("POST /projects", admin(http.HandlerFunc(h.CreateProject)))
 	mux.Handle("GET /projects", admin(http.HandlerFunc(h.ListProjects)))
 	mux.Handle("POST /tokens", admin(http.HandlerFunc(h.CreateToken)))
@@ -281,5 +290,103 @@ func TestGlobalAdminReachesAnyTeam(t *testing.T) {
 				t.Errorf("the service did not receive %s (calls: %v)", r.svcCall, calls)
 			}
 		})
+	}
+}
+
+// --------------------------------------------------------------------------------------------
+// The two `/teams` routes. Neither resolves a slug, so neither goes through teamFor: their guard
+// is written where they are, and it is these four tests that hold it.
+// --------------------------------------------------------------------------------------------
+
+// callTeams plays a request on a `/teams` route under an admin token carrying teamID.
+func callTeams(t *testing.T, teamID uuid.UUID, method, body string) (int, string, *fakeWorkspace) {
+	t.Helper()
+
+	teams, _, _ := fixtures()
+	svc := &fakeWorkspace{teams: teams}
+	mux, raw := adminServer(t, teamID, svc)
+
+	req := httptest.NewRequest(method, "/teams", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+raw)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	return rec.Code, strings.TrimSpace(rec.Body.String()), svc
+}
+
+// PART 2 — `GET /teams` names a tenancy scope, which it did not before.
+//
+// It was the only read of the repository carrying none: under a shared installation, one admin
+// token enumerated every team of the host, slugs and names included. The assertion is on the
+// ARGUMENT, not on the response: a filter applied to the answer would leave the full list read.
+//
+// MUTATION: put `h.svc.ListTeams(r.Context(), uuid.Nil)` back in the handler, or drop the
+// `pinned != uuid.Nil` branch of the service — this test goes red.
+func TestListTeamsIsScopedToAPinnedAdmin(t *testing.T) {
+	_, mine, _ := fixtures()
+
+	code, body, svc := callTeams(t, mine.ID, http.MethodGet, "")
+
+	if code != http.StatusOK {
+		t.Fatalf("code = %d (body %s), want %d", code, body, http.StatusOK)
+	}
+	if !contains(svc.calls, "ListTeams") {
+		t.Fatalf("the service was not called (calls: %v)", svc.calls)
+	}
+	if svc.gotPinned != mine.ID {
+		t.Errorf("scope passed to ListTeams = %s, want %s — the route enumerates the whole installation",
+			svc.gotPinned, mine.ID)
+	}
+}
+
+// COUNTER-PROOF: the global admin — the only one bootstrapping creates today — keeps its reach.
+// Without this case, a handler passing a random non-nil scope would look correct.
+func TestListTeamsLeavesTheGlobalAdminUnbounded(t *testing.T) {
+	code, body, svc := callTeams(t, uuid.Nil, http.MethodGet, "")
+
+	if code != http.StatusOK {
+		t.Fatalf("code = %d (body %s), want %d", code, body, http.StatusOK)
+	}
+	if svc.gotPinned != uuid.Nil {
+		t.Errorf("scope passed to ListTeams = %s, want the nil UUID — the global admin can no "+
+			"longer administer the installation", svc.gotPinned)
+	}
+}
+
+// PART 1 — creating a team is an act ON THE INSTALLATION, so a pinned admin is refused.
+//
+// The refusal cuts in BEFORE the service: a 403 pronounced after the insert would be an output
+// filter over a team that already exists.
+//
+// MUTATION: remove the `principal.TeamID != uuid.Nil` guard from CreateTeam — this test goes red.
+func TestPinnedAdminCannotCreateATeam(t *testing.T) {
+	_, mine, _ := fixtures()
+
+	code, body, svc := callTeams(t, mine.ID, http.MethodPost, `{"slug":"third","name":"Third"}`)
+
+	if code != http.StatusForbidden {
+		t.Errorf("code = %d, want %d — an admin pinned to %s created a team outside its boundary",
+			code, http.StatusForbidden, mine.Slug)
+	}
+	if body != `{"error":"forbidden"}` {
+		t.Errorf("body = %s, want {\"error\":\"forbidden\"}", body)
+	}
+	if contains(svc.calls, "CreateTeam") {
+		t.Errorf("the service received CreateTeam: the team was created, then the answer refused (calls: %v)",
+			svc.calls)
+	}
+}
+
+// COUNTER-PROOF: the global admin still creates teams. Without it, a guard refusing everybody
+// would pass for correct.
+func TestGlobalAdminStillCreatesATeam(t *testing.T) {
+	code, body, svc := callTeams(t, uuid.Nil, http.MethodPost, `{"slug":"third","name":"Third"}`)
+
+	if code != http.StatusCreated {
+		t.Errorf("code = %d (body %s), want %d: the installation can no longer be administered",
+			code, body, http.StatusCreated)
+	}
+	if !contains(svc.calls, "CreateTeam") {
+		t.Errorf("the service did not receive CreateTeam (calls: %v)", svc.calls)
 	}
 }

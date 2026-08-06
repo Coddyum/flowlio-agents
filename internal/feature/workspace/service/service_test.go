@@ -214,3 +214,92 @@ func TestCreateTokenOnUnknownProject(t *testing.T) {
 		t.Fatalf("error = %v, want ErrNotFound", err)
 	}
 }
+
+// --------------------------------------------------------------------------------------------
+// PART 2 OF FLWL-70 — `ListTeams` carries a tenancy scope.
+//
+// It is the SERVICE that has to be observed here, and not only the handler. A handler test proves
+// the scope is passed on; it says nothing about what is done with it, and a service dropping the
+// argument would leave the handler test green while every team of the installation kept being
+// read. That gap was real: it is what these two tests close.
+// --------------------------------------------------------------------------------------------
+
+// teamStore answers both team reads and records which one the service used.
+type teamStore struct {
+	store.Store
+
+	all    []store.Team
+	byID   map[uuid.UUID]store.Team
+	listed bool
+	gotID  uuid.UUID
+}
+
+func (f *teamStore) ListTeams(context.Context) ([]store.Team, error) {
+	f.listed = true
+	return f.all, nil
+}
+
+func (f *teamStore) TeamByID(_ context.Context, id uuid.UUID) (store.Team, error) {
+	f.gotID = id
+	team, ok := f.byID[id]
+	if !ok {
+		return store.Team{}, store.ErrNotFound
+	}
+	return team, nil
+}
+
+func newTeamStore() (*teamStore, store.Team) {
+	mine := store.Team{ID: uuid.New(), Slug: "mine", Name: "Mine"}
+	other := store.Team{ID: uuid.New(), Slug: "neighbour", Name: "The neighbour"}
+	return &teamStore{
+		all:  []store.Team{mine, other},
+		byID: map[uuid.UUID]store.Team{mine.ID: mine, other.ID: other},
+	}, mine
+}
+
+// A pinned caller reads its own team, THROUGH `TeamByID` — the scope is the `WHERE id = $1` of the
+// query, not a filter applied to a full list that was read anyway.
+//
+// MUTATION: remove the `pinned != uuid.Nil` branch from ListTeams — this test goes red, both on
+// the number of teams returned and on `listed`.
+func TestListTeamsScopesAPinnedCallerToItsOwnTeam(t *testing.T) {
+	st, mine := newTeamStore()
+	svc := New(st)
+
+	teams, err := svc.ListTeams(context.Background(), mine.ID)
+	if err != nil {
+		t.Fatalf("ListTeams: %v", err)
+	}
+
+	if len(teams) != 1 || teams[0].ID != mine.ID {
+		t.Fatalf("teams = %+v, want the single team %s — the caller reads outside its boundary",
+			teams, mine.ID)
+	}
+	if st.gotID != mine.ID {
+		t.Errorf("TeamByID called with %s, want %s", st.gotID, mine.ID)
+	}
+	if st.listed {
+		t.Error("the unscoped ListTeams query was run: the whole installation was read, then filtered")
+	}
+}
+
+// COUNTER-PROOF: an unpinned caller — the global admin, the only shape the database can issue
+// today — still reads the installation. Without this case, a service returning nothing at all
+// would pass the test above.
+func TestListTeamsLeavesAnUnpinnedCallerUnbounded(t *testing.T) {
+	st, _ := newTeamStore()
+	svc := New(st)
+
+	teams, err := svc.ListTeams(context.Background(), uuid.Nil)
+	if err != nil {
+		t.Fatalf("ListTeams: %v", err)
+	}
+
+	if len(teams) != len(st.all) {
+		t.Errorf("teams = %d, want %d: the global admin can no longer administer the installation",
+			len(teams), len(st.all))
+	}
+	if !st.listed {
+		t.Error("the unscoped query was not run for an unpinned caller")
+	}
+}

@@ -179,6 +179,8 @@ func translateStore(err error, op string) error {
 		return fmt.Errorf("task service: %s: %w", op, err)
 	case errors.Is(err, store.ErrConflict):
 		return fmt.Errorf("%w: %s", ErrConflict, op)
+	case errors.Is(err, store.ErrQuotaExceeded):
+		return fmt.Errorf("%w: %s", ErrQuotaExceeded, op)
 	default:
 		return fmt.Errorf("task service: %s: %w", op, err)
 	}

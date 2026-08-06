@@ -268,6 +268,7 @@ type Project struct {
 	NextNumber int64     `json:"next_number"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+	NoteBytes  int64     `json:"note_bytes"`
 }
 
 type ProjectTrust struct {

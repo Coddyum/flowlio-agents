@@ -57,6 +57,12 @@ type fakeStore struct {
 	heldDeps       []store.Dependency
 	releasedByBody []uuid.UUID
 
+	// Note quota. chargedBytes and chargeCalls observe what the service debited; quotaFull makes
+	// the store answer as the query does when the bound is crossed — with a refusal, not a row.
+	chargedBytes int64
+	chargeCalls  int
+	quotaFull    bool
+
 	claimErr error
 	writeErr error
 	noteErr  error
@@ -238,6 +244,20 @@ func (f *fakeStore) AddNote(_ context.Context, _, _ uuid.UUID, _ int64, body str
 	}
 	f.lastNote = body
 	return store.Note{Body: body}, nil
+}
+
+// ChargeNoteBytes records what the service charged, and refuses when the test asks it to.
+//
+// The tally is what proves the charge measures the note the store actually received, and not, say,
+// the whole patch. `quotaFull` reproduces the query's zero-row outcome, which is the only way the
+// real store reports the bound.
+func (f *fakeStore) ChargeNoteBytes(_ context.Context, _, _ uuid.UUID, bytes int64) error {
+	f.chargeCalls++
+	if f.quotaFull {
+		return store.ErrQuotaExceeded
+	}
+	f.chargedBytes += bytes
+	return nil
 }
 
 // ListNotes records the bound it received: that is what proves the service does NOT ask for the

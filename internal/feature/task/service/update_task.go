@@ -119,6 +119,19 @@ func (s *service) UpdateTask(ctx context.Context, in UpdateTaskInput) (Task, err
 			if _, err := tx.AddNote(ctx, in.TeamID, in.ProjectID, in.Number, note); err != nil {
 				return translateStore(err, "update task")
 			}
+			// The quota is charged AFTER the note, inside the same transaction — FLWL-70, part 5.
+			//
+			// After, because AddNote is what proves the task exists and is still active: charging
+			// first would take a write lock on the project row for every request naming a number
+			// that does not exist, which is the shape a mistaken agent produces in bulk.
+			//
+			// Inside, because the two must fail together. A charge outside the transaction spends
+			// quota on a note a later rollback erases; a note outside spends storage the counter
+			// never saw. Either way the counter stops describing the thread, and a counter that
+			// lies is worse than no quota at all.
+			if err := tx.ChargeNoteBytes(ctx, in.TeamID, in.ProjectID, int64(len(note))); err != nil {
+				return translateStore(err, "update task: note quota")
+			}
 		}
 
 		var err error

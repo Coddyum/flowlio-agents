@@ -2,17 +2,20 @@ package store
 
 // SOMMAIRE (lire en premier, sauter directement au bon passage)
 //
-// | Élément         | Résumé                                                        | Ligne |
-// |-----------------|---------------------------------------------------------------|-------|
-// | store.AddNote   | Appends a progress note, through a scoped SELECT                | 26    |
-// | store.ListNotes | Returns the bounded tail of the thread and the total written    | 52    |
-// | toNote          | Projects a generated row onto the domain type                   | 75    |
+// | Élément                | Résumé                                                 | Ligne |
+// |------------------------|--------------------------------------------------------|-------|
+// | store.AddNote          | Appends a progress note, through a scoped SELECT         | 29    |
+// | store.ChargeNoteBytes  | Debits the project quota, or refuses the write           | 56    |
+// | store.ListNotes        | Returns the bounded tail of the thread and the total     | 82    |
+// | toNote                 | Projects a generated row onto the domain type            | 105   |
 //
 // Fin du sommaire.
 // =====================================================================
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 
 	"github.com/Coddyum/flowlio-agents/internal/database"
 	"github.com/google/uuid"
@@ -37,6 +40,33 @@ func (s *store) AddNote(ctx context.Context, teamID, projectID uuid.UUID, number
 	// thread total. Projecting here rather than sharing toNote avoids inventing a common type for
 	// two shapes that have no reason to stay identical.
 	return Note{ID: row.ID, Body: row.BodyMd, CreatedAt: row.CreatedAt}, nil
+}
+
+// ChargeNoteBytes debits the project's note quota by the size of one note, and refuses the debit
+// that would cross ProjectNoteBytesQuota.
+//
+// The size charged is the byte length of the body, measured the same way Postgres measures it in
+// the backfill of migration 000011 — `len()` on a Go string is `octet_length()` on a text column,
+// both counting UTF-8 bytes. Counting runes here and octets there would let the counter drift on
+// every accented character, which is to say on every French note the repository still carries.
+//
+// ZERO ROWS MEANS THE QUOTA, and nothing else: the project identifier comes from the authenticated
+// token, so the row exists. Reporting ErrNotFound here would tell an agent its own project is
+// gone, and send it looking in the wrong place.
+func (s *store) ChargeNoteBytes(ctx context.Context, teamID, projectID uuid.UUID, bytes int64) error {
+	_, err := s.q.ChargeProjectNoteBytes(ctx, database.ChargeProjectNoteBytesParams{
+		TeamID:    teamID,
+		ProjectID: projectID,
+		Bytes:     bytes,
+		Quota:     ProjectNoteBytesQuota,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrQuotaExceeded
+	}
+	if err != nil {
+		return translate(err, "charge note bytes")
+	}
+	return nil
 }
 
 // ListNotes returns the TAIL of a task's thread — at most limit notes — and the total number

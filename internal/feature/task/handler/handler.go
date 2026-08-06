@@ -8,10 +8,10 @@ package handler
 // | New                | Creates the task handler                                    | 54    |
 // | Handler.writeJSON  | Serialises a JSON response                                  | 64    |
 // | Handler.writeError | Answers a domain error without leaking internals            | 92    |
-// | Handler.decodeBody | Decodes a JSON body, rejecting unknown fields               | 114   |
-// | Handler.scope      | Extracts the team + project pair from the request token     | 135   |
-// | Handler.number     | Reads the task number from the path                         | 148   |
-// | errorBody          | The single shape of every error response                    | 161   |
+// | Handler.decodeBody | Decodes a JSON body, rejecting unknown fields               | 122   |
+// | Handler.scope      | Extracts the team + project pair from the request token     | 143   |
+// | Handler.number     | Reads the task number from the path                         | 156   |
+// | errorBody          | The single shape of every error response                    | 169   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -97,6 +97,14 @@ func (h *Handler) writeError(w http.ResponseWriter, err error) {
 		h.writeJSON(w, http.StatusNotFound, errorBody{Error: "not found"})
 	case errors.Is(err, service.ErrConflict):
 		h.writeJSON(w, http.StatusConflict, errorBody{Error: "conflict"})
+	// 507 and not 409: the request is well formed, the state is consistent, and there is no
+	// version of it that would succeed — the project has simply run out of the storage it is
+	// allowed. A 409 reads as "retry", and an agent would. The message names the thread, because
+	// unlike every other refusal of this handler there is no secret to keep: the caller owns the
+	// project whose quota it just filled, and a mute error would send it debugging its own note.
+	case errors.Is(err, service.ErrQuotaExceeded):
+		h.writeJSON(w, http.StatusInsufficientStorage,
+			errorBody{Error: "note thread storage quota reached for this project"})
 	case errors.Is(err, auth.ErrForbidden):
 		h.writeJSON(w, http.StatusForbidden, errorBody{Error: "forbidden"})
 	default:

@@ -170,6 +170,7 @@ CREATE TABLE public.projects (
     next_number bigint DEFAULT 1 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    note_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT projects_key_format CHECK ((key ~ '^[A-Z][A-Z0-9]{1,9}$'::text)),
     CONSTRAINT projects_name_not_blank CHECK ((btrim(name) <> ''::text)),
     CONSTRAINT projects_next_number_positive CHECK ((next_number >= 1))

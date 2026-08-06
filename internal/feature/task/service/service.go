@@ -4,17 +4,17 @@ package service
 //
 // | Élément         | Résumé                                                        | Ligne |
 // |-----------------|---------------------------------------------------------------|-------|
-// | Service         | The contract consumed by the task handler                       | 50    |
-// | service         | Implementation, depending on the store interface                | 78    |
-// | New             | Creates the task service                                        | 83    |
-// | Task            | A task as exposed by the API                                    | 89    |
-// | Note            | A progress note as exposed by the API                           | 102   |
-// | TaskDetail      | A task together with its note thread                            | 112   |
-// | CreateTaskInput | Input for creating a task                                       | 120   |
-// | ListTasksInput  | Criteria for reading the backlog                                | 135   |
-// | UpdateTaskInput | Partial patch of a task, progress note included                 | 148   |
-// | BlockTaskInput  | Opening a blocking edge between two tasks of the project        | 186   |
-// | UnblockTaskInput| Releasing one named edge by hand                                | 200   |
+// | Service         | The contract consumed by the task handler                       | 54    |
+// | service         | Implementation, depending on the store interface                | 82    |
+// | New             | Creates the task service                                        | 87    |
+// | Task            | A task as exposed by the API                                    | 93    |
+// | Note            | A progress note as exposed by the API                           | 106   |
+// | TaskDetail      | A task together with its note thread                            | 116   |
+// | CreateTaskInput | Input for creating a task                                       | 124   |
+// | ListTasksInput  | Criteria for reading the backlog                                | 139   |
+// | UpdateTaskInput | Partial patch of a task, progress note included                 | 152   |
+// | BlockTaskInput  | Opening a blocking edge between two tasks of the project        | 190   |
+// | UnblockTaskInput| Releasing one named edge by hand                                | 204   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -40,6 +40,10 @@ var (
 	ErrInvalidInput = errors.New("task: invalid input")
 	ErrNotFound     = errors.New("task: not found")
 	ErrConflict     = errors.New("task: conflict")
+	// ErrQuotaExceeded reports a project whose note thread has reached its storage bound
+	// (store.ProjectNoteBytesQuota). Its own error, distinct from ErrConflict: the caller did
+	// nothing wrong and retrying identically will never work, so the two must not answer alike.
+	ErrQuotaExceeded = errors.New("task: note quota exceeded")
 )
 
 // Service carries the backlog of one project.

@@ -11,6 +11,59 @@ import (
 	"github.com/google/uuid"
 )
 
+const chargeProjectNoteBytes = `-- name: ChargeProjectNoteBytes :one
+UPDATE projects
+SET note_bytes = note_bytes + $1::bigint
+WHERE id      = $2
+  AND team_id = $3
+  AND note_bytes + $1::bigint <= $4::bigint
+RETURNING note_bytes
+`
+
+type ChargeProjectNoteBytesParams struct {
+	Bytes     int64     `json:"bytes"`
+	ProjectID uuid.UUID `json:"project_id"`
+	TeamID    uuid.UUID `json:"team_id"`
+	Quota     int64     `json:"quota"`
+}
+
+// ChargeProjectNoteBytes debits the note thread's write quota, and REFUSES the debit that would
+// cross the bound. FLWL-70, part 5.
+//
+// WHAT THIS QUERY OVERTURNS. `CreateTaskNote` carries, in so many words, the opposite decision:
+// "the WRITE is NOT bounded". It also named what would reopen the question — "hosted mode, where
+// storage is billed to a third party". That happened: D25 makes hosted THIS engine, co-deployed,
+// one shared installation across paying customers. An agent stuck in a loop no longer fills its
+// own database; it fills a host's, and the host pays for it.
+//
+// The original argument stands and is not contradicted: "an agent writing a lot is an agent in
+// trouble, not an attacker". That is why the bound is HIGH — it does not arbitrate between a
+// verbose agent and a terse one, it stops a loop. A working agent never meets it.
+//
+// THE PREDICATE IS IN THE QUERY, not in the service, and no other shape holds: read then compared
+// in Go, two concurrent notes read the same total and both get through. Here the read, the
+// comparison and the write are the SAME UPDATE, hence serialised by the row lock Postgres takes on
+// the project.
+//
+// ZERO ROWS MEANS THE QUOTA, and nothing else: `project_id` comes from the authenticated token, so
+// the row necessarily exists. The service turns that zero into a refusal, never into "project not
+// found".
+//
+// `note_bytes + @bytes` is repeated in the SET and in the WHERE. Postgres evaluates the WHERE
+// against the row BEFORE the update: without the repetition, the comparison would bear on the old
+// total and let through the very note that crosses the bound.
+func (q *Queries) ChargeProjectNoteBytes(ctx context.Context, arg ChargeProjectNoteBytesParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, chargeProjectNoteBytes,
+		arg.Bytes,
+		arg.ProjectID,
+		arg.TeamID,
+		arg.Quota,
+	)
+	var note_bytes int64
+	err := row.Scan(&note_bytes)
+	return note_bytes, err
+}
+
 const claimNextNumber = `-- name: ClaimNextNumber :one
 UPDATE projects
 SET next_number = next_number + 1
@@ -23,18 +76,18 @@ type ClaimNextNumberParams struct {
 	TeamID uuid.UUID `json:"team_id"`
 }
 
-// ClaimNextNumber réserve le prochain identifiant lisible du projet (FRNT-34).
-// Le UPDATE ... RETURNING sérialise les appels concurrents sur la ligne du projet, et rollback
-// avec sa transaction : aucun trou dans la numérotation.
+// ClaimNextNumber reserves the project's next readable identifier (FRNT-34).
+// The UPDATE ... RETURNING serialises concurrent calls on the project row, and rolls back with its
+// transaction: no gap is ever left in the numbering.
 //
-// CONTRAINTE DE VERROUILLAGE — ne jamais ajouter ici l'écriture d'une colonne de clé (ni une
-// colonne couverte par un index unique). Tant que l'UPDATE ne touche que des colonnes non-clé,
-// Postgres prend un FOR NO KEY UPDATE, compatible avec le FOR KEY SHARE que l'INSERT d'issue
-// pose sur ses DEUX projets parents. Le jour où ce n'est plus vrai, deux agents symétriques
-// (FRNT→CORE et CORE→FRNT) s'interbloquent.
+// LOCKING CONSTRAINT — never add the write of a key column here (nor of a column covered by a
+// unique index). For as long as the UPDATE only touches non-key columns, Postgres takes a
+// FOR NO KEY UPDATE, which is compatible with the FOR KEY SHARE that an issue INSERT puts on BOTH
+// of its parent projects. The day that stops being true, two symmetrical agents (FRNT→CORE and
+// CORE→FRNT) deadlock.
 //
-// `updated_at` n'est volontairement PAS touché : créer une tâche ou une issue n'est pas modifier
-// le projet. L'y écrire ferait de projects.updated_at une « date du dernier objet créé ».
+// `updated_at` is deliberately NOT touched: creating a task or an issue is not modifying the
+// project. Writing it here would turn projects.updated_at into a "date of the last object created".
 func (q *Queries) ClaimNextNumber(ctx context.Context, arg ClaimNextNumberParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, claimNextNumber, arg.ID, arg.TeamID)
 	var claimed_number int64
@@ -45,7 +98,7 @@ func (q *Queries) ClaimNextNumber(ctx context.Context, arg ClaimNextNumberParams
 const createProject = `-- name: CreateProject :one
 INSERT INTO projects (team_id, key, name)
 VALUES ($1, $2, $3)
-RETURNING id, team_id, key, name, next_number, created_at, updated_at
+RETURNING id, team_id, key, name, next_number, created_at, updated_at, note_bytes
 `
 
 type CreateProjectParams struct {
@@ -65,13 +118,14 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 		&i.NextNumber,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NoteBytes,
 	)
 	return i, err
 }
 
 const getProjectByID = `-- name: GetProjectByID :one
 
-SELECT id, team_id, key, name, next_number, created_at, updated_at FROM projects WHERE id = $1 AND team_id = $2
+SELECT id, team_id, key, name, next_number, created_at, updated_at, note_bytes FROM projects WHERE id = $1 AND team_id = $2
 `
 
 type GetProjectByIDParams struct {
@@ -79,7 +133,7 @@ type GetProjectByIDParams struct {
 	TeamID uuid.UUID `json:"team_id"`
 }
 
-// Toute lecture est scopée par team_id : le scope fait partie de la query, pas du handler.
+// Every read is scoped by team_id: the scope belongs to the query, not to the handler.
 func (q *Queries) GetProjectByID(ctx context.Context, arg GetProjectByIDParams) (Project, error) {
 	row := q.db.QueryRowContext(ctx, getProjectByID, arg.ID, arg.TeamID)
 	var i Project
@@ -91,12 +145,13 @@ func (q *Queries) GetProjectByID(ctx context.Context, arg GetProjectByIDParams) 
 		&i.NextNumber,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NoteBytes,
 	)
 	return i, err
 }
 
 const getProjectByKey = `-- name: GetProjectByKey :one
-SELECT id, team_id, key, name, next_number, created_at, updated_at FROM projects WHERE team_id = $1 AND key = $2
+SELECT id, team_id, key, name, next_number, created_at, updated_at, note_bytes FROM projects WHERE team_id = $1 AND key = $2
 `
 
 type GetProjectByKeyParams struct {
@@ -115,12 +170,13 @@ func (q *Queries) GetProjectByKey(ctx context.Context, arg GetProjectByKeyParams
 		&i.NextNumber,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NoteBytes,
 	)
 	return i, err
 }
 
 const listProjectsByTeam = `-- name: ListProjectsByTeam :many
-SELECT id, team_id, key, name, next_number, created_at, updated_at FROM projects WHERE team_id = $1 ORDER BY key
+SELECT id, team_id, key, name, next_number, created_at, updated_at, note_bytes FROM projects WHERE team_id = $1 ORDER BY key
 `
 
 func (q *Queries) ListProjectsByTeam(ctx context.Context, teamID uuid.UUID) ([]Project, error) {
@@ -140,6 +196,7 @@ func (q *Queries) ListProjectsByTeam(ctx context.Context, teamID uuid.UUID) ([]P
 			&i.NextNumber,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.NoteBytes,
 		); err != nil {
 			return nil, err
 		}

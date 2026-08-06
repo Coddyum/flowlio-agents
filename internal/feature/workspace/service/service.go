@@ -5,18 +5,18 @@ package service
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
 // | Service            | The contract consumed by the workspace handler                | 43    |
-// | service            | Implementation, depending on the store interface             | 71    |
-// | New                | Creates the workspace service                                | 76    |
-// | CreateTeamInput    | Input for creating a team                                    | 82    |
-// | Team               | A team as exposed by the API                                 | 88    |
-// | CreateProjectInput | Input for creating a project                                 | 97    |
-// | Project            | A project as exposed by the API                              | 104   |
-// | CreateTokenInput   | Input for issuing an agent token                             | 112   |
-// | CreatedToken       | A freshly created token: the one chance to see the secret    | 120   |
-// | TokenInfo          | A listed token, with neither secret nor hash                 | 129   |
-// | TrustPairInput     | A pair of projects named by their two keys                   | 145   |
-// | TrustDecision      | What a write on the graph actually changed                   | 156   |
-// | TrustEdge          | An edge of the graph as exposed by the API                   | 163   |
+// | service            | Implementation, depending on the store interface             | 74    |
+// | New                | Creates the workspace service                                | 79    |
+// | CreateTeamInput    | Input for creating a team                                    | 85    |
+// | Team               | A team as exposed by the API                                 | 91    |
+// | CreateProjectInput | Input for creating a project                                 | 100   |
+// | Project            | A project as exposed by the API                              | 107   |
+// | CreateTokenInput   | Input for issuing an agent token                             | 115   |
+// | CreatedToken       | A freshly created token: the one chance to see the secret    | 123   |
+// | TokenInfo          | A listed token, with neither secret nor hash                 | 132   |
+// | TrustPairInput     | A pair of projects named by their two keys                   | 148   |
+// | TrustDecision      | What a write on the graph actually changed                   | 159   |
+// | TrustEdge          | An edge of the graph as exposed by the API                   | 166   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -42,7 +42,9 @@ var (
 // Service carries the administration of tenancy: teams, projects, agent tokens.
 type Service interface {
 	CreateTeam(ctx context.Context, in CreateTeamInput) (Team, error)
-	ListTeams(ctx context.Context) ([]Team, error)
+	// ListTeams enumerates the teams visible to a principal. `pinned` is that principal's own
+	// team, or uuid.Nil for an admin bound to none — see the note on the implementation.
+	ListTeams(ctx context.Context, pinned uuid.UUID) ([]Team, error)
 	TeamBySlug(ctx context.Context, slug string) (Team, error)
 
 	CreateProject(ctx context.Context, in CreateProjectInput) (Project, error)
