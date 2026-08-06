@@ -7,12 +7,12 @@ package main
 // | mcpServer.listTasks     | Backlog of the current project                          | 40    |
 // | mcpServer.createTask    | Opens a task and returns its key                        | 74    |
 // | mcpServer.updateTask    | Edits a task, notes it, or archives it                  | 113   |
-// | mcpServer.blockTask     | Records that a task waits on another of the same project| 179   |
-// | mcpServer.unblockTask   | Lifts one recorded dependency by hand                   | 212   |
-// | mcpServer.numberFromKey | Resolves a readable key within the token's project      | 244   |
-// | mcpServer.taskPath      | Composes the API path of a task                         | 267   |
-// | mcpServer.taskRef       | Composes the readable reference of a number             | 272   |
-// | mcpServer.withRefs      | Adds its reference to every task of a listing           | 280   |
+// | mcpServer.blockTask     | Records that a task waits on another of the same project| 188   |
+// | mcpServer.unblockTask   | Lifts one recorded dependency by hand                   | 221   |
+// | mcpServer.numberFromKey | Resolves a readable key within the token's project      | 253   |
+// | mcpServer.taskPath      | Composes the API path of a task                         | 276   |
+// | mcpServer.taskRef       | Composes the readable reference of a number             | 281   |
+// | mcpServer.withRefs      | Adds its reference to every task of a listing           | 289   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -168,7 +168,16 @@ func (s *mcpServer) updateTask(ctx context.Context, args json.RawMessage) (any, 
 	if err := s.api.Do(ctx, http.MethodPatch, s.taskPath(number), payload, &task); err != nil {
 		return nil, err
 	}
-	return writeResult("task", s.taskRef(task.Number), task), nil
+
+	// THE WRITE-SIDE MECHANISM OF M5, and it is one field on a call the agent was making anyway.
+	// Closing a task is the moment its reasoning is still in context and about to be thrown away.
+	// Why it is a question and not a requirement, and why it rides the RESPONSE rather than the
+	// tool description: mcp_memory_tools.go, above closingQuestion.
+	result := writeResult("task", s.taskRef(task.Number), task)
+	if closesTask(in.Status, in.Archive) {
+		result["remember"] = closingQuestion
+	}
+	return result, nil
 }
 
 // blockTask records that a task waits on another task of the SAME project.

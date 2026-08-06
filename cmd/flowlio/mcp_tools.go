@@ -8,14 +8,14 @@ package main
 // | object          | Builds a JSON object schema                                    | 57    |
 // | prop            | Builds a JSON schema property                                  | 69    |
 // | enumProp        | Builds a property constrained to a set of values                | 78    |
-// | tools           | The ten exposed tools, and nothing more                         | 88    |
-// | toolsListResult | The tools/list response                                        | 238   |
+// | tools           | The twelve exposed tools, and nothing more                      | 88    |
+// | toolsListResult | The tools/list response                                        | 281   |
 //
 // Fin du sommaire.
 // =====================================================================
 //
 // The MCP surface is a BUDGET, not a wish list: every tool is re-injected into the agent's context
-// on EVERY turn. Ten tools, short descriptions, no decorative parameter. Anything added here is
+// on EVERY turn. Twelve tools, short descriptions, no decorative parameter. Anything added here is
 // paid for by every session, forever.
 //
 // What these tools deliberately do NOT expose:
@@ -83,8 +83,8 @@ func enumProp(values []string, description string) map[string]any {
 	}
 }
 
-// tools is the exposed surface. Ten tools: the eight settled in docs/DESIGN-M3.md, plus the two
-// that carry task dependencies.
+// tools is the exposed surface. Twelve tools: the eight settled in docs/DESIGN-M3.md, the two
+// that carry task dependencies, and the two of the repository memory (M5).
 func tools() []toolDef {
 	return []toolDef{
 		{
@@ -230,6 +230,49 @@ func tools() []toolDef {
 				"parameters. Call it at the start of a session. The reference state stays " +
 				"list_issues and list_tasks: this call is a starting point, not a full inventory.",
 			InputSchema: object(map[string]any{}),
+		},
+		{
+			Name: "remember",
+			Description: "Writes one entry to this repository's memory: a decision and what it " +
+				"replaces, something learned that will bite again, or where the work stands. " +
+				"An entry is never edited and never deleted — a newer one supersedes it.",
+			InputSchema: object(map[string]any{
+				"slug": prop("string",
+					"Stable identifier other entries and commits cite this one by, for example "+
+						"D25 or fts-english. Letters, digits, dashes and underscores."),
+				"kind": enumProp(memoryKinds,
+					"decision: why it is like this. learning: what will bite again — a resolved "+
+						"blocker is one. state: where the work stands now."),
+				"title": prop("string", "One line, readable on its own in the index."),
+				"body": prop("string",
+					"The reasoning. For a decision, say what was rejected and why, not only what was chosen."),
+				"supersedes": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+					"description": "Slugs this entry retires. Use it whenever you write down " +
+						"something that changes an earlier decision: a registry that only ever " +
+						"appends leaves its reader guessing what still holds.",
+				},
+			}, "slug", "kind", "title", "body"),
+		},
+		{
+			Name: "recall",
+			Description: "Reads this repository's memory. With query, searches full text; " +
+				"without, lists most recent first. Superseded entries are left out unless you " +
+				"ask for the history.",
+			InputSchema: object(map[string]any{
+				"query": prop("string",
+					"Words to search for. Quoted phrases, OR and a leading dash for negation all work."),
+				"kind": enumProp(memoryKinds, "Only return entries of this kind."),
+				"history": prop("boolean",
+					"Include superseded entries. Excluded by default: you want what is true now."),
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum number of entries (default 30, maximum 200).",
+					"minimum":     1,
+					"maximum":     200,
+				},
+			}),
 		},
 	}
 }

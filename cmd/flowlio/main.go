@@ -6,8 +6,8 @@ package main
 // |-----------|---------------------------------------------------------------------|-------|
 // | main      | Entry point of the CLI: dispatch and exit code                        | 34    |
 // | run       | Routes the requested command to its implementation                    | 47    |
-// | usage     | Prints the help                                                       | 86    |
-// | newClient | Builds the API client from the local credentials or from the env      | 131   |
+// | usage     | Prints the help                                                       | 88    |
+// | newClient | Builds the API client from the local credentials or from the env      | 139   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -67,6 +67,8 @@ func run(args []string) error {
 		return runTrust(ctx, args[1:])
 	case "task":
 		return runTask(ctx, args[1:])
+	case "memory":
+		return runMemory(ctx, args[1:])
 	case "watch":
 		return runWatch(ctx, args[1:])
 	case "show":
@@ -109,6 +111,12 @@ Usage:
   flowlio task status <KEY> <status>   todo | in_progress | blocked | done
   flowlio task note <KEY> <text>       Appends a progress note
   flowlio task archive <KEY>           Drops the task out of the active backlog
+
+  flowlio memory list [--kind k]       What this repository remembers, newest first
+  flowlio memory search <words>        Full-text search over the same entries
+  flowlio memory show <slug>           One entry, whole, with what it replaced
+  flowlio memory write <slug> <kind> <title> <body> [--supersedes a,b]
+      decision | learning | state. An entry is never edited: a newer one supersedes it.
 
   flowlio watch [--follow]             The team's debt queue — empty means all is well
   flowlio show <REF>                   Detail of one row of the queue (e.g. CORE-41)

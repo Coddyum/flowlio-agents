@@ -141,6 +141,10 @@ func TestToolSurfaceIsSmallAndWellFormed(t *testing.T) {
 	expected := []string{
 		"list_tasks", "get", "create_task", "update_task", "block_task", "unblock_task",
 		"create_issue", "list_issues", "answer_issue", "check_inbox",
+		// The memory pair comes LAST, and the order is checked because it is the order an agent
+		// discovers the product in: the backlog, then the sibling channel, then what the
+		// repository already knows.
+		"remember", "recall",
 	}
 
 	defs := tools()
@@ -296,9 +300,18 @@ func TestWriteToolsShareOneReturnShape(t *testing.T) {
 			if _, found := result[tc.wantKey]; !found {
 				t.Errorf("object missing under key %q: %+v", tc.wantKey, result)
 			}
-			if len(result) != 2 {
-				t.Errorf("%d fields in the envelope, expected exactly 2 (ref + %s): %+v",
-					len(result), tc.wantKey, result)
+			// The envelope is {ref, object} and ONE optional field beyond it: `remember`, which
+			// update_task attaches when the patch closes a task (M5). It is allowed here by NAME
+			// rather than by relaxing the count, so a third envelope field added tomorrow still
+			// fails this test — the guarantee is "the reference is always in the same place", and
+			// it does not survive a free-for-all.
+			for key := range result {
+				if key == "ref" || key == tc.wantKey || key == "remember" {
+					continue
+				}
+				t.Errorf("unexpected envelope field %q: %+v — an agent reads the reference under "+
+					"\"ref\" and the object under its kind, and nothing else is part of the contract",
+					key, result)
 			}
 		})
 	}

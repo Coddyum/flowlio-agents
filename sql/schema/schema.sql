@@ -40,6 +40,17 @@ CREATE TYPE public.issue_state AS ENUM (
 
 
 --
+-- Name: memory_kind; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.memory_kind AS ENUM (
+    'decision',
+    'learning',
+    'state'
+);
+
+
+--
 -- Name: task_priority; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -146,6 +157,30 @@ CREATE TABLE public.issues (
 
 
 --
+-- Name: memories; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.memories (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    team_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    slug text NOT NULL,
+    kind public.memory_kind NOT NULL,
+    title text NOT NULL,
+    body_md text NOT NULL,
+    superseded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search tsvector GENERATED ALWAYS AS ((setweight(to_tsvector('english'::regconfig, title), 'A'::"char") || setweight(to_tsvector('english'::regconfig, body_md), 'B'::"char"))) STORED,
+    CONSTRAINT memories_body_not_blank CHECK ((btrim(body_md) <> ''::text)),
+    CONSTRAINT memories_no_self_supersede CHECK (((superseded_by IS NULL) OR (superseded_by <> id))),
+    CONSTRAINT memories_slug_shape CHECK ((slug ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT memories_title_length CHECK ((char_length(title) <= 200)),
+    CONSTRAINT memories_title_not_blank CHECK ((btrim(title) <> ''::text))
+);
+
+
+--
 -- Name: project_trust; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -171,6 +206,7 @@ CREATE TABLE public.projects (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     note_bytes bigint DEFAULT 0 NOT NULL,
+    memory_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT projects_key_format CHECK ((key ~ '^[A-Z][A-Z0-9]{1,9}$'::text)),
     CONSTRAINT projects_name_not_blank CHECK ((btrim(name) <> ''::text)),
     CONSTRAINT projects_next_number_positive CHECK ((next_number >= 1))
@@ -322,6 +358,30 @@ ALTER TABLE ONLY public.issues
 
 ALTER TABLE ONLY public.issues
     ADD CONSTRAINT issues_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: memories memories_id_project_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.memories
+    ADD CONSTRAINT memories_id_project_unique UNIQUE (id, project_id);
+
+
+--
+-- Name: memories memories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.memories
+    ADD CONSTRAINT memories_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: memories memories_slug_unique_per_project; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.memories
+    ADD CONSTRAINT memories_slug_unique_per_project UNIQUE (project_id, slug);
 
 
 --
@@ -501,6 +561,20 @@ CREATE INDEX issues_team_state_idx ON public.issues USING btree (team_id, state,
 
 
 --
+-- Name: memories_project_live_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX memories_project_live_idx ON public.memories USING btree (project_id, kind, created_at DESC) WHERE (superseded_by IS NULL);
+
+
+--
+-- Name: memories_search_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX memories_search_idx ON public.memories USING gin (search);
+
+
+--
 -- Name: project_trust_high_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -625,6 +699,22 @@ ALTER TABLE ONLY public.issues
 
 ALTER TABLE ONLY public.issues
     ADD CONSTRAINT issues_project_fk FOREIGN KEY (project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
+
+
+--
+-- Name: memories memories_project_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.memories
+    ADD CONSTRAINT memories_project_fk FOREIGN KEY (project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
+
+
+--
+-- Name: memories memories_supersedes_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.memories
+    ADD CONSTRAINT memories_supersedes_fk FOREIGN KEY (superseded_by, project_id) REFERENCES public.memories(id, project_id);
 
 
 --

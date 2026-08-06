@@ -59,6 +59,7 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/database"
 	"github.com/Coddyum/flowlio-agents/internal/feature/inbox"
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue"
+	"github.com/Coddyum/flowlio-agents/internal/feature/memory"
 	"github.com/Coddyum/flowlio-agents/internal/feature/overview"
 	"github.com/Coddyum/flowlio-agents/internal/feature/ref"
 	"github.com/Coddyum/flowlio-agents/internal/feature/task"
@@ -108,7 +109,7 @@ type surface struct {
 	admin   expect
 }
 
-// matrix enumerates the seven surfaces representative of the six modules.
+// matrix enumerates the eight surfaces representative of the seven modules.
 //
 // `workspace` carries TWO of them because its scope is mixed, and "partial" is not a status:
 // `/projects` is open to any authenticated token, `/teams` is reserved to the admin. A single
@@ -120,6 +121,10 @@ var matrix = []surface{
 	{issue.Key, "/", allowed, deniedByModule},
 	{inbox.Key, "/", allowed, deniedByModule},
 	{overview.Key, "/?team={team}", deniedByAuth, allowed},
+	// `memory` is project-scoped in BOTH directions, writes included: it is the one module whose
+	// content is a repository's own reasoning, and an admin reading it is the third party M5
+	// refused. The positive control is a real read against Postgres, empty but scoped.
+	{memory.Key, "/", allowed, deniedByModule},
 	// `ref` cites a CONCRETE reference, and the fixture lays down task CORE-1 for it. A
 	// non-existent reference would yield 404: the cell would lose its positive control, and a
 	// scope rejecting everybody would still pass it.
@@ -185,7 +190,7 @@ func newFixture(t *testing.T) (*sql.DB, fixture) {
 	return db, f
 }
 
-// routers mounts the six modules with their real stores, on the auth service of the given token.
+// routers mounts the seven modules with their real stores, on the auth service of the given token.
 //
 // The `authtest.Store` double knows only one token: every principal therefore has its own set of
 // modules. That is slower than a single mounting, and it is what guarantees a case cannot present
@@ -207,6 +212,7 @@ func routers(t *testing.T, db *sql.DB, tok authtest.Token) map[string]http.Handl
 		issue.NewModule(cfg),
 		inbox.NewModule(cfg),
 		overview.NewModule(cfg),
+		memory.NewModule(cfg),
 		ref.NewModule(cfg),
 	} {
 		// The registry is filled AS IN PRODUCTION: `ref` composes task and issue through it, and a

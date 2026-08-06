@@ -98,6 +98,49 @@ func (ns NullIssueState) Value() (driver.Value, error) {
 	return string(ns.IssueState), nil
 }
 
+type MemoryKind string
+
+const (
+	MemoryKindDecision MemoryKind = "decision"
+	MemoryKindLearning MemoryKind = "learning"
+	MemoryKindState    MemoryKind = "state"
+)
+
+func (e *MemoryKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = MemoryKind(s)
+	case string:
+		*e = MemoryKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for MemoryKind: %T", src)
+	}
+	return nil
+}
+
+type NullMemoryKind struct {
+	MemoryKind MemoryKind `json:"memory_kind"`
+	Valid      bool       `json:"valid"` // Valid is true if MemoryKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullMemoryKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.MemoryKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.MemoryKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullMemoryKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.MemoryKind), nil
+}
+
 type TaskPriority string
 
 const (
@@ -260,15 +303,30 @@ type IssueMessage struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
+type Memory struct {
+	ID           uuid.UUID     `json:"id"`
+	TeamID       uuid.UUID     `json:"team_id"`
+	ProjectID    uuid.UUID     `json:"project_id"`
+	Slug         string        `json:"slug"`
+	Kind         MemoryKind    `json:"kind"`
+	Title        string        `json:"title"`
+	BodyMd       string        `json:"body_md"`
+	SupersededBy uuid.NullUUID `json:"superseded_by"`
+	CreatedAt    time.Time     `json:"created_at"`
+	UpdatedAt    time.Time     `json:"updated_at"`
+	Search       interface{}   `json:"search"`
+}
+
 type Project struct {
-	ID         uuid.UUID `json:"id"`
-	TeamID     uuid.UUID `json:"team_id"`
-	Key        string    `json:"key"`
-	Name       string    `json:"name"`
-	NextNumber int64     `json:"next_number"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	NoteBytes  int64     `json:"note_bytes"`
+	ID          uuid.UUID `json:"id"`
+	TeamID      uuid.UUID `json:"team_id"`
+	Key         string    `json:"key"`
+	Name        string    `json:"name"`
+	NextNumber  int64     `json:"next_number"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	NoteBytes   int64     `json:"note_bytes"`
+	MemoryBytes int64     `json:"memory_bytes"`
 }
 
 type ProjectTrust struct {

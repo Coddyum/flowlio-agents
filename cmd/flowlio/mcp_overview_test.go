@@ -122,6 +122,11 @@ func TestMCPToolSurfaceIsClosed(t *testing.T) {
 		"list_issues":  true,
 		"answer_issue": true,
 		"check_inbox":  true,
+		// M5 (FLWL-7). Two, and the pair is the smallest that covers writing, reading, searching
+		// and retiring. The index is deliberately NOT among them: it rides the handshake, so
+		// reading the memory is not a decision the agent gets to skip.
+		"remember": true,
+		"recall":   true,
 	}
 
 	declared := tools()

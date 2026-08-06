@@ -4,11 +4,11 @@ package main
 //
 // | Élément        | Résumé                                                         | Ligne |
 // |----------------|----------------------------------------------------------------|-------|
-// | main           | Loads config, wires infra, mounts the modules, serves the API    | 53    |
-// | buildModules   | Instantiates the feature modules — the single place to add one   | 125   |
-// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 148   |
-// | bootstrapLocal | Issues the admin token on the very first local start             | 180   |
-// | apiURL         | Composes the URL a client dials from the listen address          | 213   |
+// | main           | Loads config, wires infra, mounts the modules, serves the API    | 54    |
+// | buildModules   | Instantiates the feature modules — the single place to add one   | 126   |
+// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 150   |
+// | bootstrapLocal | Issues the admin token on the very first local start             | 182   |
+// | apiURL         | Composes the URL a client dials from the listen address          | 215   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -34,6 +34,7 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/database"
 	"github.com/Coddyum/flowlio-agents/internal/feature/inbox"
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue"
+	"github.com/Coddyum/flowlio-agents/internal/feature/memory"
 	"github.com/Coddyum/flowlio-agents/internal/feature/overview"
 	"github.com/Coddyum/flowlio-agents/internal/feature/ref"
 	"github.com/Coddyum/flowlio-agents/internal/feature/task"
@@ -129,6 +130,7 @@ func buildModules(cfg module.ModuleConfig) []module.Module {
 		issue.NewModule(cfg),
 		inbox.NewModule(cfg),
 		overview.NewModule(cfg),
+		memory.NewModule(cfg),
 		// `ref` consumes task and issue through the registry, so it must be able to find them —
 		// but NOT at this point. Every module here is built before any of them is registered;
 		// `ref` resolves its peers at request time, which is why its position in this slice does

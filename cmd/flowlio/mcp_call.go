@@ -7,10 +7,10 @@ package main
 // | callParams         | Body of a tools/call call                                    | 35    |
 // | mcpServer.callTool | Runs a tool and wraps its result                             | 45    |
 // | mcpServer.invoke   | Routes to the implementation of the requested tool           | 68    |
-// | writeResult        | Wraps a write return in the {ref, object} shape              | 101   |
-// | textResult         | Wraps a tool result for the MCP client                       | 116   |
-// | errText            | Wraps a tool error so the agent can read it                  | 132   |
-// | parseDeadline      | Reads an RFC 3339 deadline, absent when the string is empty  | 153   |
+// | writeResult        | Wraps a write return in the {ref, object} shape              | 105   |
+// | textResult         | Wraps a tool result for the MCP client                       | 120   |
+// | errText            | Wraps a tool error so the agent can read it                  | 136   |
+// | parseDeadline      | Reads an RFC 3339 deadline, absent when the string is empty  | 157   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -87,6 +87,10 @@ func (s *mcpServer) invoke(ctx context.Context, name string, args json.RawMessag
 		return s.answerIssue(ctx, args)
 	case "check_inbox":
 		return s.checkInbox(ctx, args)
+	case "remember":
+		return s.remember(ctx, args)
+	case "recall":
+		return s.recall(ctx, args)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}

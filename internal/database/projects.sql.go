@@ -98,7 +98,7 @@ func (q *Queries) ClaimNextNumber(ctx context.Context, arg ClaimNextNumberParams
 const createProject = `-- name: CreateProject :one
 INSERT INTO projects (team_id, key, name)
 VALUES ($1, $2, $3)
-RETURNING id, team_id, key, name, next_number, created_at, updated_at, note_bytes
+RETURNING id, team_id, key, name, next_number, created_at, updated_at, note_bytes, memory_bytes
 `
 
 type CreateProjectParams struct {
@@ -119,13 +119,14 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.NoteBytes,
+		&i.MemoryBytes,
 	)
 	return i, err
 }
 
 const getProjectByID = `-- name: GetProjectByID :one
 
-SELECT id, team_id, key, name, next_number, created_at, updated_at, note_bytes FROM projects WHERE id = $1 AND team_id = $2
+SELECT id, team_id, key, name, next_number, created_at, updated_at, note_bytes, memory_bytes FROM projects WHERE id = $1 AND team_id = $2
 `
 
 type GetProjectByIDParams struct {
@@ -146,12 +147,13 @@ func (q *Queries) GetProjectByID(ctx context.Context, arg GetProjectByIDParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.NoteBytes,
+		&i.MemoryBytes,
 	)
 	return i, err
 }
 
 const getProjectByKey = `-- name: GetProjectByKey :one
-SELECT id, team_id, key, name, next_number, created_at, updated_at, note_bytes FROM projects WHERE team_id = $1 AND key = $2
+SELECT id, team_id, key, name, next_number, created_at, updated_at, note_bytes, memory_bytes FROM projects WHERE team_id = $1 AND key = $2
 `
 
 type GetProjectByKeyParams struct {
@@ -171,12 +173,13 @@ func (q *Queries) GetProjectByKey(ctx context.Context, arg GetProjectByKeyParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.NoteBytes,
+		&i.MemoryBytes,
 	)
 	return i, err
 }
 
 const listProjectsByTeam = `-- name: ListProjectsByTeam :many
-SELECT id, team_id, key, name, next_number, created_at, updated_at, note_bytes FROM projects WHERE team_id = $1 ORDER BY key
+SELECT id, team_id, key, name, next_number, created_at, updated_at, note_bytes, memory_bytes FROM projects WHERE team_id = $1 ORDER BY key
 `
 
 func (q *Queries) ListProjectsByTeam(ctx context.Context, teamID uuid.UUID) ([]Project, error) {
@@ -197,6 +200,7 @@ func (q *Queries) ListProjectsByTeam(ctx context.Context, teamID uuid.UUID) ([]P
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.NoteBytes,
+			&i.MemoryBytes,
 		); err != nil {
 			return nil, err
 		}

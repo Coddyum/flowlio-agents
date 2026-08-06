@@ -4,13 +4,13 @@ package main
 //
 // | Élément                | Résumé                                                    | Ligne |
 // |------------------------|-----------------------------------------------------------|-------|
-// | mcpServer              | MCP server state: API client and the token's project       | 53    |
-// | runMCP                 | Starts the MCP server on stdio                             | 69    |
-// | mcpServer.serve        | Message read loop, one JSON line per message               | 103   |
-// | mcpServer.dispatch     | Routes an MCP method, and survives a tool panic            | 157   |
-// | mcpServer.initialize   | Answers the MCP handshake                                  | 193   |
-// | mcpServer.instructions | Tells the agent where it works, before its first message   | 212   |
-// | mcpServer.siblingKeys  | Resolves the other projects of the team                    | 239   |
+// | mcpServer              | MCP server state: API client and the token's project       | 54    |
+// | runMCP                 | Starts the MCP server on stdio                             | 78    |
+// | mcpServer.serve        | Message read loop, one JSON line per message               | 113   |
+// | mcpServer.dispatch     | Routes an MCP method, and survives a tool panic            | 167   |
+// | mcpServer.initialize   | Answers the MCP handshake                                  | 203   |
+// | mcpServer.instructions | Tells the agent where it works, before its first message   | 222   |
+// | mcpServer.siblingKeys  | Resolves the other projects of the team                    | 268   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -34,6 +34,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	memoryservice "github.com/Coddyum/flowlio-agents/internal/feature/memory/service"
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
 	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
@@ -59,6 +60,14 @@ type mcpServer struct {
 	// initialisation instructions: without it, an agent would not know who it may address a
 	// question to.
 	siblings []string
+	// memory is the index of what this repository remembers, resolved at startup and injected into
+	// the instructions.
+	//
+	// THIS IS THE READ-SIDE MECHANISM OF M5, AND IT IS THE WHOLE OF IT. Asking an agent to consult
+	// a memory in a tool description makes reading optional, and optional is how the reference
+	// system's least-hooked register ended up empty. An agent cannot start a session without its
+	// instructions, so the index costs no turn and no decision: it is simply already there.
+	memory []memoryservice.IndexLine
 }
 
 // runMCP starts the MCP server on stdio.
@@ -91,6 +100,7 @@ func runMCP(ctx context.Context, _ []string) error {
 		teamSlug:   identity.TeamSlug,
 	}
 	srv.siblings = srv.siblingKeys(ctx)
+	srv.memory = srv.memoryIndex(ctx)
 
 	return srv.serve(ctx, os.Stdin)
 }
@@ -226,6 +236,25 @@ func (s *mcpServer) instructions() string {
 	// paid once per session, and it is the parameter of no tool. Nobody can therefore switch it
 	// off from a call. Model detail: mcp_untrusted.go.
 	b.WriteString(framingRule + "\n")
+
+	// The memory index goes BEFORE check_inbox, and the order is the message: what this repository
+	// already decided is context for reading the backlog, not a footnote to it. An agent that reads
+	// its tasks first has already started forming a plan the memory may contradict.
+	//
+	// Titles only. The index is paid on every session; a body here would make it the memory itself,
+	// and there would be nothing left to read on demand.
+	if len(s.memory) > 0 {
+		b.WriteString("\nWhat this repository remembers — read with recall <slug> before deciding " +
+			"anything it covers:\n")
+		for _, line := range s.memory {
+			fmt.Fprintf(&b, "  %s (%s): %s\n", line.Slug, line.Kind, line.Title)
+		}
+		b.WriteString("Anything you settle or learn goes back with remember; a decision that " +
+			"changes an earlier one names it in supersedes.\n")
+	} else {
+		b.WriteString("\nThis repository has remembered nothing yet. When you settle something or " +
+			"learn what will bite again, write it with remember.\n")
+	}
 
 	b.WriteString("Start with check_inbox: it says what awaits you and what you had left in progress.")
 	return b.String()
