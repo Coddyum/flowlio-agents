@@ -21,6 +21,8 @@ func (s *emptyStore) CreateAdminToken(_ context.Context, _, _, _ string) error {
 	return nil
 }
 
+func (s *emptyStore) RevokeAdminTokens(context.Context) (int64, error) { return 0, nil }
+
 // TestBootstrapLocalNeverPrintsTheSecret is the guarantee that keeps a live admin credential out of
 // `docker logs`, where it would be durable and readable by anything that reaches the daemon.
 //
@@ -80,6 +82,8 @@ func (s *populatedStore) CreateAdminToken(_ context.Context, _, _, _ string) err
 	s.created = true
 	return nil
 }
+
+func (s *populatedStore) RevokeAdminTokens(context.Context) (int64, error) { return 3, nil }
 
 // TestBootstrapLocalIsSilentAfterTheFirstRun: a container restarts far more often than an instance
 // is created. A second start must issue nothing and say nothing, or the credentials file of a live

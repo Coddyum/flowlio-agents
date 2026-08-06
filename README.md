@@ -117,6 +117,19 @@ end up listening on both — the loopback binding would still be there, quietly 
 Publishing Postgres the same way is a worse idea; if you need it remotely, tunnel it over SSH
 instead.
 
+### If you lose the admin token
+
+The server keeps a hash of it and nothing else, and the first run issues a token only when the
+database holds none — so a deleted `credentials.json` locks you out of your own instance. Rotate it:
+
+```bash
+docker compose run --rm api rotate-admin   # or: ./api rotate-admin, outside Docker
+```
+
+Every live admin token is revoked and a new one is written to `credentials.json`, never printed.
+**Project tokens are untouched**: your repositories keep working. What authorises the rotation is
+being able to start this process — the same proof the first run already accepts.
+
 ### Without Docker
 
 ```bash

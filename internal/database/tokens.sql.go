@@ -94,9 +94,9 @@ const getTokenByPrefix = `-- name: GetTokenByPrefix :one
 SELECT id, team_id, project_id, name, prefix, secret_hash, created_at, last_used_at, revoked_at, scope FROM tokens WHERE prefix = $1
 `
 
-// GetTokenByPrefix ne filtre ni sur revoked_at ni sur le secret : le service vérifie les deux
-// en temps constant, pour que « préfixe inconnu », « secret faux » et « token révoqué » soient
-// indiscernables de l'extérieur.
+// GetTokenByPrefix filters neither on revoked_at nor on the secret: the service checks both in
+// constant time, so that "unknown prefix", "wrong secret" and "revoked token" are indistinguishable
+// from the outside.
 func (q *Queries) GetTokenByPrefix(ctx context.Context, prefix string) (Token, error) {
 	row := q.db.QueryRowContext(ctx, getTokenByPrefix, prefix)
 	var i Token
@@ -158,6 +158,30 @@ func (q *Queries) ListProjectTokens(ctx context.Context, arg ListProjectTokensPa
 		return nil, err
 	}
 	return items, nil
+}
+
+const revokeAdminTokens = `-- name: RevokeAdminTokens :execrows
+UPDATE tokens
+SET revoked_at = now()
+WHERE scope = 'admin' AND revoked_at IS NULL
+`
+
+// RevokeAdminTokens revokes EVERY live administration token at once, which is the first half of a
+// rotation.
+//
+// Revoking is what makes it a rotation rather than a second key cut for the same lock: the token
+// being replaced is, by hypothesis, the one that was lost — leaving it live would leave on the
+// installation a credential nobody controls any more.
+//
+// No identifier is named, and none could be: the server only ever kept a hash, so whoever runs the
+// rotation has no way to designate the token they are replacing. That is the whole reason this
+// query exists.
+func (q *Queries) RevokeAdminTokens(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeAdminTokens)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const revokeProjectToken = `-- name: RevokeProjectToken :one

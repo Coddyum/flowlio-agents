@@ -4,10 +4,11 @@ package main
 //
 // | Élément        | Résumé                                                         | Ligne |
 // |----------------|----------------------------------------------------------------|-------|
-// | main           | Loads config, wires infra, mounts the modules, serves the API    | 52    |
-// | buildModules   | Instantiates the feature modules — the single place to add one   | 113   |
-// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 136   |
-// | bootstrapLocal | Issues the admin token on the very first local start             | 168   |
+// | main           | Loads config, wires infra, mounts the modules, serves the API    | 53    |
+// | buildModules   | Instantiates the feature modules — the single place to add one   | 125   |
+// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 148   |
+// | bootstrapLocal | Issues the admin token on the very first local start             | 180   |
+// | apiURL         | Composes the URL a client dials from the listen address          | 213   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -68,6 +69,17 @@ func main() {
 	}
 
 	queries := database.New(rawDB)
+
+	// One subcommand, and it is not a server: `rotate-admin` replaces a lost admin token and exits.
+	// A flag or an environment variable would fire again on every restart, silently invalidating the
+	// credentials file of a live instance; a subcommand is an act, run once, by someone who can
+	// already start this process.
+	if len(os.Args) > 1 && os.Args[1] == rotateAdminCommand {
+		if err := rotateAdmin(ctx, bootstrap.NewStore(queries), cfg, os.Stdout); err != nil {
+			log.Fatalf("main: %v", err)
+		}
+		return
+	}
 
 	if cfg.IsLocal() {
 		if err := bootstrapLocal(ctx, bootstrap.NewStore(queries), cfg.Addr, os.Stdout); err != nil {
@@ -174,12 +186,7 @@ func bootstrapLocal(ctx context.Context, st bootstrap.Store, addr string, out io
 		return nil
 	}
 
-	apiURL := "http://localhost" + addr
-	if host, port, found := strings.Cut(addr, ":"); found && host != "" {
-		apiURL = "http://" + host + ":" + port
-	}
-
-	path, err := credentials.Save(credentials.File{APIURL: apiURL, Token: token})
+	path, err := credentials.Save(credentials.File{APIURL: apiURL(addr), Token: token})
 	if err != nil {
 		return err
 	}
@@ -198,4 +205,14 @@ func bootstrapLocal(ctx context.Context, st bootstrap.Store, addr string, out io
 	_, _ = fmt.Fprintln(out, "    flowlio init --team <slug> --project <KEY>")
 
 	return nil
+}
+
+// apiURL composes the URL the CLI will call from the listen address. A bare `:8080` means "every
+// interface", which is not an address a client can dial: localhost is the only thing it can mean
+// for the machine that just issued the token.
+func apiURL(addr string) string {
+	if host, port, found := strings.Cut(addr, ":"); found && host != "" {
+		return "http://" + host + ":" + port
+	}
+	return "http://localhost" + addr
 }
