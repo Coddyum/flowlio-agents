@@ -5,7 +5,7 @@ package store
 // | Élément               | Résumé                                                  | Ligne |
 // |-----------------------|---------------------------------------------------------|-------|
 // | store.AddFirstMessage | Writes the message that opens an issue's thread           | 25    |
-// | store.ListMessages    | Reads the thread, scoped by the join on its issue         | 38    |
+// | store.ListMessages    | Reads the thread, scoped by the join on its issue         | 47    |
 //
 // Fin du sommaire.
 // =====================================================================

@@ -4,10 +4,10 @@ package service
 //
 // | Élément              | Résumé                                                  | Ligne |
 // |----------------------|---------------------------------------------------------|-------|
-// | service.AllowTrust   | Opens a trust pair between two projects                  | 43    |
-// | service.RevokeTrust  | Closes a trust pair between two projects                 | 61    |
-// | service.ListTrust    | Returns a team's trust graph                             | 78    |
-// | normalisePair        | Validates and normalises the two keys of a pair          | 105   |
+// | service.AllowTrust   | Opens a trust pair between two projects                  | 42    |
+// | service.RevokeTrust  | Closes a trust pair between two projects                 | 60    |
+// | service.ListTrust    | Returns a team's trust graph                             | 77    |
+// | normalisePair        | Validates and normalises the two keys of a pair          | 104   |
 //
 // Fin du sommaire.
 // =====================================================================

@@ -6,7 +6,7 @@ package auth
 // |-----------------------|---------------------------------------------------------------|-------|
 // | countsAgainstIPBucket | Says whether the source IP must be counted at all               | 37    |
 // | sourceKey             | Reduces a source to its counting unit (/64 in IPv6)             | 52    |
-// | clientIP              | Extracts the client IP from r.RemoteAddr, trusting nothing else | 73    |
+// | clientIP              | Extracts the client IP from r.RemoteAddr, trusting nothing else | 72    |
 //
 // Fin du sommaire.
 // =====================================================================

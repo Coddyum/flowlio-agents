@@ -4,10 +4,10 @@ package credentials
 //
 // | Élément     | Résumé                                                            | Ligne |
 // |-------------|-------------------------------------------------------------------|-------|
-// | File        | Content of the local credentials file                               | 37    |
-// | Path        | Path of the credentials file, following XDG                         | 44    |
-// | Load        | Reads the local credentials                                         | 56    |
-// | Save        | Writes the credentials with restrictive permissions                 | 78    |
+// | File        | Content of the local credentials file                               | 36    |
+// | Path        | Path of the credentials file, following XDG                         | 43    |
+// | Load        | Reads the local credentials                                         | 55    |
+// | Save        | Writes the credentials with restrictive permissions                 | 77    |
 //
 // Fin du sommaire.
 // =====================================================================

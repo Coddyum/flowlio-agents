@@ -25,10 +25,10 @@ package authtest
 // | Store.TokenByPrefix | Yields the test's token if the prefix matches                | 57    |
 // | Store.TouchToken    | Records the use, with no effect                              | 66    |
 // | Token        | A minted token and the auth service that recognises it              | 73    |
-// | New          | Mints a token of the requested scope and mounts the auth service    | 91    |
-// | Admin        | Admin token, optionally pinned to a team                            | 118   |
-// | Project      | Agent token, scoped to a team and a project                         | 124   |
-// | Token.Authorize | Sets the Authorization header on a request                       | 135   |
+// | New          | Mints a token of the requested scope and mounts the auth service    | 90    |
+// | Admin        | Admin token, optionally pinned to a team                            | 117   |
+// | Project      | Agent token, scoped to a team and a project                         | 123   |
+// | Token.Authorize | Sets the Authorization header on a request                       | 134   |
 //
 // Fin du sommaire.
 // =====================================================================

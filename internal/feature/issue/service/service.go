@@ -4,16 +4,16 @@ package service
 //
 // | Élément          | Résumé                                                      | Ligne |
 // |------------------|-------------------------------------------------------------|-------|
-// | Service          | The contract consumed by the issue handler                    | 48    |
-// | service          | Implementation, depending on the store interface              | 61    |
-// | New              | Creates the issue service                                     | 66    |
-// | Issue            | An issue as exposed by the API                                | 75    |
-// | Message          | A message of the thread, attributed to the project that wrote it | 86 |
-// | IssueDetail      | An issue together with its message thread                     | 96    |
-// | Ref              | Names CORE-34 for the caller, scope included                  | 106   |
-// | CreateIssueInput | Input for opening an issue towards a sibling project          | 115   |
-// | ListIssuesInput  | Criteria for reading the visible issues                       | 129   |
-// | AnswerInput      | A message to append to the thread, and an optional closing    | 143   |
+// | Service          | The contract consumed by the issue handler                    | 47    |
+// | service          | Implementation, depending on the store interface              | 60    |
+// | New              | Creates the issue service                                     | 65    |
+// | Issue            | An issue as exposed by the API                                | 74    |
+// | Message          | A message of the thread, attributed to the project that wrote it | 85 |
+// | IssueDetail      | An issue together with its message thread                     | 95    |
+// | Ref              | Names CORE-34 for the caller, scope included                  | 105   |
+// | CreateIssueInput | Input for opening an issue towards a sibling project          | 114   |
+// | ListIssuesInput  | Criteria for reading the visible issues                       | 128   |
+// | AnswerInput      | A message to append to the thread, and an optional closing    | 142   |
 //
 // Fin du sommaire.
 // =====================================================================

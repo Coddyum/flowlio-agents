@@ -4,12 +4,12 @@ package auth
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | Scope              | Scope of a token: administration or a single project         | 38    |
-// | Principal          | Authenticated identity carried by a request                  | 50    |
-// | Principal.IsAdmin  | True if the principal may administer the team                | 58    |
-// | Service            | Authentication contract exposed through CoreServices         | 63    |
-// | service            | Implementation, depending on the Store interface             | 73    |
-// | New                | Creates the authentication service                           | 83    |
+// | Scope              | Scope of a token: administration or a single project         | 37    |
+// | Principal          | Authenticated identity carried by a request                  | 49    |
+// | Principal.IsAdmin  | True if the principal may administer the team                | 57    |
+// | Service            | Authentication contract exposed through CoreServices         | 62    |
+// | service            | Implementation, depending on the Store interface             | 72    |
+// | New                | Creates the authentication service                           | 82    |
 //
 // Fin du sommaire.
 // =====================================================================
