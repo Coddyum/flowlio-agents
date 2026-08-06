@@ -4,6 +4,11 @@ Decided 2026-08-05. Supersedes the `hosted` row of `DESIGN-V1.md` § "Deployment
 which announced accounts, JWT and a `billing` module inside this repository. None of that is
 happening here.
 
+> **The `D24`–`D30` headings below are not a numbering of their own.** They name the decisions of
+> the project-wide register, which is the single authority on what a `D<n>` refers to; this file
+> carries their reasoning, at length. Never allocate a new `D<n>` here — a second sequence is how
+> two different decisions end up sharing one number.
+
 ## The question this answers
 
 Three of the four plans on flowlio.me were sold as *hosted* — "nothing to install, nothing to keep

@@ -31,6 +31,18 @@ Référencée par `CLAUDE.md`. Détail de la brique "Conventions de code".
 > geste. Les citations de `sql/queries/` sont recopiées par sqlc dans `internal/database/` : un
 > `make sqlc` fait partie du geste.
 
+### Les deux dettes précises, à solder le jour où ces fichiers s'ouvrent
+
+Vérifiées le 2026-08-06 — elles sont réelles, pas un inventaire recopié. La carte qui les portait
+(FLWL-49) est archivée : la règle ci-dessus fait le travail, une carte qui ne peut jamais être
+finie ne le fait pas.
+
+| Fichier | Ce qu'il faut faire au passage |
+| --- | --- |
+| `docs/DESIGN-TUI.md` l. 780 | Titre `## Garanties de sécurité — …` cité tel quel par 4 tests (`cmd/flowlio/mcp_overview_test.go`, `internal/feature/overview/{module,handler/handler,store/store_integration}_test.go`). Les 5 lignes bougent d'un seul geste — ce sont les seules occurrences de français sous `cmd/`+`internal/`. |
+| `docs/DESIGN-M3.md` l. 41 et 596 | Citent `"transaction imbriquée"` ; le code dit `"nested transaction"` depuis les lots 6b/6c. Une doc qui cite une chaîne périmée est fausse — c'est une correction, pas une traduction. |
+| `docs/DESIGN-M3.md` ~l. 846, `docs/DESIGN-TRUST.md` ~l. 556 | Citent les instructions de session, changées au lot 5. |
+
 ## Nommage
 
 > Si un nom de variable, fonction ou fichier nécessite un commentaire pour être compris, le nom
