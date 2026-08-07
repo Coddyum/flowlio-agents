@@ -9,7 +9,11 @@ package engine
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"reflect"
 	"testing"
+
+	"github.com/Coddyum/flowlio-agents/internal/pkg/config"
 )
 
 // origins is the allow list of the tests. Written here and not taken from the config: this file
@@ -280,4 +284,99 @@ func TestCORSPlainOptionsIsNotAPreflight(t *testing.T) {
 	if !reached {
 		t.Error("an OPTIONS without Access-Control-Request-Method was swallowed by the middleware")
 	}
+}
+
+// THE BRIDGE PAGE IS STILL A LIVE CALLER, AND THIS TEST IS WHAT SAYS SO — measured 2026-08-07.
+//
+// The rest of this file tests the middleware against a list written here on purpose. This one does
+// the opposite, deliberately: it takes the list the product SHIPS, out of `config.Load` with
+// `ALLOWED_ORIGINS` unset, and drives it through the real middleware from the origin the bridge
+// page is served on. It is the only test that joins the two halves — a right default nobody grants,
+// or a right grant on a wrong default, both pass everything else in this file and leave a
+// self-hosted user staring at a screen that cannot reach their instance.
+//
+// It exists because a plan to delete `ALLOWED_ORIGINS` was raised while `Flowlio` still ships
+// `src/lib/agents/client.ts` on master, calling this API straight from the browser at an address
+// the user typed. Delete the default, or the middleware, and this goes red — which is the point.
+// See internal/pkg/config/config.go, defaultAllowedOrigins.
+func TestShippedDefaultGrantsTheBridgeOrigin(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db?sslmode=disable")
+	t.Setenv("MODE", config.ModeLocal)
+	// ALLOWED_ORIGINS because this test is about the SHIPPED default, and ADMIN_TOKEN because the
+	// Makefile exports .env into `make check`: a developer configured for hosted work made Load()
+	// fatal here on a rule about credentials, and this package went red for a reason living in
+	// their shell rather than in the code. Observed 2026-08-07.
+	t.Setenv("ADMIN_TOKEN", "")
+	for _, key := range []string{"ALLOWED_ORIGINS", "ADMIN_TOKEN"} {
+		if err := os.Unsetenv(key); err != nil {
+			// An unset that silently failed would let a value from another test decide this one.
+			t.Fatalf("unsetting %s: %v", key, err)
+		}
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	// THE ASSERTIONS BELOW COMPARE THE WHOLE HEADER MAP, never "does not contain". A response that
+	// lost every header passes any negative assertion ever written, and that is precisely the state
+	// a careless deletion produces.
+	t.Run("simple request", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/overview/", nil)
+		req.Header.Set("Origin", "https://flowlio.me")
+
+		rec, reached := serveCORS(t, req, cfg.AllowedOrigins)
+		if !reached {
+			t.Fatal("the handler was not reached")
+		}
+
+		want := http.Header{
+			"Vary":                        []string{"Origin"},
+			"Access-Control-Allow-Origin": []string{"https://flowlio.me"},
+		}
+		if got := rec.Header(); !reflect.DeepEqual(got, want) {
+			t.Errorf("headers = %v, want exactly %v", got, want)
+		}
+	})
+
+	// The preflight is the half Chrome refuses without `Access-Control-Allow-Private-Network`: a
+	// public page reaching into the machine's own network. Losing that one line breaks the bridge
+	// in Chrome alone, with every other header correct — undebuggable from the outside.
+	t.Run("private-network preflight", func(t *testing.T) {
+		req := preflight("https://flowlio.me")
+		req.Header.Set("Access-Control-Request-Private-Network", "true")
+
+		rec, reached := serveCORS(t, req, cfg.AllowedOrigins)
+		if reached {
+			t.Fatal("a preflight reached the handler: it must be settled by the middleware")
+		}
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("preflight = %d, want %d", rec.Code, http.StatusNoContent)
+		}
+
+		want := http.Header{
+			"Vary":                                 []string{"Origin"},
+			"Access-Control-Allow-Origin":          []string{"https://flowlio.me"},
+			"Access-Control-Allow-Methods":         []string{allowedMethods},
+			"Access-Control-Allow-Headers":         []string{allowedHeaders},
+			"Access-Control-Max-Age":               []string{"600"},
+			"Access-Control-Allow-Private-Network": []string{"true"},
+		}
+		if got := rec.Header(); !reflect.DeepEqual(got, want) {
+			t.Errorf("headers = %v, want exactly %v", got, want)
+		}
+	})
+
+	// The `www` host is in the default for a reason: flowlio.me serves both, and a user landing on
+	// one of them must not get a screen that half works.
+	t.Run("the www host too", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/overview/", nil)
+		req.Header.Set("Origin", "https://www.flowlio.me")
+
+		rec, _ := serveCORS(t, req, cfg.AllowedOrigins)
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://www.flowlio.me" {
+			t.Errorf("Access-Control-Allow-Origin = %q, want the www origin", got)
+		}
+	})
 }

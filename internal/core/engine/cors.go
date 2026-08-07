@@ -4,8 +4,8 @@ package engine
 //
 // | Élément  | Résumé                                                             | Ligne |
 // |----------|--------------------------------------------------------------------|-------|
-// | CORS     | Middleware allowing a CLOSED list of browser origins                 | 74    |
-// | allows   | Says whether an origin is in the list, by strict equality            | 133   |
+// | CORS     | Middleware allowing a CLOSED list of browser origins                 | 97    |
+// | allows   | Says whether an origin is in the list, by strict equality            | 156   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -15,6 +15,29 @@ package engine
 // header, the browser refuses to hand the response to the JavaScript that asked for it. Nothing
 // else in the product needs it — the CLI and the MCP server speak plain HTTP, without a browser,
 // and present no `Origin` at all.
+//
+// WHAT MUST BE TRUE BEFORE THIS FILE IS DELETED — checked 2026-08-07, and it was NOT true then.
+//
+// D28 says the embedded same-origin UI removes the closed origin list and the private-network
+// preflight, and it is right — once that UI exists. It does not: this repository embeds migrations
+// and nothing else (embed.go), there is no http.FileServer and no static route, and FLWL-62 is
+// frozen. Meanwhile `Flowlio` ships `src/lib/agents/client.ts` on master, mounted at
+// Settings → Agents, calling this API STRAIGHT FROM THE BROWSER. Deleting this file today takes
+// away the only web door a self-hosted user has, and nothing replaces it.
+//
+// The three preconditions, all of them, none of them a matter of opinion:
+//
+//  1. the self-hosted UI is served same-origin by this binary — D28 actually shipped;
+//  2. `Flowlio` no longer calls this API from a browser — `lib/agents/client.ts` gone from master,
+//     not merely from a branch;
+//  3. nothing else presents an `Origin` to this server.
+//
+// An OPERATED deployment already needs none of this and does not wait for those three: it sets
+// `ALLOWED_ORIGINS` to a lone comma, which closes the list without touching a line of code. That is
+// the right lever for hosted — configuration, not deletion.
+//
+// `TestShippedDefaultGrantsTheBridgeOrigin` in cors_test.go holds the door: it drives the SHIPPED
+// default through this middleware and goes red if either half disappears.
 //
 // WHAT CORS PROTECTS HERE, AND WHAT IT DOES NOT. It does not replace authentication: the token
 // lives in the browser's localStorage and leaves in `Authorization`, so a third-party site cannot
