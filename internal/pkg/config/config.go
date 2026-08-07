@@ -4,12 +4,13 @@ package config
 //
 // | Élément  | Résumé                                                            | Ligne |
 // |----------|-------------------------------------------------------------------|-------|
-// | Config   | Configuration of the process, read once at start-up                 | 41    |
-// | Config.IsLocal | Says whether the process runs in local mode, without accounts | 60    |
-// | Load     | Reads the environment and fails at once if a key is missing         | 66    |
-// | required | Yields an environment variable, or an error if missing or empty     | 87    |
-// | list     | Splits an environment variable into a list, on the commas           | 98    |
-// | optional | Yields an environment variable or the default value                 | 111   |
+// | Config   | Configuration of the process, read once at start-up                 | 42    |
+// | Config.IsLocal | Says whether the process runs in local mode, without accounts | 70    |
+// | Load     | Reads the environment and fails at once if a key is missing         | 76    |
+// | adminTokenFor | Refuses ADMIN_TOKEN missing in hosted, and present in local    | 111   |
+// | required | Yields an environment variable, or an error if missing or empty     | 126   |
+// | list     | Splits an environment variable into a list, on the commas           | 137   |
+// | optional | Yields an environment variable or the default value                 | 150   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -47,6 +48,15 @@ type Config struct {
 	Env string
 	// Mode is ModeLocal or ModeHosted and decides the bootstrap and the modules mounted.
 	Mode string
+	// AdminToken is the administration token of a HOSTED instance, handed over by the environment
+	// and never issued by this process.
+	//
+	// Local mode issues its own on first start and writes it to a 0600 file. Hosted mode cannot:
+	// there is no operator sitting at the machine to read that file, and the process that needs the
+	// secret — the co-deployed flowlio-core — is a sibling, not a child. The secret therefore comes
+	// from the deployment's secret store, which both processes already read, and this server only
+	// registers its hash. Empty in local mode, where setting it is refused rather than ignored.
+	AdminToken string
 	// AllowedOrigins lists the web origins allowed to call the API from a browser.
 	//
 	// Empty by default would be safer still, but would make the bridge page unusable without
@@ -74,13 +84,42 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: unknown MODE=%q (expected %q or %q)", mode, ModeLocal, ModeHosted)
 	}
 
+	adminToken, err := adminTokenFor(mode)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		Addr:           optional("ADDR", defaultAddr),
 		DatabaseURL:    dbURL,
 		Env:            optional("ENV", defaultEnv),
 		Mode:           mode,
+		AdminToken:     adminToken,
 		AllowedOrigins: list("ALLOWED_ORIGINS", defaultAllowedOrigins),
 	}, nil
+}
+
+// adminTokenFor reads ADMIN_TOKEN and refuses both halves of the mismatch.
+//
+// Missing in hosted mode is fatal: the instance would start, answer 401 to its own operator, and
+// there would be no way in — hosted mode issues nothing on its own, by design.
+//
+// PRESENT in local mode is fatal too, and that is the less obvious half. Local mode issues its own
+// token and would simply ignore this one, leaving a live administration secret sitting in an
+// environment where the operator believes it is in use. A credential that is configured and
+// ignored is worse than one that is missing: nothing ever says so.
+func adminTokenFor(mode string) (string, error) {
+	token := strings.TrimSpace(os.Getenv("ADMIN_TOKEN"))
+
+	if mode == ModeHosted && token == "" {
+		return "", fmt.Errorf("config: MODE=%s requires ADMIN_TOKEN "+
+			"(mint one with `flowlio-api mint-admin-token`)", ModeHosted)
+	}
+	if mode == ModeLocal && token != "" {
+		return "", fmt.Errorf("config: ADMIN_TOKEN is set but MODE=%s, "+
+			"where the first start issues its own token and this one would be ignored", ModeLocal)
+	}
+	return token, nil
 }
 
 // required yields the environment variable key, or an error if it is missing or empty.

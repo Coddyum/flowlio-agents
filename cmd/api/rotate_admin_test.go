@@ -9,7 +9,7 @@ package main
 // | rotatingStore.CreateAdminToken   | Records the issued token and what preceded it      | 47    |
 // | rotatingStore.RevokeAdminTokens  | Records the revocation and how many it covered     | 53    |
 // | TestRotateAdminRevokesThenIssues | The rotation replaces, and never prints the secret | 67    |
-// | TestRotateAdminRefusesHostedMode | Hosted mode is not this binary's to rotate         | 122   |
+// | TestRotateAdminRefusesHostedMode | Hosted mode is not this binary's to rotate         | 128   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -116,9 +116,15 @@ func TestRotateAdminRevokesThenIssues(t *testing.T) {
 	}
 }
 
-// TestRotateAdminRefusesHostedMode: there, admin tokens follow from an account and flowlio-core
-// owns them. Revoking them all from this side would cut off an operator this binary knows nothing
-// about — and it would do so silently, since the caller asked for exactly that.
+// TestRotateAdminRefusesHostedMode: there the token is not lost in the sense this command repairs.
+// It lives in the deployment's secret store, and rotating it means minting a new one and replacing
+// the environment variable. Revoking from this side would cut off the co-deployed flowlio-core
+// mid-flight, silently, since the caller asked for exactly that.
+//
+// The assertion used to require the word "flowlio-core", back when the refusal claimed that admin
+// tokens there "follow from an account and flowlio-core owns them". Nothing in either repository
+// ever implemented that, so the message sent an operator somewhere no answer existed; it now names
+// ADMIN_TOKEN, which does.
 func TestRotateAdminRefusesHostedMode(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -131,7 +137,7 @@ func TestRotateAdminRefusesHostedMode(t *testing.T) {
 	if err == nil {
 		t.Fatal("rotation accepted in hosted mode")
 	}
-	if !strings.Contains(err.Error(), "flowlio-core") {
+	if !strings.Contains(err.Error(), "ADMIN_TOKEN") {
 		t.Errorf("the refusal does not say where the answer lives: %v", err)
 	}
 	if st.revokeCalled || st.created {

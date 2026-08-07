@@ -34,13 +34,15 @@ const rotateAdminCommand = "rotate-admin"
 // through `docker compose run` leaves its output in the daemon's logs, where a live credential is
 // durable and readable by anything that reaches it. Only the path is named.
 //
-// Hosted mode is refused. There, admin tokens follow from an account and flowlio-core owns them;
-// revoking them all from this side would cut off an operator this binary knows nothing about. The
-// refusal is a message rather than a silent no-op, because an operator who typed this command has
-// a problem, and needs to be told where its answer lives.
+// Hosted mode is refused, and the refusal names where the answer is. There the token is not lost
+// in the sense this command repairs: it lives in the deployment's secret store, which the operator
+// can read. Rotating it is minting a new one and replacing the environment variable — and doing it
+// from here would revoke a credential the co-deployed flowlio-core is holding, mid-flight, without
+// telling it.
 func rotateAdmin(ctx context.Context, st bootstrap.Store, cfg *config.Config, out io.Writer) error {
 	if !cfg.IsLocal() {
-		return fmt.Errorf("rotate-admin: hosted mode, where admin tokens follow from an account: rotate it from flowlio-core")
+		return fmt.Errorf("rotate-admin: hosted mode, where the token comes from ADMIN_TOKEN: " +
+			"mint a new one with `mint-admin-token` and replace it in the environment")
 	}
 
 	token, revoked, err := bootstrap.RotateAdminToken(ctx, st)

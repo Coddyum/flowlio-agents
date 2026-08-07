@@ -5,10 +5,10 @@ package main
 // | Élément        | Résumé                                                         | Ligne |
 // |----------------|----------------------------------------------------------------|-------|
 // | main           | Loads config, wires infra, mounts the modules, serves the API    | 54    |
-// | buildModules   | Instantiates the feature modules — the single place to add one   | 126   |
-// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 150   |
-// | bootstrapLocal | Issues the admin token on the very first local start             | 182   |
-// | apiURL         | Composes the URL a client dials from the listen address          | 215   |
+// | buildModules   | Instantiates the feature modules — the single place to add one   | 142   |
+// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 166   |
+// | bootstrapLocal | Issues the admin token on the very first local start             | 198   |
+// | apiURL         | Composes the URL a client dials from the listen address          | 231   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -54,6 +54,17 @@ const (
 func main() {
 	ctx := context.Background()
 
+	// Dispatched BEFORE the configuration is read, and that is not tidiness: minting a token needs
+	// no database, and an operator running this has none configured yet — that is precisely why
+	// they are running it. Requiring DATABASE_URL here would make the command unusable at the only
+	// moment it is useful.
+	if len(os.Args) > 1 && os.Args[1] == mintAdminTokenCommand {
+		if err := mintAdminToken(os.Stdout); err != nil {
+			log.Fatalf("main: %v", err)
+		}
+		return
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("main: %v", err)
@@ -82,10 +93,15 @@ func main() {
 		return
 	}
 
+	// Both modes register an administration token; only the local one INVENTS it. Hosted mode is
+	// handed one through the environment, because the process that has to present it — the
+	// co-deployed flowlio-core — is a sibling, and a secret invented here would never reach it.
 	if cfg.IsLocal() {
 		if err := bootstrapLocal(ctx, bootstrap.NewStore(queries), cfg.Addr, os.Stdout); err != nil {
 			log.Fatalf("main: %v", err)
 		}
+	} else if err := bootstrap.EnsureHostedAdminToken(ctx, bootstrap.NewHostedStore(queries), cfg.AdminToken); err != nil {
+		log.Fatalf("main: %v", err)
 	}
 
 	registry := core.NewRegistry()
