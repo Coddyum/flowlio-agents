@@ -37,7 +37,16 @@ and a second paid instance is not affordable. Co-deployment answers it without t
 
 When a customer subscribes, flowlio-core calls this API with its operator admin token: create the
 team, create the project, mint the agent token. That is exactly what `flowlio init` does today,
-performed server-side instead of from a terminal. The customer reads their token in the web page.
+performed server-side instead of from a terminal.
+
+> **Amended 2026-08-07 — the customer no longer reads their token anywhere.** This paragraph ended
+> with "the customer reads their token in the web page", and that is no longer what flowlio-core
+> does: it mints the project token and **keeps it**. The customer authenticates to flowlio-core,
+> names their repository by a non-secret id that is safe to commit, and flowlio-core presents the
+> matching token to this API. Nothing here changes — D26 is about who calls the administration API,
+> and the answer is still flowlio-core with the operator admin token. What is corrected is only the
+> last hop: a token handed over versus a token held. The self-hosted path is untouched —
+> `flowlio init` still prints a token, and it is still the only way in on your own machine.
 
 **No branch, no fork, no copy of the domain.** Co-deployment and code duplication are independent
 decisions, and only the first one was needed.
@@ -68,6 +77,18 @@ dependency on a Chrome policy that can change without warning, the token pasted 
 requirement to hold an account on flowlio.me to look at one's own instance — which today is real,
 enforced by `Flowlio/src/middleware.ts`, and contradicts "no account, self-hosted".
 
+> **That sentence describes what shipping D28 removes, not what is removed today — checked
+> 2026-08-07.** The embedded SPA does not exist: `embed.go` embeds migrations and nothing else,
+> there is no static route in the server, and FLWL-62 is frozen. Until it ships, `ALLOWED_ORIGINS`
+> and the private-network preflight are the **only** thing making the self-hosted web screen work,
+> because `Flowlio` still calls this API from the browser on master. Removing them first would
+> deliver the cost of D28 without its benefit. The preconditions are enumerated in
+> `internal/core/engine/cors.go`, and a test holds the door.
+>
+> An **operated** deployment is not waiting for any of this: it already sets `ALLOWED_ORIGINS` to a
+> lone comma, so no browser origin is allowed and the code is inert. Hosted needs configuration,
+> self-hosted needs the door — one file serves both, which is why it stays.
+
 The embedded bundle and the hosted web UI must remain **one implementation**. Two copies of the
 agents view would break parity at the interface instead of the backend.
 
@@ -90,18 +111,29 @@ Bubbletea is conditional on the spike and is not bought.
 
 ## Still open — it decides what the pricing grid may claim
 
-The MCP server speaks stdio: Claude Code launches `flowlio mcp` as a child process. **A hosted
-customer therefore still installs the `flowlio` binary**, and "nothing to install" stays false for
-them.
+The MCP server speaks stdio: Claude Code launches `flowlio mcp` as a child process. **A self-hosted
+user runs that binary**, which is the point — it is their machine, and the credentials file on it is
+what protects them.
 
-Making it true requires an HTTP transport for the MCP surface, authenticated by the token this API
-already issues — no OAuth, no accounts, so D24 holds. The JSON-RPC layer is already transport-
-agnostic (`serve(ctx, in io.Reader)` writing to an `out io.Writer`). The real work is that tool
-dispatch currently lives in the CLI and reaches the API over HTTP; serving it from the API means
-moving that dispatch server-side.
+Making the same thing true over HTTP requires a transport for the MCP surface. The JSON-RPC layer is
+already transport-agnostic (`serve(ctx, in io.Reader)` writing to an `out io.Writer`). The real work
+is that tool dispatch currently lives in the CLI and reaches the API over HTTP; serving it from the
+API means moving that dispatch server-side.
 
-Until that ships, the hosted plans may promise "nothing to **run**" — no database, no backups — and
-must not promise "nothing to install".
+> **Amended 2026-08-07 — where the hosted MCP endpoint lives, and what authenticates it.** This
+> section used to say the hosted transport would be "authenticated by the token this API already
+> issues — no OAuth, no accounts, so D24 holds". The endpoint a hosted customer points their agent
+> at is **flowlio-core's**, not this one, and flowlio-core authenticates it its own way, with the
+> repository named by a non-secret id in the request. This API still sees a project token and
+> nothing else.
+>
+> **D24 holds, and it holds harder than that sentence did.** The reason is not that hosted avoids
+> accounts — it does not — but that accounts, and whatever authenticates them, live in
+> flowlio-core. Nothing of the sort is added here, ever. An HTTP transport in this repository, if it
+> is ever built, is authenticated by the token this API issues, because that is the only credential
+> this repository knows.
+
+For a self-hosted user, "nothing to install" was never the promise: they installed on purpose.
 
 ## What this deletes
 

@@ -39,8 +39,21 @@ pas pour humains. Modèle : `team → project (= 1 repo) → tasks | issues`. Le
 travail interne d'un repo ; les issues sont les questions qu'un repo adresse à un repo frère de
 la même team. Aucune IA dans le produit : tout est déterministe.
 
-Interface : **CLI + MCP uniquement**, jamais de front web. Deux modes : `local` (open source,
-aucun compte) et `hosted` (comptes + Stripe, à venir).
+Interface : **CLI + MCP uniquement**, jamais de front web.
+
+Deux modes de déploiement, et la différence est **qui exploite l'instance**, jamais ce que ce dépôt
+sait faire :
+
+| Mode | Qui l'exploite | Le token admin |
+| --- | --- | --- |
+| `local` | l'utilisateur, chez lui | frappé au démarrage, écrit dans son fichier de credentials |
+| `hosted` | nous, co-déployés dans l'image de `flowlio-core` | frappé par l'opérateur, posé en `ADMIN_TOKEN` |
+
+**`hosted` n'apporte ni compte ni Stripe ici, et n'en apportera jamais** (D24). Ce dépôt n'a pas de
+table `users`, pas de JWT, pas de module de facturation, et le mot « client » n'y désigne rien. Les
+comptes, la facturation et OAuth vivent dans `flowlio-core`, qui est un **client de l'API
+d'administration** de ce dépôt — pas un fork (D25, D26). Tout ce que `hosted` change ici, c'est
+d'où vient le secret d'un token admin.
 
 Périmètre de ce repo : tout le produit — API, CLI, serveur MCP.
 
