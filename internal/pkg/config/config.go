@@ -9,8 +9,8 @@ package config
 // | Load     | Reads the environment and fails at once if a key is missing         | 76    |
 // | adminTokenFor | Refuses ADMIN_TOKEN missing in hosted, and present in local    | 111   |
 // | required | Yields an environment variable, or an error if missing or empty     | 126   |
-// | list     | Splits an environment variable into a list, on the commas           | 137   |
-// | optional | Yields an environment variable or the default value                 | 150   |
+// | list     | Splits an environment variable into a list, on the commas           | 144   |
+// | optional | Yields an environment variable or the default value                 | 160   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -131,11 +131,21 @@ func required(key string) (string, error) {
 	return v, nil
 }
 
-// list splits an environment variable into a list, on the commas, throwing away the empty
-// entries. An explicitly empty value yields an empty list: that is how a surface is closed
-// completely, and it has to be expressible.
+// list splits an environment variable into a list, on the commas, throwing away the empty entries.
+//
+// SET AND EMPTY IS NOT UNSET, and the whole value of this function is in telling them apart. An
+// operator who writes `ALLOWED_ORIGINS=` is closing the surface completely; handing them the
+// default there gives them the exact opposite of what they asked for, and says nothing about it.
+//
+// It read through `optional` until 2026-08-07, which collapses both cases into the default — so
+// this function's own comment, which has claimed since the first day that an explicitly empty value
+// yields an empty list, described something the code did not do. Measured: `ALLOWED_ORIGINS=` gave
+// back the two default origins. `os.LookupEnv` is what makes the distinction expressible at all.
 func list(key, def string) []string {
-	raw := optional(key, def)
+	raw, set := os.LookupEnv(key)
+	if !set {
+		raw = def
+	}
 
 	out := make([]string, 0, strings.Count(raw, ",")+1)
 	for _, part := range strings.Split(raw, ",") {

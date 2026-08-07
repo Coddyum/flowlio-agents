@@ -4,8 +4,9 @@ package config
 //
 // | Élément                     | Résumé                                              | Ligne |
 // |-----------------------------|------------------------------------------------------|-------|
-// | TestAdminTokenPerMode       | ADMIN_TOKEN is required in hosted and refused in local | 27    |
-// | TestLoadCarriesTheAdminToken| Load hands the token through untouched                 | 101   |
+// | TestAdminTokenPerMode       | ADMIN_TOKEN is required in hosted and refused in local | 29    |
+// | TestLoadCarriesTheAdminTokenVerbatim | Load hands the token through untouched      | 103   |
+// | TestAllowedOriginsSetButEmptyClosesTheSurface | Set and empty is not unset         | 127   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -16,6 +17,7 @@ package config
 // in an environment that ignores it. Both are silent failures at the moment they are made.
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -111,5 +113,56 @@ func TestLoadCarriesTheAdminTokenVerbatim(t *testing.T) {
 	}
 	if cfg.AdminToken != token {
 		t.Errorf("AdminToken = %q, want %q", cfg.AdminToken, token)
+	}
+}
+
+// TestAllowedOriginsSetButEmptyClosesTheSurface pins the one distinction `optional` cannot make.
+//
+// Writing `ALLOWED_ORIGINS=` is how an operator says "no browser origin at all". Until 2026-08-07
+// that produced the two DEFAULT origins instead — the exact opposite, silently, on the setting whose
+// whole job is to bound who may call the API from a browser. The function's own comment had claimed
+// the correct behaviour from the first day, which is why nobody looked.
+//
+// Unset must still fall back, or every deployment would have to spell the default out.
+func TestAllowedOriginsSetButEmptyClosesTheSurface(t *testing.T) {
+	cases := []struct {
+		name  string
+		set   bool
+		value string
+		want  int
+	}{
+		{name: "unset falls back to the default", want: 2},
+		{name: "set and empty closes the surface", set: true},
+		{name: "set to whitespace closes it too", set: true, value: "   "},
+		{name: "set to one origin yields one", set: true, value: "https://example.test", want: 1},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", dsn)
+			t.Setenv("MODE", ModeLocal)
+			if c.set {
+				t.Setenv("ALLOWED_ORIGINS", c.value)
+			} else if err := os.Unsetenv("ALLOWED_ORIGINS"); err != nil {
+				// Not ceremony: an unset that silently failed would leave a value from an earlier
+				// subtest in place, and "unset falls back to the default" would pass by accident.
+				t.Fatalf("unsetting ALLOWED_ORIGINS: %v", err)
+			}
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if len(cfg.AllowedOrigins) != c.want {
+				t.Fatalf("AllowedOrigins = %q (%d), want %d entries",
+					cfg.AllowedOrigins, len(cfg.AllowedOrigins), c.want)
+			}
+			// The default is never `*`, in any mode: this API answers an administration token.
+			for _, origin := range cfg.AllowedOrigins {
+				if origin == "*" {
+					t.Error("a wildcard origin was produced")
+				}
+			}
+		})
 	}
 }
