@@ -71,7 +71,7 @@ var routes = []route{
 	{http.MethodGet, "/tokens", "", true},
 	{http.MethodDelete, "/tokens/" + uuid.NewString(), "", true},
 	{http.MethodGet, "/trust", "", true},
-	{http.MethodPost, "/trust", `{"first":"FRNT","second":"CORE"}`, true},
+	{http.MethodPost, "/trust", `{"from":"FRNT","to":"CORE"}`, true},
 	{http.MethodDelete, "/trust/FRNT/CORE", "", true},
 	{http.MethodGet, "/whoami", "", false},
 }

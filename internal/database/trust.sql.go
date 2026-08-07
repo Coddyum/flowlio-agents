@@ -14,8 +14,8 @@ import (
 
 const allowTrust = `-- name: AllowTrust :one
 
-INSERT INTO project_trust (team_id, low_project_id, high_project_id)
-SELECT $1, least(a.id, b.id), greatest(a.id, b.id)
+INSERT INTO project_trust (team_id, from_project_id, to_project_id)
+SELECT $1, a.id, b.id
 FROM projects a, projects b
 WHERE a.team_id = $1 AND a.key = $2
   AND b.team_id = $1 AND b.key = $3
@@ -26,57 +26,70 @@ RETURNING (xmax = 0)::boolean AS created
 `
 
 type AllowTrustParams struct {
-	TeamID    uuid.UUID `json:"team_id"`
-	FirstKey  string    `json:"first_key"`
-	SecondKey string    `json:"second_key"`
+	TeamID  uuid.UUID `json:"team_id"`
+	FromKey string    `json:"from_key"`
+	ToKey   string    `json:"to_key"`
 }
 
-// Le graphe de confiance n'est JAMAIS lu par un service pour décider : il est lu par le prédicat
-// de la query qu'il gouverne (issues.sql, CreateIssue). Les trois queries de ce fichier ne
-// servent QUE l'administration humaine, sous token admin.
+// The trust graph is NEVER read by a service to decide: it is read by the predicate of the query it
+// governs (issues.sql, CreateIssue). The three queries in this file serve human administration
+// ONLY, under an admin token.
 //
-// Aucune ne prend d'UUID : elles résolvent deux CLÉS à l'intérieur d'un @team_id déjà prouvé par
-// teamFor. Une paire hors de cette team est donc inatteignable même par un appelant fautif, et
-// les FK composites de 000007 sont le second tour de clé, jamais le premier.
-// AllowTrust ouvre une paire, dans les deux sens puisque l'arête est symétrique.
+// None of them takes a UUID: they resolve two KEYS inside a @team_id already proven by teamFor. A
+// pair outside that team is therefore unreachable even by a faulty caller, and the composite FKs of
+// 000007 are the second turn of the key, never the first.
 //
-// Une clé qui ne se résout pas — inconnue, ou appartenant à une autre team — rend ZÉRO LIGNE,
-// donc sql.ErrNoRows, donc 404 : jamais une violation de contrainte, jamais un 500. `a.id <> b.id`
-// ferme l'auto-paire ici plutôt que de laisser project_trust_ordered lever un 23514, qui
-// deviendrait un second chemin d'erreur — et deux chemins d'erreur sont deux occasions de
-// diverger. Le service valide de toute façon `first != second` en amont, pour rendre à l'humain
-// un message utile plutôt qu'un `not found`.
+// THE EDGE IS DIRECTED (000013). `from` is the repo that may OPEN a question; `to` is the repo it
+// may open it at. The two are not interchangeable and nothing in this file sorts them: an order
+// imposed here would be the canonical pair coming back through a helper.
+// AllowTrust opens ONE edge, in ONE direction: @from_key may from now on open a question at
+// @to_key, and nothing more. The reciprocal is a second command, and the human decides whether to
+// type it.
 //
-// `ON CONFLICT ... DO UPDATE SET created_at = project_trust.created_at` est une écriture à
-// l'identique : elle ne sert qu'à obtenir une ligne dans le RETURNING sur le chemin de conflit.
-// `xmax = 0` est vrai sur l'INSERT et faux sur le conflit, ce qui distingue « créé » de « déjà
-// autorisé » sans second aller-retour. Le coût — une version de ligne morte par rejeu — est nul
-// sur une table qu'un humain écrit quelques fois par an.
+// A key that does not resolve — unknown, or belonging to another team — yields ZERO ROWS, hence
+// sql.ErrNoRows, hence 404: never a constraint violation, never a 500. `a.id <> b.id` closes the
+// self-edge here rather than letting project_trust_not_self raise a 23514, which would become a
+// second error path — and two error paths are two chances to diverge. The service validates
+// `from != to` upstream anyway, to give the human a useful message rather than a `not found`.
+//
+// `ON CONFLICT ... DO UPDATE SET created_at = project_trust.created_at` is a write to the identical
+// value: its only purpose is to obtain a row in the RETURNING on the conflict path. `xmax = 0` is
+// true on the INSERT and false on the conflict, which tells "created" from "already allowed"
+// without a second round trip. The cost — one dead row version per replay — is nil on a table a
+// human writes a few times a year.
+//
+// The conflict target is the PRIMARY KEY, which is now (team_id, from_project_id, to_project_id):
+// replaying `allow WEB CORE` conflicts, while `allow CORE WEB` does NOT — it is a different edge,
+// and it is created.
 func (q *Queries) AllowTrust(ctx context.Context, arg AllowTrustParams) (bool, error) {
-	row := q.db.QueryRowContext(ctx, allowTrust, arg.TeamID, arg.FirstKey, arg.SecondKey)
+	row := q.db.QueryRowContext(ctx, allowTrust, arg.TeamID, arg.FromKey, arg.ToKey)
 	var created bool
 	err := row.Scan(&created)
 	return created, err
 }
 
 const listTrustEdges = `-- name: ListTrustEdges :many
-SELECT a.key AS first_key, b.key AS second_key, t.created_at
+SELECT a.key AS from_key, b.key AS to_key, t.created_at
 FROM project_trust t
-JOIN projects a ON a.id = t.low_project_id  AND a.team_id = t.team_id
-JOIN projects b ON b.id = t.high_project_id AND b.team_id = t.team_id
+JOIN projects a ON a.id = t.from_project_id AND a.team_id = t.team_id
+JOIN projects b ON b.id = t.to_project_id   AND b.team_id = t.team_id
 WHERE t.team_id = $1
 ORDER BY a.key, b.key
 `
 
 type ListTrustEdgesRow struct {
-	FirstKey  string    `json:"first_key"`
-	SecondKey string    `json:"second_key"`
+	FromKey   string    `json:"from_key"`
+	ToKey     string    `json:"to_key"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// ListTrustEdges rend le graphe en CLÉS lisibles. Les deux jointures portent `AND team_id`, comme
-// partout : la dénormalisation ne peut pas diverger, mais la query ne s'appuie pas là-dessus.
-// Jamais servie à un token de projet : c'est une lecture d'administration.
+// ListTrustEdges returns the graph in readable KEYS, WITH ITS DIRECTIONS. Both joins carry
+// `AND team_id`, as everywhere: the denormalisation cannot diverge, but the query does not lean on
+// that. Never served to a project token: this is an administration read.
+//
+// One row per DIRECTION. A mutually trusted pair therefore shows as TWO lines, and that is the
+// truth being displayed — a reader has to be able to tell it from a pair that only trusts one way,
+// and there is no other place in the product where that fact is readable.
 func (q *Queries) ListTrustEdges(ctx context.Context, teamID uuid.UUID) ([]ListTrustEdgesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listTrustEdges, teamID)
 	if err != nil {
@@ -86,7 +99,7 @@ func (q *Queries) ListTrustEdges(ctx context.Context, teamID uuid.UUID) ([]ListT
 	items := []ListTrustEdgesRow{}
 	for rows.Next() {
 		var i ListTrustEdgesRow
-		if err := rows.Scan(&i.FirstKey, &i.SecondKey, &i.CreatedAt); err != nil {
+		if err := rows.Scan(&i.FromKey, &i.ToKey, &i.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -101,8 +114,8 @@ func (q *Queries) ListTrustEdges(ctx context.Context, teamID uuid.UUID) ([]ListT
 }
 
 const revokeTrust = `-- name: RevokeTrust :one
-WITH pair AS (
-    SELECT least(a.id, b.id) AS low_id, greatest(a.id, b.id) AS high_id
+WITH edge AS (
+    SELECT a.id AS from_id, b.id AS to_id
     FROM projects a, projects b
     WHERE a.team_id = $1 AND a.key = $2
       AND b.team_id = $1 AND b.key = $3
@@ -110,44 +123,49 @@ WITH pair AS (
 ),
 removed AS (
     DELETE FROM project_trust t
-    USING pair p
+    USING edge e
     WHERE t.team_id         = $1
-      AND t.low_project_id  = p.low_id
-      AND t.high_project_id = p.high_id
+      AND t.from_project_id = e.from_id
+      AND t.to_project_id   = e.to_id
     RETURNING 1
 )
 SELECT (SELECT count(*) FROM removed) > 0 AS removed
-FROM pair
+FROM edge
 `
 
 type RevokeTrustParams struct {
-	TeamID    uuid.UUID `json:"team_id"`
-	FirstKey  string    `json:"first_key"`
-	SecondKey string    `json:"second_key"`
+	TeamID  uuid.UUID `json:"team_id"`
+	FromKey string    `json:"from_key"`
+	ToKey   string    `json:"to_key"`
 }
 
-// RevokeTrust ferme une paire. Miroir exact d'AllowTrust, idempotente : retirer une confiance
-// absente rend `false`, jamais une erreur.
+// RevokeTrust cuts ONE edge, and that edge only. Exact mirror of AllowTrust, idempotent: removing
+// an absent trust yields `false`, never an error.
 //
-// ÉCART ASSUMÉ AVEC docs/DESIGN-TRUST.md, qui prévoyait un simple `:execrows`. Un DELETE nu rend
-// 0 ligne dans DEUX cas que rien ne distingue ensuite : « la paire existe mais n'était pas
-// déclarée » et « une des deux clés n'existe pas ». Le second est une FAUTE DE FRAPPE, et le
-// humain aurait lu « rien à retirer » — une réussite apparente — au lieu d'un `not found`.
-// Le raisonnement qui justifie l'indiscernabilité côté canal ne s'applique PAS ici : cette route
-// est `admin`, et un admin peut déjà énumérer tous les projets de toutes les teams (c'est
-// exactement ce que fait `flowlio trust list`). Il n'y a donc aucun oracle à protéger, et rien à
-// gagner à taire l'erreur.
+// `deny WEB CORE` leaves `core → web` standing if it was declared. That asymmetry is the whole
+// point of the directed model, and it is the reason the CLI verb is `deny` and not `revoke`:
+// `token revoke` cuts EVERYTHING, immediately, and two gestures with different reach do not share
+// a verb.
 //
-// La CTE `pair` résout les deux clés ; si l'une manque elle est vide, la query rend ZÉRO LIGNE,
-// donc sql.ErrNoRows, donc 404 — le même chemin qu'AllowTrust, pour la même faute. Postgres
-// garantit qu'une CTE modifiante s'exécute exactement une fois et jusqu'au bout, qu'elle soit lue
-// ou non : le DELETE a lieu même si `pair` est vide (il ne supprime alors rien).
+// DELIBERATE DEPARTURE FROM docs/DESIGN-TRUST.md, which planned a plain `:execrows`. A bare DELETE
+// returns 0 rows in TWO cases nothing afterwards can tell apart: "the edge exists but was not
+// declared" and "one of the two keys does not exist". The second is a TYPO, and the human would
+// have read "nothing to remove" — an apparent success — instead of a `not found`. The reasoning
+// that justifies indistinguishability on the channel does NOT apply here: this route is `admin`,
+// and an admin can already enumerate every project of every team (that is exactly what
+// `flowlio trust list` does). There is no oracle to protect, hence nothing to gain from keeping the
+// error quiet.
 //
-// Ce qui advient des fils DÉJÀ OUVERTS n'est pas ici, et n'est nulle part : retirer une confiance
-// interdit d'en OUVRIR une nouvelle, et rien d'autre. Le coupe-circuit du produit est
-// `flowlio token revoke`, vérifié à chaque requête.
+// The `edge` CTE resolves both keys; if one is missing it is empty, the query returns ZERO ROWS,
+// hence sql.ErrNoRows, hence 404 — the same path as AllowTrust, for the same mistake. Postgres
+// guarantees a data-modifying CTE runs exactly once and to completion whether or not it is read: the
+// DELETE happens even when `edge` is empty (it then removes nothing).
+//
+// What becomes of threads ALREADY OPEN is not here, and is nowhere: withdrawing a trust forbids
+// OPENING a new one, and nothing else. The product's circuit breaker is `flowlio token revoke`,
+// checked on every request.
 func (q *Queries) RevokeTrust(ctx context.Context, arg RevokeTrustParams) (bool, error) {
-	row := q.db.QueryRowContext(ctx, revokeTrust, arg.TeamID, arg.FirstKey, arg.SecondKey)
+	row := q.db.QueryRowContext(ctx, revokeTrust, arg.TeamID, arg.FromKey, arg.ToKey)
 	var removed bool
 	err := row.Scan(&removed)
 	return removed, err

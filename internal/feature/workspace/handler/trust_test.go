@@ -27,8 +27,8 @@ import (
 // explicitly, not be caught by a prefix nobody remembered to check.
 var trustRoutes = []teamForRoute{
 	{"GET /trust", http.MethodGet, "/trust", "", "ListTrust"},
-	{"POST /trust", http.MethodPost, "/trust", `{"first":"FRNT","second":"CORE"}`, "AllowTrust"},
-	{"DELETE /trust/{first}/{second}", http.MethodDelete, "/trust/FRNT/CORE", "", "RevokeTrust"},
+	{"POST /trust", http.MethodPost, "/trust", `{"from":"FRNT","to":"CORE"}`, "AllowTrust"},
+	{"DELETE /trust/{from}/{to}", http.MethodDelete, "/trust/FRNT/CORE", "", "RevokeTrust"},
 }
 
 // A PROJECT token — the one an agent carries — is refused on all three graph routes.
@@ -101,7 +101,7 @@ func TestTheTeamDoesNotSlipIntoTheBody(t *testing.T) {
 	svc := &fakeWorkspace{teams: teams}
 	mux, raw := adminServer(t, uuid.Nil, svc)
 
-	body := `{"first":"FRNT","second":"CORE","team_id":"` + other.ID.String() + `"}`
+	body := `{"from":"FRNT","to":"CORE","team_id":"` + other.ID.String() + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/trust?team="+mine.Slug, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+raw)
 	rec := httptest.NewRecorder()
@@ -126,7 +126,7 @@ func TestAValidBodyDoesNotRescueAForbiddenTeam(t *testing.T) {
 	mux, raw := adminServer(t, mine.ID, svc)
 
 	req := httptest.NewRequest(http.MethodPost, "/trust?team="+other.Slug,
-		strings.NewReader(`{"first":"FRNT","second":"CORE"}`))
+		strings.NewReader(`{"from":"FRNT","to":"CORE"}`))
 	req.Header.Set("Authorization", "Bearer "+raw)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)

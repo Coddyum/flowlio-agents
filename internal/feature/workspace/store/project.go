@@ -4,11 +4,11 @@ package store
 //
 // | Élément             | Résumé                                                 | Ligne |
 // |---------------------|--------------------------------------------------------|-------|
-// | store.CreateProject | Inserts a project into a team                           | 24    |
-// | store.ProjectByID   | Reads a project by its identifier, scoped by the team   | 37    |
-// | store.ProjectByKey  | Reads a project by its key, within the team scope       | 50    |
-// | store.ListProjects  | Lists a team's projects                                 | 62    |
-// | toProject           | Projects an sqlc row onto the domain project            | 76    |
+// | store.CreateProject | Inserts a project into a team, edges to its peers included | 33  |
+// | store.ProjectByID   | Reads a project by its identifier, scoped by the team   | 52    |
+// | store.ProjectByKey  | Reads a project by its key, within the team scope       | 65    |
+// | store.ListProjects  | Lists a team's projects                                 | 77    |
+// | toProject           | Projects an sqlc row onto the domain project            | 91    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -20,7 +20,16 @@ import (
 	"github.com/google/uuid"
 )
 
-// CreateProject inserts a project. A key already taken inside the team yields ErrConflict.
+// CreateProject inserts a project and, in the SAME statement, opens the repo's trust edges towards
+// every repo already in the team. A key already taken inside the team yields ErrConflict.
+//
+// The store neither computes nor names those edges: what happens is entirely in the query, and this
+// method could not tell how many rows it wrote. That placement is the rule, enforced by
+// scripts/check-trust-in-sql-only.sh.
+//
+// The generated call returns its own row type, not database.Project: the query now selects from a
+// CTE, which sqlc does not recognise as the projects table. The fields are the same ones, so the
+// mapping is written here rather than routed through toProject, which keeps its single input type.
 func (s *store) CreateProject(ctx context.Context, teamID uuid.UUID, key, name string) (Project, error) {
 	row, err := s.q.CreateProject(ctx, database.CreateProjectParams{
 		TeamID: teamID,
@@ -30,7 +39,13 @@ func (s *store) CreateProject(ctx context.Context, teamID uuid.UUID, key, name s
 	if err != nil {
 		return Project{}, translate(err, "create project")
 	}
-	return toProject(row), nil
+	return Project{
+		ID:        row.ID,
+		TeamID:    row.TeamID,
+		Key:       row.Key,
+		Name:      row.Name,
+		CreatedAt: row.CreatedAt,
+	}, nil
 }
 
 // ProjectByID reads a project by its identifier, always scoped by the team.

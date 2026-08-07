@@ -4,9 +4,9 @@ package service
 //
 // | Élément               | Résumé                                                 | Ligne |
 // |-----------------------|--------------------------------------------------------|-------|
-// | service.CreateProject | Validates then creates a project inside a team          | 24    |
-// | service.ListProjects  | Lists a team's projects                                 | 47    |
-// | toProject             | Projects a store project onto the API view              | 61    |
+// | service.CreateProject | Validates then creates a project, linked to its peers   | 32    |
+// | service.ListProjects  | Lists a team's projects                                 | 55    |
+// | toProject             | Projects a store project onto the API view              | 69    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -21,6 +21,14 @@ import (
 
 // CreateProject validates the key and the name, then creates the project in the team provided.
 // The key is normalised to uppercase: `frnt` and `FRNT` name the same project.
+//
+// The repo arrives CONNECTED: the same statement opens a trust edge towards every repo already in
+// the team, so `create_issue` works from the newcomer to its peers and back at the first gesture.
+// Before that, a fresh repo could talk to nobody and the refusal was a 404 with no cause attached.
+//
+// There is nothing to read here about how that happens, and that is the design: the edges are
+// written by the query behind store.CreateProject, never by this service. Naming the table in Go
+// would be the trust decision leaving the query — refused by scripts/check-trust-in-sql-only.sh.
 func (s *service) CreateProject(ctx context.Context, in CreateProjectInput) (Project, error) {
 	key := strings.ToUpper(strings.TrimSpace(in.Key))
 	name := strings.TrimSpace(in.Name)

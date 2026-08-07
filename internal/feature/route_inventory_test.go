@@ -90,7 +90,7 @@ var inventory = []route{
 	{workspace.Key, http.MethodDelete, "DELETE /tokens/{id}", "/tokens/" + uuid.NewString(), adminOnly},
 	{workspace.Key, http.MethodGet, "GET /trust", "/trust", adminOnly},
 	{workspace.Key, http.MethodPost, "POST /trust", "/trust", adminOnly},
-	{workspace.Key, http.MethodDelete, "DELETE /trust/{first}/{second}", "/trust/CORE/FRNT", adminOnly},
+	{workspace.Key, http.MethodDelete, "DELETE /trust/{from}/{to}", "/trust/CORE/FRNT", adminOnly},
 	{workspace.Key, http.MethodGet, "GET /whoami", "/whoami", anyToken},
 
 	// task — every route project-scoped, writes included.

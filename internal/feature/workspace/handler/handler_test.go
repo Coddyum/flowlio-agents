@@ -141,7 +141,7 @@ func tokenServer(t *testing.T, rec auth.TokenRecord, svc service.Service) (http.
 	mux.Handle("DELETE /tokens/{id}", admin(http.HandlerFunc(h.RevokeToken)))
 	mux.Handle("GET /trust", admin(http.HandlerFunc(h.ListTrust)))
 	mux.Handle("POST /trust", admin(http.HandlerFunc(h.AllowTrust)))
-	mux.Handle("DELETE /trust/{first}/{second}", admin(http.HandlerFunc(h.RevokeTrust)))
+	mux.Handle("DELETE /trust/{from}/{to}", admin(http.HandlerFunc(h.RevokeTrust)))
 
 	return mux, tok.Plain
 }
@@ -168,8 +168,8 @@ var teamForRoutes = []teamForRoute{
 	// the hole part 2 closes, reopened through its administration door. All three routes are
 	// therefore in this list, and the four tests below cover them.
 	{"GET /trust", http.MethodGet, "/trust", "", "ListTrust"},
-	{"POST /trust", http.MethodPost, "/trust", `{"first":"FRNT","second":"CORE"}`, "AllowTrust"},
-	{"DELETE /trust/{first}/{second}", http.MethodDelete, "/trust/FRNT/CORE", "", "RevokeTrust"},
+	{"POST /trust", http.MethodPost, "/trust", `{"from":"FRNT","to":"CORE"}`, "AllowTrust"},
+	{"DELETE /trust/{from}/{to}", http.MethodDelete, "/trust/FRNT/CORE", "", "RevokeTrust"},
 }
 
 // call plays an admin request on a route and returns the status, the body, and the calls the

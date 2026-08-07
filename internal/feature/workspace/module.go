@@ -75,7 +75,7 @@ func (m *mod) Routes() http.Handler {
 	// reopen the channel that part 2 closes.
 	r.Handle("GET /trust", admin(http.HandlerFunc(m.h.ListTrust)))
 	r.Handle("POST /trust", admin(http.HandlerFunc(m.h.AllowTrust)))
-	r.Handle("DELETE /trust/{first}/{second}", admin(http.HandlerFunc(m.h.RevokeTrust)))
+	r.Handle("DELETE /trust/{from}/{to}", admin(http.HandlerFunc(m.h.RevokeTrust)))
 
 	r.Handle("GET /whoami", authed(http.HandlerFunc(m.h.Whoami)))
 

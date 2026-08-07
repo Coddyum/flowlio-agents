@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -250,30 +249,23 @@ func TestDatabaseRejectsMalformedKey(t *testing.T) {
 	}
 }
 
-// ordered returns the canonical pair of a trust edge: low < high, in Postgres's sense.
+// allowTrust lays down ONE DIRECTED trust edge through direct SQL.
 //
-// uuid.UUID is a [16]byte, so Go's < operator does not apply; the byte-by-byte comparison is
-// exactly the one Postgres performs on the uuid type.
-func ordered(a, b uuid.UUID) (low, high uuid.UUID) {
-	if bytes.Compare(a[:], b[:]) < 0 {
-		return a, b
-	}
-	return b, a
-}
-
-// allowTrust lays down a trust edge through direct SQL, normalising it.
-func allowTrust(t *testing.T, db *sql.DB, teamID, a, b uuid.UUID) error {
+// It no longer normalises anything, and it no longer can: since migration 000013 the two columns
+// are `from` and `to`, and an `ordered()` helper sorting them — which is what this file used to
+// carry — would have made every caller below insert the same row whichever way it named the two
+// projects, hiding the direction the table exists to hold.
+func allowTrust(t *testing.T, db *sql.DB, teamID, from, to uuid.UUID) error {
 	t.Helper()
 
-	low, high := ordered(a, b)
 	_, err := db.Exec(
-		"INSERT INTO project_trust (team_id, low_project_id, high_project_id) VALUES ($1, $2, $3)",
-		teamID, low, high,
+		"INSERT INTO project_trust (team_id, from_project_id, to_project_id) VALUES ($1, $2, $3)",
+		teamID, from, to,
 	)
 	return err
 }
 
-// The database refuses the nine illegal shapes of the trust graph — not the code, the DATABASE.
+// The database refuses the seven illegal shapes of the trust graph — not the code, the DATABASE.
 //
 // This is the repo's doctrine applied to `project_trust`: the illegal shape is made NOT INSERTABLE
 // rather than merely not produced. The COMPOSITE FKs `(project_id, team_id)` are what does the
@@ -281,8 +273,15 @@ func allowTrust(t *testing.T, db *sql.DB, teamID, a, b uuid.UUID) error {
 // different teams is impossible, including when the caller LIES about `team_id` — both directions
 // of the lie are tested.
 //
-// MUTATION: removing `project_trust_ordered` lets the self-edge and the mirror through; removing
-// either composite FK lets the corresponding cross-team edge through.
+// WHAT MIGRATION 000013 CHANGED HERE. `project_trust_ordered` used to close two shapes at once, the
+// self-edge and the mirror. The mirror is now LEGAL — it is the opposite direction, and the whole
+// point of the card — so only the self-edge is still refused, by the CHECK that replaced it,
+// project_trust_not_self. The mirror gets a POSITIVE control instead: a test suite that dropped the
+// case rather than inverting it would leave nothing observing that the model really is directed at
+// the database level.
+//
+// MUTATION: removing `project_trust_not_self` lets the self-edge through; removing either composite
+// FK lets the corresponding cross-team edge through.
 func TestDatabaseRejectsIllegalTrustEdges(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -304,15 +303,13 @@ func TestDatabaseRejectsIllegalTrustEdges(t *testing.T) {
 		t.Fatalf("CreateProject neighbour: %v", err)
 	}
 
-	lowAB, highAB := ordered(core.ID, neighbour.ID)
-
 	forbidden := []struct {
 		name     string
 		exec     func() error
 		contains string
 	}{
 		{
-			"cross-team edge, team_id of the first project",
+			"cross-team edge, team_id of the sender",
 			func() error { return allowTrust(t, db, teamA.ID, core.ID, neighbour.ID) },
 			"project_trust_",
 		},
@@ -327,24 +324,11 @@ func TestDatabaseRejectsIllegalTrustEdges(t *testing.T) {
 			"project_trust_",
 		},
 		{
+			// The self-edge is the one shape 000013 had to close again by hand: the ordering CHECK
+			// used to exclude equality for free, and it is gone.
 			"self-edge",
-			func() error {
-				_, err := db.Exec(
-					"INSERT INTO project_trust (team_id, low_project_id, high_project_id) VALUES ($1, $2, $2)",
-					teamA.ID, core.ID)
-				return err
-			},
-			"project_trust_ordered",
-		},
-		{
-			"non-canonical pair (mirror)",
-			func() error {
-				_, err := db.Exec(
-					"INSERT INTO project_trust (team_id, low_project_id, high_project_id) VALUES ($1, $2, $3)",
-					teamA.ID, highAB, lowAB)
-				return err
-			},
-			"project_trust_ordered",
+			func() error { return allowTrust(t, db, teamA.ID, core.ID, core.ID) },
+			"project_trust_not_self",
 		},
 	}
 
@@ -360,17 +344,48 @@ func TestDatabaseRejectsIllegalTrustEdges(t *testing.T) {
 		})
 	}
 
-	// The legal edge does go through — without a counter-check, a constraint refusing EVERYTHING
-	// would pass for correct.
-	if err := allowTrust(t, db, teamA.ID, core.ID, front.ID); err != nil {
-		t.Fatalf("legal edge refused: %v", err)
+	// The legal edges are PRESENT, BOTH OF THEM — without a positive control, a constraint refusing
+	// EVERYTHING would pass for correct.
+	//
+	// They are no longer laid down here. Creating FRNT in teamA already opened CORE→FRNT and
+	// FRNT→CORE, in the same statement as the project (card 12 doubled by card 11,
+	// sql/queries/projects.sql): re-inserting either would now hit project_trust_pkey, and the
+	// assertion would read as "the constraints refuse a legal edge". Reading the rows proves the
+	// same thing — the shape passed every constraint — through the path that actually writes it.
+	var legal int
+	if err := db.QueryRow(
+		`SELECT count(*) FROM project_trust
+		 WHERE team_id = $1 AND (from_project_id, to_project_id) IN (($2, $3), ($3, $2))`,
+		teamA.ID, core.ID, front.ID,
+	).Scan(&legal); err != nil {
+		t.Fatalf("reading the legal edges: %v", err)
+	}
+	if legal != 2 {
+		t.Fatalf("CORE and FRNT hold %d edges, want 2 (one per direction): either the constraints "+
+			"refuse a legal edge, or creating a repo no longer links it to its peers both ways", legal)
 	}
 
-	t.Run("duplicate", func(t *testing.T) {
-		if err := allowTrust(t, db, teamA.ID, front.ID, core.ID); err == nil {
-			t.Fatal("the database accepted a duplicate (the pair is already declared the other way round)")
+	t.Run("duplicate in the same direction", func(t *testing.T) {
+		if err := allowTrust(t, db, teamA.ID, core.ID, front.ID); err == nil {
+			t.Fatal("the database accepted a duplicate (CORE→FRNT is already declared)")
 		} else if !strings.Contains(err.Error(), "project_trust_pkey") {
 			t.Errorf("refused by something other than the primary key: %v", err)
+		}
+	})
+
+	// THE POSITIVE CONTROL THAT REPLACES THE OLD "non-canonical pair (mirror)" CASE. Under 000007
+	// that insert was refused by project_trust_ordered; under 000013 it is a different row, and it
+	// must be accepted. Nothing else in the suite reads that fact off the table itself, so a
+	// migration that forgot to drop the ordering CHECK would surface here and nowhere else.
+	t.Run("the mirror is a different row, not a duplicate", func(t *testing.T) {
+		if _, err := db.Exec(
+			"DELETE FROM project_trust WHERE team_id = $1 AND from_project_id = $2 AND to_project_id = $3",
+			teamA.ID, front.ID, core.ID,
+		); err != nil {
+			t.Fatalf("removing FRNT→CORE: %v", err)
+		}
+		if err := allowTrust(t, db, teamA.ID, front.ID, core.ID); err != nil {
+			t.Fatalf("FRNT→CORE refused while CORE→FRNT exists: %v — the edge is still a pair", err)
 		}
 	})
 

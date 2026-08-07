@@ -5,18 +5,18 @@ package service
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
 // | Service            | The contract consumed by the workspace handler                | 43    |
-// | service            | Implementation, depending on the store interface             | 74    |
-// | New                | Creates the workspace service                                | 79    |
-// | CreateTeamInput    | Input for creating a team                                    | 85    |
-// | Team               | A team as exposed by the API                                 | 91    |
-// | CreateProjectInput | Input for creating a project                                 | 100   |
-// | Project            | A project as exposed by the API                              | 107   |
-// | CreateTokenInput   | Input for issuing an agent token                             | 115   |
-// | CreatedToken       | A freshly created token: the one chance to see the secret    | 123   |
-// | TokenInfo          | A listed token, with neither secret nor hash                 | 132   |
-// | TrustPairInput     | A pair of projects named by their two keys                   | 148   |
-// | TrustDecision      | What a write on the graph actually changed                   | 159   |
-// | TrustEdge          | An edge of the graph as exposed by the API                   | 166   |
+// | service            | Implementation, depending on the store interface             | 77    |
+// | New                | Creates the workspace service                                | 82    |
+// | CreateTeamInput    | Input for creating a team                                    | 88    |
+// | Team               | A team as exposed by the API                                 | 94    |
+// | CreateProjectInput | Input for creating a project                                 | 103   |
+// | Project            | A project as exposed by the API                              | 110   |
+// | CreateTokenInput   | Input for issuing an agent token                             | 118   |
+// | CreatedToken       | A freshly created token: the one chance to see the secret    | 126   |
+// | TokenInfo          | A listed token, with neither secret nor hash                 | 135   |
+// | TrustPairInput     | One directed edge named by the keys of its two ends           | 152   |
+// | TrustDecision      | What a write on the graph actually changed                   | 163   |
+// | TrustEdge          | A directed edge of the graph as exposed by the API           | 171   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -65,6 +65,9 @@ type Service interface {
 	// These three methods carry NO authorisation decision: they edit a declaration, and it is the
 	// CreateIssue query that enforces it. Their only validation is that of two strings typed by a
 	// human — tenancy itself lives in the query.
+	//
+	// AllowTrust and RevokeTrust act on ONE DIRECTION. `From` may open a question at `To`; the
+	// reciprocal is a second call, and ListTrust returns one edge per direction.
 	AllowTrust(ctx context.Context, in TrustPairInput) (TrustDecision, error)
 	RevokeTrust(ctx context.Context, in TrustPairInput) (TrustDecision, error)
 	ListTrust(ctx context.Context, teamID uuid.UUID) ([]TrustEdge, error)
@@ -138,33 +141,35 @@ type TokenInfo struct {
 	Revoked    bool       `json:"revoked"`
 }
 
-// TrustPairInput names a pair of projects by their KEYS.
+// TrustPairInput names ONE DIRECTED edge by the KEYS of its two ends.
 //
 // No UUID: both keys are resolved INSIDE the query, under the team_id already proven by teamFor. A
 // handler resolving the keys itself would hand-rebuild the very enumeration the model refuses to
 // expose.
 //
-// The order of the two keys carries NO meaning: the edge is a pair, not an arrow.
+// From is the repo allowed to OPEN a question, To the repo it may open it at. The order is the
+// whole content of the type: swapping the two fields names a different edge.
 type TrustPairInput struct {
 	TeamID uuid.UUID `json:"-"`
-	First  string    `json:"first"`
-	Second string    `json:"second"`
+	From   string    `json:"from"`
+	To     string    `json:"to"`
 }
 
 // TrustDecision says what the write actually changed, so the CLI can tell "done" from "it already
 // was" without a second round trip.
 //
-// Changed is false on a replay: `trust allow` on an already-open pair, `trust deny` on an
+// Changed is false on a replay: `trust allow` on an already-open edge, `trust deny` on an
 // already-closed one. Both verbs are idempotent, and this field is what makes it visible.
 type TrustDecision struct {
-	First   string `json:"first"`
-	Second  string `json:"second"`
+	From    string `json:"from"`
+	To      string `json:"to"`
 	Changed bool   `json:"changed"`
 }
 
-// TrustEdge is an edge as exposed by the API: two keys and a date.
+// TrustEdge is a DIRECTED edge as exposed by the API: a sender, a recipient and a date. A mutually
+// trusted pair is two of these.
 type TrustEdge struct {
-	First     string    `json:"first"`
-	Second    string    `json:"second"`
+	From      string    `json:"from"`
+	To        string    `json:"to"`
 	CreatedAt time.Time `json:"created_at"`
 }

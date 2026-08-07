@@ -76,24 +76,29 @@ func newProject(t *testing.T, db *sql.DB, teamID uuid.UUID, key string) project 
 	return project{teamID: teamID, id: id, key: key}
 }
 
-// trust declares a trust between two test projects.
+// trust declares ONE DIRECTED trust: `from` may open a question at `to`, and nothing more. The
+// opposite direction is a second call, and the tests below make it only where they mean it.
 //
 // The graph is laid down BY HAND in every test that needs it, exactly like the tenancy scope:
 // hiding it inside newProject would mask the very guarantee these tests exist to prove. It is the
 // only occurrence of `project_trust` in this repo's Go outside generated code, and it sits in a
 // test file — a fixture, never a decision.
-func trust(t *testing.T, db *sql.DB, a, b project) {
+//
+// The signature reads `trust(t, db, from, to)` and the helper does NOT normalise the two ends. A
+// fixture that sorted them — which is what this one did while the edge was a pair — would open both
+// directions on every call, and every "the other way round is refused" assertion in this package
+// would pass on a graph that authorised it.
+func trust(t *testing.T, db *sql.DB, from, to project) {
 	t.Helper()
 
-	if a.teamID != b.teamID {
-		t.Fatalf("trust %s ↔ %s: different teams, the pair is not insertable", a.key, b.key)
+	if from.teamID != to.teamID {
+		t.Fatalf("trust %s → %s: different teams, the edge is not insertable", from.key, to.key)
 	}
 	if _, err := db.Exec(
-		`INSERT INTO project_trust (team_id, low_project_id, high_project_id)
-		 VALUES ($1, least($2::uuid, $3::uuid), greatest($2::uuid, $3::uuid))`,
-		a.teamID, a.id, b.id,
+		`INSERT INTO project_trust (team_id, from_project_id, to_project_id) VALUES ($1, $2, $3)`,
+		from.teamID, from.id, to.id,
 	); err != nil {
-		t.Fatalf("trust %s ↔ %s: %v", a.key, b.key, err)
+		t.Fatalf("trust %s → %s: %v", from.key, to.key, err)
 	}
 }
 
@@ -317,8 +322,7 @@ func TestIssuesCannotCrossTeams(t *testing.T) {
 		{"recipient's team", teamB},
 	} {
 		if _, err := db.Exec(
-			`INSERT INTO project_trust (team_id, low_project_id, high_project_id)
-			 VALUES ($1, least($2::uuid, $3::uuid), greatest($2::uuid, $3::uuid))`,
+			`INSERT INTO project_trust (team_id, from_project_id, to_project_id) VALUES ($1, $2, $3)`,
 			claimed.teamID, web.id, foreign.id,
 		); err == nil {
 			t.Fatalf("cross-team edge inserted while claiming the %s, want a foreign key violation", claimed.name)
@@ -407,9 +411,9 @@ func TestIssuesAndTasksShareTheProjectCounter(t *testing.T) {
 // could never reach `answered` since the transition depends on the sender.
 //
 // Since the trust graph, the refusal is ErrNotFound rather than ErrConflict: self-addressing gives
-// least = greatest, a shape project_trust_ordered makes NOT INSERTABLE, hence never present in the
-// graph. The issues_not_self CHECK is no longer reached — the refusal becomes uniform with that of
-// an unknown key, of another team or of an undeclared pair, and that is the point.
+// from = to, a shape project_trust_not_self makes NOT INSERTABLE, hence never present in the graph.
+// The issues_not_self CHECK is no longer reached — the refusal becomes uniform with that of an
+// unknown key, of another team or of an undeclared direction, and that is the point.
 func TestSelfIssueIsRejectedByTheDatabase(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -436,10 +440,10 @@ func TestSelfIssueIsRejectedByTheDatabase(t *testing.T) {
 	// The self-edge is refused by the database itself: the property above does not rest on a writing
 	// convention, but on a constraint.
 	if _, err := db.Exec(
-		`INSERT INTO project_trust (team_id, low_project_id, high_project_id) VALUES ($1, $2, $2)`,
+		`INSERT INTO project_trust (team_id, from_project_id, to_project_id) VALUES ($1, $2, $2)`,
 		teamID, web.id,
 	); err == nil {
-		t.Fatal("a self-edge was inserted, want a project_trust_ordered violation")
+		t.Fatal("a self-edge was inserted, want a project_trust_not_self violation")
 	}
 
 	// And WEB's counter has not moved: a refusal consumes no number, including when sender and
@@ -459,7 +463,11 @@ func TestListIssuesFiltersByRoleAndState(t *testing.T) {
 	teamID := newTeam(t, db)
 	web := newProject(t, db, teamID, "WEB")
 	core := newProject(t, db, teamID, "CORE")
+	// BOTH directions, because this test opens an issue each way. Under the pair of 000007 the
+	// single fixture line below covered both; since 000013 it covers one, and the second `open`
+	// would fail on a `not found` that has nothing to do with what is under test here.
 	trust(t, db, web, core)
+	trust(t, db, core, web)
 
 	outgoing := open(t, st, web, core, "WEB asks CORE")
 	open(t, st, core, web, "CORE asks WEB")
@@ -634,8 +642,10 @@ func TestCancelledRequestOpensNothing(t *testing.T) {
 // ErrNotFound all the same. Were the predicate ever to migrate into an upstream `if`, this test
 // would be the only one in the repo to go red.
 //
-// It also proves the edge's SYMMETRY: a single row, and the channel opens both ways. A directed
-// table would have let one direction through and refused the other.
+// It also proves the edge's DIRECTION, which is the whole of card 11: one row authorises ONE way,
+// and the opposite way is refused exactly like an undeclared pair. Under the symmetric table of
+// 000007 the last subtest below read "want success (the edge is symmetric)"; it is now the
+// headline guarantee, inverted.
 func TestTrustPredicateLivesInTheQueryNotInAService(t *testing.T) {
 	st, db := newStore(t)
 	ctx := context.Background()
@@ -645,7 +655,7 @@ func TestTrustPredicateLivesInTheQueryNotInAService(t *testing.T) {
 	core := newProject(t, db, teamID, "CORE")
 	ops := newProject(t, db, teamID, "OPS")
 
-	// FRNT ↔ CORE only. OPS exists, is in the same team, and has no edge.
+	// FRNT → CORE, and that arrow alone. OPS exists, is in the same team, and has no edge at all.
 	trust(t, db, frnt, core)
 
 	createDirectly := func(from, to project) error {
@@ -672,17 +682,19 @@ func TestTrustPredicateLivesInTheQueryNotInAService(t *testing.T) {
 		}
 	})
 
-	// The edge is a PAIR, not an arrow: it was laid down in the FRNT → CORE direction, and both
-	// directions go through.
-	t.Run("declared pair, declaration direction", func(t *testing.T) {
+	// THE TWO SUBTESTS CARD 11 EXISTS FOR. The arrow was laid down FRNT → CORE: that direction goes
+	// through, and the opposite one does not — although both projects exist, sit in the same team,
+	// and are joined by a row of the graph.
+	t.Run("declared direction", func(t *testing.T) {
 		if err := createDirectly(frnt, core); err != nil {
 			t.Errorf("FRNT → CORE: %v, want success", err)
 		}
 	})
 
-	t.Run("declared pair, reverse direction", func(t *testing.T) {
-		if err := createDirectly(core, frnt); err != nil {
-			t.Errorf("CORE → FRNT: %v, want success (the edge is symmetric)", err)
+	t.Run("the reverse of a declared direction is refused", func(t *testing.T) {
+		if err := createDirectly(core, frnt); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("CORE → FRNT: error = %v, want ErrNotFound — the arrow FRNT → CORE authorises "+
+				"FRNT to ask, and nothing else", err)
 		}
 	})
 

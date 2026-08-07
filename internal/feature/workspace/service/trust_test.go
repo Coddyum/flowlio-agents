@@ -23,36 +23,36 @@ import (
 type trustSpy struct {
 	store.Store
 
-	calls  int
-	first  string
-	second string
+	calls int
+	from  string
+	to    string
 }
 
-func (s *trustSpy) AllowTrust(_ context.Context, _ uuid.UUID, first, second string) (bool, error) {
+func (s *trustSpy) AllowTrust(_ context.Context, _ uuid.UUID, from, to string) (bool, error) {
 	s.calls++
-	s.first, s.second = first, second
+	s.from, s.to = from, to
 	return true, nil
 }
 
-func (s *trustSpy) RevokeTrust(_ context.Context, _ uuid.UUID, first, second string) (bool, error) {
+func (s *trustSpy) RevokeTrust(_ context.Context, _ uuid.UUID, from, to string) (bool, error) {
 	s.calls++
-	s.first, s.second = first, second
+	s.from, s.to = from, to
 	return true, nil
 }
 
-// A project cannot allow itself, and the message SAYS so.
+// A project cannot trust itself, and the message SAYS so.
 //
-// The database would refuse anyway (project_trust_ordered excludes equality), but it would return a
-// `not found` — that is, to the human, the same message as if they had typed a key that does not
+// The database would refuse anyway (project_trust_not_self, migration 000013), but it would return
+// a `not found` — that is, to the human, the same message as if they had typed a key that does not
 // exist. This check exists to turn that silence into a useful sentence.
 //
 // The `frnt`/`FRNT` case is the one that matters: the comparison happens AFTER normalisation.
 // Without that, validation would pass and the database would return a 404 on a command whose
 // mistake was obvious.
-func TestTrustRefusesASelfPair(t *testing.T) {
+func TestTrustRefusesASelfEdge(t *testing.T) {
 	teamID := uuid.New()
 
-	cases := []struct{ name, first, second string }{
+	cases := []struct{ name, from, to string }{
 		{"identical keys", "FRNT", "FRNT"},
 		{"different case", "frnt", "FRNT"},
 		{"surrounding spaces", " FRNT ", "FRNT"},
@@ -68,7 +68,7 @@ func TestTrustRefusesASelfPair(t *testing.T) {
 				},
 			} {
 				spy := &trustSpy{}
-				err := call(New(spy), TrustPairInput{TeamID: teamID, First: c.first, Second: c.second})
+				err := call(New(spy), TrustPairInput{TeamID: teamID, From: c.from, To: c.to})
 
 				if !errors.Is(err, ErrInvalidInput) {
 					t.Errorf("%s: error = %v, want ErrInvalidInput", verb, err)
@@ -94,35 +94,40 @@ func TestTrustNormalisesKeysBeforeTheStore(t *testing.T) {
 
 	spy := &trustSpy{}
 	if _, err := New(spy).AllowTrust(context.Background(), TrustPairInput{
-		TeamID: teamID, First: " frnt ", Second: "core",
+		TeamID: teamID, From: " frnt ", To: "core",
 	}); err != nil {
 		t.Fatalf("AllowTrust: %v", err)
 	}
 
-	if spy.first != "FRNT" || spy.second != "CORE" {
-		t.Errorf("the store received (%q, %q), want (\"FRNT\", \"CORE\")", spy.first, spy.second)
+	if spy.from != "FRNT" || spy.to != "CORE" {
+		t.Errorf("the store received (%q, %q), want (\"FRNT\", \"CORE\")", spy.from, spy.to)
 	}
 }
 
 // The ORDER of the two keys is carried through to the store as is: the service does not sort.
 //
-// This is deliberate and deserves a test, because intuition says the opposite. Normalisation into a
-// canonical pair (`least`/`greatest`) happens IN THE QUERY, on the UUIDs — not on the keys. Sorting
-// by key here would be a second canonical order, and a wrong one: `least` applies to the
-// identifiers, whose order has nothing to do with the alphabet.
+// THE RATIONALE CHANGED WITH CARD 11, THE ASSERTION DID NOT. It used to be a note about canonical
+// pairs: `least`/`greatest` ran in the query, on the UUIDs, so a sort by key here would have been a
+// second canonical order — wrong, but only wasteful. Since migration 000013 the order IS THE
+// AUTHORISATION: `ZULU ALFA` says ZULU may question ALFA and says nothing about the other way. A
+// service that sorted the two keys would silently turn `allow ZULU ALFA` into `allow ALFA ZULU`,
+// and `deny` would cut the edge the human did not name.
+//
+// The keys are chosen so alphabetical order and command order DISAGREE: with ZULU first, a sort
+// would show up here and nowhere else.
 func TestTrustDoesNotReorderKeys(t *testing.T) {
 	teamID := uuid.New()
 
 	spy := &trustSpy{}
 	if _, err := New(spy).AllowTrust(context.Background(), TrustPairInput{
-		TeamID: teamID, First: "ZULU", Second: "ALFA",
+		TeamID: teamID, From: "ZULU", To: "ALFA",
 	}); err != nil {
 		t.Fatalf("AllowTrust: %v", err)
 	}
 
-	if spy.first != "ZULU" || spy.second != "ALFA" {
-		t.Errorf("the store received (%q, %q), want the order of the command — the canonical pair "+
-			"is computed on the UUIDs in the query, not on the keys here", spy.first, spy.second)
+	if spy.from != "ZULU" || spy.to != "ALFA" {
+		t.Errorf("the store received (%q, %q), want (\"ZULU\", \"ALFA\") — the order of the "+
+			"command IS the direction of the edge, and nothing may reorder it", spy.from, spy.to)
 	}
 }
 
@@ -134,7 +139,7 @@ func TestTrustRejectsMalformedKeys(t *testing.T) {
 		t.Run("key "+key, func(t *testing.T) {
 			spy := &trustSpy{}
 			if _, err := New(spy).AllowTrust(context.Background(), TrustPairInput{
-				TeamID: teamID, First: key, Second: "CORE",
+				TeamID: teamID, From: key, To: "CORE",
 			}); !errors.Is(err, ErrInvalidInput) {
 				t.Errorf("error = %v, want ErrInvalidInput", err)
 			}
@@ -152,7 +157,7 @@ func TestTrustRefusesAnUnresolvedTeam(t *testing.T) {
 	spy := &trustSpy{}
 
 	if _, err := New(spy).AllowTrust(context.Background(), TrustPairInput{
-		First: "FRNT", Second: "CORE",
+		From: "FRNT", To: "CORE",
 	}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("AllowTrust with no team: error = %v, want ErrInvalidInput", err)
 	}
