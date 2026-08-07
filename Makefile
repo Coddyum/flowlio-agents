@@ -6,6 +6,7 @@ SQLC          ?= sqlc
 MIGRATIONS    ?= sql/migrations
 SCHEMA_DUMP   ?= sql/schema/schema.sql
 PG_CONTAINER  ?= flowlio-postgres
+HOSTED_ADDR   ?= :42059
 
 # Charge .env s'il existe : DATABASE_URL est alors disponible pour les cibles ci-dessous.
 ifneq (,$(wildcard .env))
@@ -16,7 +17,7 @@ endif
 DB_URL_DEV    ?= $(DATABASE_URL)
 DB_URL_PROD   ?= $(DATABASE_URL_PROD)
 
-.PHONY: help dev-up dev-down run build check lint test test-integration vet sqlc schema sommaire up-dev down-dev up-prod new-migration
+.PHONY: help dev-up dev-down run run-hosted build check lint test test-integration vet sqlc schema sommaire up-dev down-dev up-prod new-migration
 
 help: ## Liste les cibles
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -32,6 +33,22 @@ dev-down: ## Arrête Postgres 18
 
 run: ## Lance l'API
 	go run ./cmd/api
+
+# Hosted mode, the way flowlio-core reaches this engine in development.
+#
+# ADDR is passed on the recipe line rather than through the environment on purpose: the `include
+# .env` above already defines ADDR, and an included value beats an inherited one. A shell
+# assignment prefix does not.
+#
+# ADMIN_TOKEN is never written to .env. Putting it there would fatal every plain `make run`:
+# config.go refuses a credential that is configured and ignored, so an admin token without
+# MODE=hosted stops the process rather than being silently unused.
+run-hosted: ## Run the API in hosted mode on HOSTED_ADDR (needs ADMIN_TOKEN)
+	@test -n "$(ADMIN_TOKEN)" || { \
+		echo "ADMIN_TOKEN is not set. It is the same secret as flowlio-core's AGENTS_ADMIN_TOKEN,"; \
+		echo "under two names. Mint one with: go run ./cmd/api mint-admin-token"; \
+		exit 1; }
+	MODE=hosted ADDR=$(HOSTED_ADDR) go run ./cmd/api
 
 build: ## Compile
 	go build ./...
