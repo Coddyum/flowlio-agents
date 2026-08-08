@@ -1,44 +1,57 @@
 package store_test
 
-// What this file locks down: the three administration queries of the graph.
+// What this file locks down: the three administration queries of the graph, now that the edge is
+// DIRECTED (migration 000013).
 //
 // The table's CONSTRAINTS are covered by TestDatabaseRejectsIllegalTrustEdges
 // (store_integration_test.go); here we check what the queries make OF those constraints —
-// idempotence, key resolution, team boundary — that is, what a human sees.
+// idempotence, key resolution, team boundary, and above all the fact that the two directions of a
+// couple are two independent declarations.
 
 import (
 	"context"
 	"errors"
-	"sort"
 	"strings"
 	"testing"
 
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/store"
 )
 
-// onlyPair returns a graph's single edge in a form INDEPENDENT OF THE ORDER of the two keys.
+// readGraph renders a team's graph as one readable string — "CORE→FRNT, FRNT→CORE" — in the order
+// the query returns it, DIRECTION INCLUDED.
 //
-// The order of `first_key`/`second_key` is that of the UUIDs in the database, not alphabetical
-// order nor the order of the command: asserting `SecondKey == "FRNT"` would be a coin flip on every
-// run. That is exactly the defect the first version of this file carried, and which only showed up
-// when playing the whole suite.
+// It replaces onlyPair, which sorted the two ends of each edge. That was right under a pair —
+// first_key and second_key came back in UUID order, which is a coin flip and means nothing — and it
+// is exactly wrong now: sorting the ends renders CORE→FRNT and FRNT→CORE identically, so every
+// assertion built on it would pass on a graph pointing the other way. The rows are not sorted here
+// either, because ListTrustEdges declares `ORDER BY a.key, b.key` and that order is what a human
+// reads.
 //
-// Sorting here weakens nothing: an edge is a PAIR, and claiming to test a direction on a structure
-// that has none would be testing a property the product does not promise.
-func onlyPair(t *testing.T, edges []store.TrustEdge) string {
+// One string rather than a slice, so a failing assertion prints the graph that IS, next to the
+// graph that was wanted, rather than a length or a boolean.
+func readGraph(t *testing.T, st store.Store, team store.Team) string {
 	t.Helper()
 
-	if len(edges) != 1 {
-		t.Fatalf("%d edges, want exactly 1: %+v", len(edges), edges)
+	edges, err := st.ListTrustEdges(context.Background(), team.ID)
+	if err != nil {
+		t.Fatalf("ListTrustEdges: %v", err)
 	}
-	keys := []string{edges[0].FirstKey, edges[0].SecondKey}
-	sort.Strings(keys)
-	return strings.Join(keys, "↔")
+
+	rendered := make([]string, 0, len(edges))
+	for _, e := range edges {
+		rendered = append(rendered, e.FromKey+"→"+e.ToKey)
+	}
+	return strings.Join(rendered, ", ")
 }
 
-// The nominal cycle: open, replay, read, close, replay.
+// The nominal cycle: open, replay, open the OTHER WAY, read, close one direction, close the other.
 //
-// Both verbs are idempotent and say so — `created` and `removed` tell "done" from "it already was"
+// THE SUBTEST THAT CARRIES CARD 11 is "the reverse direction is a second declaration". Under the
+// pair of 000007 it returned created = false — declaring FRNT↔CORE after CORE↔FRNT touched the same
+// single row. Under the directed table it returns created = true and the graph holds two rows,
+// because those are two different authorisations and the customer typed both.
+//
+// Both verbs stay idempotent and say so — `created` and `removed` tell "done" from "it already was"
 // WITHOUT a second round trip. Without those flags, the CLI would have to re-read the graph after
 // every write to know what to display.
 func TestTrustLifecycle(t *testing.T) {
@@ -53,6 +66,37 @@ func TestTrustLifecycle(t *testing.T) {
 		t.Fatalf("CreateProject FRNT: %v", err)
 	}
 
+	// The two repos are born linked IN BOTH DIRECTIONS: creating FRNT opened its two arrows with
+	// CORE in the same statement (card 12, doubled by card 11). The rest of this test is about the
+	// HUMAN verbs, so it starts by closing that default — without which "the first opening" below
+	// would not be one.
+	t.Run("both directions are already open at creation", func(t *testing.T) {
+		if got := readGraph(t, st, team); got != "CORE→FRNT, FRNT→CORE" {
+			t.Errorf("graph right after the creations = %q, want %q", got, "CORE→FRNT, FRNT→CORE")
+		}
+
+		created, err := st.AllowTrust(ctx, team.ID, "CORE", "FRNT")
+		if err != nil {
+			t.Fatalf("AllowTrust: %v", err)
+		}
+		if created {
+			t.Error("created = true: the edge was already opened by the creation of the repos")
+		}
+
+		for _, e := range [][2]string{{"CORE", "FRNT"}, {"FRNT", "CORE"}} {
+			removed, err := st.RevokeTrust(ctx, team.ID, e[0], e[1])
+			if err != nil {
+				t.Fatalf("RevokeTrust %s→%s (closing the default): %v", e[0], e[1], err)
+			}
+			if !removed {
+				t.Fatalf("removed = false on %s→%s: there was no default edge to close", e[0], e[1])
+			}
+		}
+		if got := readGraph(t, st, team); got != "" {
+			t.Fatalf("graph after closing both defaults = %q, want empty", got)
+		}
+	})
+
 	t.Run("opening", func(t *testing.T) {
 		created, err := st.AllowTrust(ctx, team.ID, "CORE", "FRNT")
 		if err != nil {
@@ -60,6 +104,9 @@ func TestTrustLifecycle(t *testing.T) {
 		}
 		if !created {
 			t.Error("created = false on the first opening")
+		}
+		if got := readGraph(t, st, team); got != "CORE→FRNT" {
+			t.Errorf("graph = %q, want %q: one command opens ONE direction", got, "CORE→FRNT")
 		}
 	})
 
@@ -71,18 +118,24 @@ func TestTrustLifecycle(t *testing.T) {
 		if created {
 			t.Error("created = true on the replay: the command is not idempotent")
 		}
+		if got := readGraph(t, st, team); got != "CORE→FRNT" {
+			t.Errorf("graph = %q after a replay, want %q: the replay wrote a row", got, "CORE→FRNT")
+		}
 	})
 
-	// The edge is a PAIR: declaring it the other way round does not create a second row, and says
-	// so. Under a directed table, this case would have returned created = true and the graph would
-	// have carried two rows for a single authorisation.
-	t.Run("replaying the other way round", func(t *testing.T) {
+	// THE CASE CARD 11 EXISTS FOR. Naming the two projects the other way round declares a SECOND
+	// edge: `FRNT → CORE` is the authorisation for FRNT to open a question at CORE, and nothing in
+	// `CORE → FRNT` granted it.
+	t.Run("the reverse direction is a second declaration", func(t *testing.T) {
 		created, err := st.AllowTrust(ctx, team.ID, "FRNT", "CORE")
 		if err != nil {
 			t.Fatalf("AllowTrust (reverse direction): %v", err)
 		}
-		if created {
-			t.Error("created = true the other way round: the edge is not symmetric")
+		if !created {
+			t.Error("created = false the other way round: the two directions are still one row")
+		}
+		if got := readGraph(t, st, team); got != "CORE→FRNT, FRNT→CORE" {
+			t.Errorf("graph = %q, want %q", got, "CORE→FRNT, FRNT→CORE")
 		}
 	})
 
@@ -91,27 +144,35 @@ func TestTrustLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListTrustEdges: %v", err)
 		}
-		// A pair declared three times (both directions, one replay) stays ONE row.
-		if got := onlyPair(t, edges); got != "CORE↔FRNT" {
-			t.Errorf("graph = %s, want CORE↔FRNT", got)
+		if len(edges) != 2 {
+			t.Fatalf("%d edges, want 2 (one per direction): %+v", len(edges), edges)
+		}
+		if edges[0].FromKey != "CORE" || edges[0].ToKey != "FRNT" {
+			t.Errorf("first edge = %s→%s, want CORE→FRNT (ORDER BY a.key, b.key)",
+				edges[0].FromKey, edges[0].ToKey)
 		}
 		if edges[0].CreatedAt.IsZero() {
 			t.Error("created_at is zero: the declaration date is lost")
 		}
 	})
 
-	t.Run("closing", func(t *testing.T) {
+	// AND THIS IS THE OTHER HALF OF THE SAME GUARANTEE: cutting one direction leaves the other
+	// standing. A `deny` that emptied the couple would make the model directed on paper only.
+	t.Run("closing one direction leaves the other", func(t *testing.T) {
 		removed, err := st.RevokeTrust(ctx, team.ID, "FRNT", "CORE")
 		if err != nil {
 			t.Fatalf("RevokeTrust: %v", err)
 		}
 		if !removed {
-			t.Error("removed = false although the pair was declared")
+			t.Error("removed = false although the edge was declared")
+		}
+		if got := readGraph(t, st, team); got != "CORE→FRNT" {
+			t.Errorf("graph = %q, want %q: cutting FRNT→CORE took CORE→FRNT with it", got, "CORE→FRNT")
 		}
 	})
 
 	t.Run("replaying the closing", func(t *testing.T) {
-		removed, err := st.RevokeTrust(ctx, team.ID, "CORE", "FRNT")
+		removed, err := st.RevokeTrust(ctx, team.ID, "FRNT", "CORE")
 		if err != nil {
 			t.Fatalf("RevokeTrust (replay): %v", err)
 		}
@@ -120,13 +181,12 @@ func TestTrustLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("the graph is empty", func(t *testing.T) {
-		edges, err := st.ListTrustEdges(ctx, team.ID)
-		if err != nil {
-			t.Fatalf("ListTrustEdges: %v", err)
+	t.Run("the graph is empty once the last direction is cut", func(t *testing.T) {
+		if _, err := st.RevokeTrust(ctx, team.ID, "CORE", "FRNT"); err != nil {
+			t.Fatalf("RevokeTrust: %v", err)
 		}
-		if len(edges) != 0 {
-			t.Errorf("%d edges after closing, want 0", len(edges))
+		if got := readGraph(t, st, team); got != "" {
+			t.Errorf("graph = %q after closing everything, want empty", got)
 		}
 	})
 }
@@ -136,10 +196,10 @@ func TestTrustLifecycle(t *testing.T) {
 // This is the accepted departure from docs/DESIGN-TRUST.md, which planned an `:execrows` for
 // RevokeTrust: a bare DELETE would have returned "nothing to remove" to a human who just typed a
 // key wrong, that is, an apparent success. These routes are ADMIN and an admin already enumerates
-// every project of every team: there is no oracle to protect, hence nothing to gain from keeping
-// the error quiet.
+// every project of every team: there is no oracle to protect, hence nothing to gain from keeping the
+// error quiet.
 //
-// MUTATION: going back to `DELETE ... USING projects a, projects b` without the `pair` CTE makes
+// MUTATION: going back to `DELETE ... USING projects a, projects b` without the `edge` CTE makes
 // the "closing, unknown key" subtest fail.
 func TestTrustRefusesUnknownKeys(t *testing.T) {
 	st, db := newStore(t)
@@ -151,12 +211,12 @@ func TestTrustRefusesUnknownKeys(t *testing.T) {
 	}
 
 	cases := []struct {
-		name  string
-		first string
-		last  string
+		name string
+		from string
+		to   string
 	}{
-		{"unknown second key", "CORE", "NOPE"},
-		{"unknown first key", "NOPE", "CORE"},
+		{"unknown recipient", "CORE", "NOPE"},
+		{"unknown sender", "NOPE", "CORE"},
 		{"both unknown", "NOPE", "NADA"},
 		// Case is NOT normalised by the query: it is the service that uppercases. This case pins the
 		// boundary — were normalisation to migrate into the SQL, it would turn green and one would
@@ -166,13 +226,13 @@ func TestTrustRefusesUnknownKeys(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run("opening, "+c.name, func(t *testing.T) {
-			if _, err := st.AllowTrust(ctx, team.ID, c.first, c.last); !errors.Is(err, store.ErrNotFound) {
-				t.Errorf("AllowTrust(%s, %s): error = %v, want ErrNotFound", c.first, c.last, err)
+			if _, err := st.AllowTrust(ctx, team.ID, c.from, c.to); !errors.Is(err, store.ErrNotFound) {
+				t.Errorf("AllowTrust(%s, %s): error = %v, want ErrNotFound", c.from, c.to, err)
 			}
 		})
 		t.Run("closing, "+c.name, func(t *testing.T) {
-			if _, err := st.RevokeTrust(ctx, team.ID, c.first, c.last); !errors.Is(err, store.ErrNotFound) {
-				t.Errorf("RevokeTrust(%s, %s): error = %v, want ErrNotFound", c.first, c.last, err)
+			if _, err := st.RevokeTrust(ctx, team.ID, c.from, c.to); !errors.Is(err, store.ErrNotFound) {
+				t.Errorf("RevokeTrust(%s, %s): error = %v, want ErrNotFound", c.from, c.to, err)
 			}
 		})
 	}
@@ -204,45 +264,29 @@ func TestTrustNeverCrossesTeams(t *testing.T) {
 		t.Fatalf("CreateProject OPS: %v", err)
 	}
 
-	// From my team, the neighbour's OPS key does not exist.
+	// From my team, the neighbour's OPS key does not exist — in either direction.
 	if _, err := st.AllowTrust(ctx, mine.ID, "CORE", "OPS"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("AllowTrust towards one of the neighbour's projects: error = %v, want ErrNotFound", err)
 	}
-
-	// Each one opens at home, without seeing the other.
-	if _, err := st.AllowTrust(ctx, mine.ID, "CORE", "FRNT"); err != nil {
-		t.Fatalf("AllowTrust at mine: %v", err)
-	}
-	if _, err := st.AllowTrust(ctx, other.ID, "CORE", "OPS"); err != nil {
-		t.Fatalf("AllowTrust at the neighbour's: %v", err)
+	if _, err := st.AllowTrust(ctx, mine.ID, "OPS", "CORE"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("AllowTrust from one of the neighbour's projects: error = %v, want ErrNotFound", err)
 	}
 
-	mineEdges, err := st.ListTrustEdges(ctx, mine.ID)
-	if err != nil {
-		t.Fatalf("ListTrustEdges (mine): %v", err)
+	// Each team holds exactly the two arrows its two repos were born with, and sees nothing of the
+	// other's.
+	if got := readGraph(t, st, mine); got != "CORE→FRNT, FRNT→CORE" {
+		t.Errorf("my graph = %q, want %q", got, "CORE→FRNT, FRNT→CORE")
 	}
-	if got := onlyPair(t, mineEdges); got != "CORE↔FRNT" {
-		t.Errorf("my graph = %s, want CORE↔FRNT", got)
-	}
-
-	otherEdges, err := st.ListTrustEdges(ctx, other.ID)
-	if err != nil {
-		t.Fatalf("ListTrustEdges (neighbour): %v", err)
-	}
-	if got := onlyPair(t, otherEdges); got != "CORE↔OPS" {
-		t.Errorf("the neighbour's graph = %s, want CORE↔OPS", got)
+	if got := readGraph(t, st, other); got != "CORE→OPS, OPS→CORE" {
+		t.Errorf("the neighbour's graph = %q, want %q", got, "CORE→OPS, OPS→CORE")
 	}
 
 	// And I cannot close theirs, even by naming their keys exactly.
 	if _, err := st.RevokeTrust(ctx, mine.ID, "CORE", "OPS"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("RevokeTrust on the neighbour's pair: error = %v, want ErrNotFound", err)
+		t.Errorf("RevokeTrust on the neighbour's edge: error = %v, want ErrNotFound", err)
 	}
-	stillThere, err := st.ListTrustEdges(ctx, other.ID)
-	if err != nil {
-		t.Fatalf("ListTrustEdges (neighbour, after): %v", err)
-	}
-	if len(stillThere) != 1 {
-		t.Errorf("the neighbour's graph has %d edges after my attempt, want 1", len(stillThere))
+	if got := readGraph(t, st, other); got != "CORE→OPS, OPS→CORE" {
+		t.Errorf("the neighbour's graph after my attempt = %q, want %q", got, "CORE→OPS, OPS→CORE")
 	}
 }
 
@@ -268,51 +312,42 @@ func TestTrustQueriesGuardTheirOwnScope(t *testing.T) {
 		}
 	}
 
-	// The neighbour declares its pair. It must be neither readable nor closable from my team.
-	if _, err := st.AllowTrust(ctx, other.ID, "CORE", "OPS"); err != nil {
-		t.Fatalf("AllowTrust at the neighbour's: %v", err)
-	}
-
-	// MUTATION: removing `a.team_id = @team_id` from the `pair` CTE of RevokeTrust.
+	// MUTATION: removing `a.team_id = @team_id` from the `edge` CTE of RevokeTrust.
 	//
 	// The existing boundary test did not catch it: it passed OPS in SECOND position, and
 	// `b.team_id` — still in place — was enough to make the resolution fail. What is needed is a key
 	// that exists ONLY at the neighbour's in FIRST position, and a key of my team in second: only
 	// the constraint on `a` decides then.
 	//
-	// Under the mutation, `a` resolves to the neighbour's OPS, `b` to my CORE, the pair resolves,
+	// Under the mutation, `a` resolves to the neighbour's OPS, `b` to my CORE, the edge resolves,
 	// and the query returns `removed=false` with no error — instead of the ErrNotFound a key outside
 	// my team must produce.
-	t.Run("RevokeTrust scopes both keys, not just the second", func(t *testing.T) {
+	t.Run("RevokeTrust scopes both ends, not just the recipient", func(t *testing.T) {
 		if _, err := st.RevokeTrust(ctx, mine.ID, "OPS", "CORE"); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("error = %v, want ErrNotFound: OPS does not exist in my team", err)
 		}
-		// And the neighbour's pair is untouched.
-		edges, err := st.ListTrustEdges(ctx, other.ID)
-		if err != nil {
-			t.Fatalf("ListTrustEdges: %v", err)
-		}
-		if len(edges) != 1 {
-			t.Errorf("the neighbour's graph has %d edges, want 1", len(edges))
+		// And the neighbour's graph is untouched.
+		if got := readGraph(t, st, other); got != "CORE→OPS, OPS→CORE" {
+			t.Errorf("the neighbour's graph = %q, want %q", got, "CORE→OPS, OPS→CORE")
 		}
 	})
 
 	// MUTATION: replacing `a.id <> b.id` with `true` in AllowTrust.
 	//
-	// The self-pair refusal was only proven by the service, which validates `first != second` BEFORE
+	// The self-edge refusal was only proven by the service, which validates `from != to` BEFORE
 	// calling the store. The query has to refuse it too: that is the second turn of the key, and it
 	// is what holds if a caller reaches the store directly.
-	t.Run("AllowTrust refuses a self-pair in the query", func(t *testing.T) {
+	t.Run("AllowTrust refuses a self-edge in the query", func(t *testing.T) {
 		if _, err := st.AllowTrust(ctx, mine.ID, "CORE", "CORE"); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("error = %v, want ErrNotFound: the query must refuse the self-pair without "+
-				"letting the ordering CHECK raise a second error path", err)
+			t.Errorf("error = %v, want ErrNotFound: the query must refuse the self-edge without "+
+				"letting project_trust_not_self raise a second error path", err)
 		}
-		edges, err := st.ListTrustEdges(ctx, mine.ID)
-		if err != nil {
-			t.Fatalf("ListTrustEdges: %v", err)
-		}
-		if len(edges) != 0 {
-			t.Errorf("%d edge(s) created by a self-pair", len(edges))
+		// My team holds exactly the two arrows its two repos were born with (card 12, doubled by
+		// card 11). Naming them says what the graph IS, so a self-edge slipping in shows up as a
+		// third row instead of hiding in a count that was already non-zero.
+		if got := readGraph(t, st, mine); got != "CORE→FRNT, FRNT→CORE" {
+			t.Errorf("graph = %q, want %q untouched: the self-edge wrote something", got,
+				"CORE→FRNT, FRNT→CORE")
 		}
 	})
 }

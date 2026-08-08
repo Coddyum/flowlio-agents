@@ -4,13 +4,13 @@ package config
 //
 // | Élément  | Résumé                                                            | Ligne |
 // |----------|-------------------------------------------------------------------|-------|
-// | Config   | Configuration of the process, read once at start-up                 | 42    |
-// | Config.IsLocal | Says whether the process runs in local mode, without accounts | 70    |
-// | Load     | Reads the environment and fails at once if a key is missing         | 76    |
-// | adminTokenFor | Refuses ADMIN_TOKEN missing in hosted, and present in local    | 111   |
-// | required | Yields an environment variable, or an error if missing or empty     | 126   |
-// | list     | Splits an environment variable into a list, on the commas           | 144   |
-// | optional | Yields an environment variable or the default value                 | 160   |
+// | Config   | Configuration of the process, read once at start-up                 | 49    |
+// | Config.IsLocal | Says whether the process runs in local mode, without accounts | 77    |
+// | Load     | Reads the environment and fails at once if a key is missing         | 83    |
+// | adminTokenFor | Refuses ADMIN_TOKEN missing in hosted, and present in local    | 118   |
+// | required | Yields an environment variable, or an error if missing or empty     | 133   |
+// | list     | Splits an environment variable into a list, on the commas           | 151   |
+// | optional | Yields an environment variable or the default value                 | 167   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -28,6 +28,13 @@ const (
 	// defaultAllowedOrigins is the origin of the bridge page, and it alone. The user's browser
 	// loads there a page served by flowlio.me that calls their local API; no other origin has any
 	// reason to talk to this process.
+	//
+	// STILL LOAD-BEARING ON 2026-08-07, verified rather than assumed: `Flowlio` calls this API from
+	// the browser on master, and no same-origin replacement is shipped. The preconditions for
+	// deleting it are enumerated in internal/core/engine/cors.go, and
+	// `TestShippedDefaultGrantsTheBridgeOrigin` turns red the moment this value stops granting that
+	// origin. An operated deployment closes the list with `ALLOWED_ORIGINS=,` — configuration, not
+	// a code change, and it needs no precondition at all.
 	defaultAllowedOrigins = "https://flowlio.me,https://www.flowlio.me"
 )
 

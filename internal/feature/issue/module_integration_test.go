@@ -121,17 +121,17 @@ func newProject(t *testing.T, db *sql.DB, teamID uuid.UUID, key string) project 
 	return project{teamID: teamID, id: id, key: key}
 }
 
-// trust declares a trust between two projects. Laid down by hand in the test that needs it: hiding
-// it inside newProject would mask the very guarantee this file exists to prove.
-func trust(t *testing.T, db *sql.DB, a, b project) {
+// trust declares ONE DIRECTED trust: `from` may open a question at `to`. Laid down by hand in the
+// test that needs it: hiding it inside newProject would mask the very guarantee this file exists to
+// prove — and the two ends are NOT normalised here, so a caller that wants both ways has to say so.
+func trust(t *testing.T, db *sql.DB, from, to project) {
 	t.Helper()
 
 	if _, err := db.Exec(
-		`INSERT INTO project_trust (team_id, low_project_id, high_project_id)
-		 VALUES ($1, least($2::uuid, $3::uuid), greatest($2::uuid, $3::uuid))`,
-		a.teamID, a.id, b.id,
+		`INSERT INTO project_trust (team_id, from_project_id, to_project_id) VALUES ($1, $2, $3)`,
+		from.teamID, from.id, to.id,
 	); err != nil {
-		t.Fatalf("trust %s ↔ %s: %v", a.key, b.key, err)
+		t.Fatalf("trust %s → %s: %v", from.key, to.key, err)
 	}
 }
 
@@ -186,18 +186,25 @@ func createIssue(t *testing.T, ts *httptest.Server, tok authtest.Token, toProjec
 	}
 }
 
-// TestThreeRefusalsAreIndistinguishable compares the three refusals byte for byte.
+// TestRefusalsAreIndistinguishable compares every refusal of the channel byte for byte.
 //
 // Two checks, and BOTH are needed:
 //
-//   - each against the expected shape written out by hand, otherwise a mutation making all three
+//   - each against the expected shape written out by hand, otherwise a mutation making them all
 //     identically WRONG (403 everywhere) satisfies the cross-comparison;
-//   - the three against each other, because that is the statement of the guarantee itself — and it
-//     is that comparison M3 breaks, by altering only one of the three.
+//   - all of them against each other, because that is the statement of the guarantee itself — and it
+//     is that comparison M3 breaks, by altering only one of them.
 //
-// The WITNESS opening the test is not decorative: without it, three identical refusals could be so
+// THE CASE CARD 11 ADDS, and it is the headline guarantee of that card: `oneway` is a repo that
+// EXISTS, sits in the SAME TEAM, and is joined to the caller by a row of the graph — pointing the
+// other way. The caller may not question it, and the refusal it receives is the same bytes as the
+// refusal for a repo that does not exist anywhere. Making the graph directed therefore adds a state
+// to the domain WITHOUT adding an oracle: an agent probing keys still cannot tell "no such repo"
+// from "that repo will not take your questions".
+//
+// The WITNESS opening the test is not decorative: without it, identical refusals could be so
 // because nothing works at all, and the test would be measuring its own consistency.
-func TestThreeRefusalsAreIndistinguishable(t *testing.T) {
+func TestRefusalsAreIndistinguishable(t *testing.T) {
 	db := openDB(t)
 
 	team := newTeam(t, db)
@@ -205,16 +212,19 @@ func TestThreeRefusalsAreIndistinguishable(t *testing.T) {
 
 	frnt := newProject(t, db, team, "FRNT")        // the caller
 	sibling := newProject(t, db, team, "CORE")     // trusted sibling — the witness
-	untrusted := newProject(t, db, team, "OPS")    // sibling, no trust declared
+	untrusted := newProject(t, db, team, "OPS")    // sibling, no edge at all
+	oneway := newProject(t, db, team, "BACK")      // sibling, edge in the OPPOSITE direction only
 	foreign := newProject(t, db, elsewhere, "FAR") // project of another team
 
 	trust(t, db, frnt, sibling)
+	// BACK may question FRNT. FRNT may not question BACK: that is one row, and it points one way.
+	trust(t, db, oneway, frnt)
 
 	ts, tok := serveAPI(t, db, frnt)
 
 	if got := createIssue(t, ts, tok, sibling.key); got.status != http.StatusCreated {
 		t.Fatalf("witness: creation towards a trusted sibling = %d %s, want 201 — "+
-			"three identical refusals prove nothing if the nominal path is broken",
+			"identical refusals prove nothing if the nominal path is broken",
 			got.status, got.body)
 	}
 
@@ -224,7 +234,8 @@ func TestThreeRefusalsAreIndistinguishable(t *testing.T) {
 	}{
 		{"unknown key", createIssue(t, ts, tok, "ZZZZ")},
 		{"key from another team", createIssue(t, ts, tok, foreign.key)},
-		{"undeclared pair", createIssue(t, ts, tok, untrusted.key)},
+		{"sibling with no edge", createIssue(t, ts, tok, untrusted.key)},
+		{"sibling trusted the OTHER WAY only", createIssue(t, ts, tok, oneway.key)},
 	}
 
 	for _, refusal := range refusals {

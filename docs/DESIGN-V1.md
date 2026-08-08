@@ -37,7 +37,24 @@ insertion transaction. Agents never handle a UUID.
 
 ## Isolation and permissions
 
-An agent token is scoped to **one project**, within a team.
+An agent token is scoped to **one project**, within a team. That is the engine's whole
+authorisation model, in every deployment: nothing below this line changes when the engine is
+operated by somebody else.
+
+> **What DOES change with the deployment is who holds the token, and what the project boundary is
+> worth.**
+>
+> | | Self-hosted | Operated by a hosted product |
+> | --- | --- | --- |
+> | Who holds the project token | the customer — `flowlio init` prints it once | the operator, server-side; the customer never sees one |
+> | How a repository is named | it is not: the token names it | by a non-secret id the caller sends, resolved to a token before reaching this engine |
+> | What authorises the caller | possession of the token | the hosted product's own authentication, upstream of here |
+> | Between two projects of ONE customer | a **security** boundary — the token is the only key | a **context** boundary: the owner is entitled to both backlogs, and what the boundary buys is that an agent does not read the backlog next door |
+> | Between two customers | — | the hosted product's authentication, which is stronger than a secret pasted into a file |
+>
+> The engine ships the self-hosted column and only that one. The right-hand column describes what a
+> client of the administration API may build with it, and is written here so the two claims stop
+> contradicting each other across two repositories. See [DECISION-hosted.md](DECISION-hosted.md).
 
 | Resource                        | Scope of the project token     |
 | ------------------------------- | ------------------------------- |
@@ -89,6 +106,15 @@ This repository **never** carries accounts or billing. The hosted offer is that 
 operated by flowlio-core: it calls the administration API to create the customer's team, project
 and token, exactly as `flowlio init` would from a terminal. The single `Auth()` port of
 `CoreServices` stays the one that exists, with a single adapter.
+
+> **Where the customer's token goes, and it is not the same in both modes.** Self-hosted,
+> `flowlio init` prints the project token and the customer pastes it into their agent's
+> configuration. Hosted, the operator keeps it: flowlio-core mints it through this administration
+> API and holds it server-side, so the customer never sees, pastes or stores a token — they name
+> their repository by a non-secret id and are authenticated by flowlio-core. The engine is told
+> nothing new; the token still names one project, and it is still the only credential this API
+> knows. What the customer types is a decision of the product operating the engine, not of the
+> engine.
 
 `MODE=hosted` therefore no longer serves to mount a billing module. It decides one thing only:
 **where the bootstrap secret goes** — a secret store, never standard output.
@@ -172,12 +198,31 @@ Known limits, accepted, not compensated elsewhere:
 
 - **the loopback is exempt from the bucket, so the limiter slows nothing down in local mode.** That
   is consistent with the threat model, not an oversight: an attacker able to emit from `127.0.0.1`
-  already reads the credentials file, they have no reason to guess a token. This limiter defends
-  the hosted mode, where the source of a request is a piece of information; locally, it is the
+  already reads the credentials file, they have no reason to guess a token. Self-hosted, it is the
   filesystem that protects. Corollary: the loopback creates **no** cache key. **Careful**: a
   reverse proxy installed on the same machine as the API makes all traffic look like loopback, and
   therefore disarms the limiter without saying so. For as long as no trusted-proxy configuration
   exists, do not put one in front;
+
+  > **AND THAT IS EXACTLY WHAT AN OPERATED DEPLOYMENT DOES — measured 2026-08-07, FLWL-78.** This
+  > paragraph used to end "this limiter defends the hosted mode, where the source of a request is a
+  > piece of information". It does not. Co-deployed inside another product's container and reached
+  > over `127.0.0.1`, the engine sees a loopback `RemoteAddr` on **every** request of **every**
+  > customer, so the per-IP bucket counts nothing at all.
+  >
+  > Measured, not deduced:
+  > `TestCoDeployedTrafficReachesTheLimiterFromTheLoopbackAndIsNotCounted` drives the real
+  > middleware at the shipped threshold of 120 and reads the counter — 240 attempts on distinct
+  > tokens, counter still 0, a valid token still served; the same sweep from a public address is
+  > refused at 121. Turning the exemption off turns it red, which is what makes the reading worth
+  > something.
+  >
+  > **It is not closed by changing who the caller is.** Any caller reached over the loopback gives
+  > the same result, and a caller that forwards the real address changes nothing either:
+  > `TestForwardedHeadersDoNotRestoreCountingOnTheLoopback` sets `X-Forwarded-For` and `X-Real-IP`
+  > and the counter of the forwarded address stays 0. Making the header authoritative goes red on
+  > that test — which is the point: it would be a **decision** about what this open-source engine is
+  > allowed to assume about its front, not a fix. Options recorded on FLWL-78; none is shipped;
 - the blocked path does compute a SHA-256 but does not touch the database: its **latency** tells
   "limited" apart from "refused". Aligning it would mean offering the very query the limiter exists
   to refuse;
@@ -295,6 +340,12 @@ check_inbox()                                → the current actionable state
 recipient and not a read scope): the project comes from the token. There is therefore no MCP call
 able to designate another project's backlog.
 
+> That is a statement about **this** MCP surface — the one `flowlio mcp` serves, over stdio, on the
+> project token it was given. A hosted product may expose its own MCP endpoint where the customer
+> names their repository; the name is resolved to a project token upstream, and what reaches these
+> tools is still a token and no project parameter. The rule above is therefore not weakened by such
+> a surface — it is what makes it safe to build one.
+
 `archive_task` and `add_task_note` were merged into `update_task`, as an `archive` flag and a
 `note` field. The same reason in both cases: one more tool is paid for in the context of every
 turn, for actions nobody calls without changing a status in the same move. And for the note, the
@@ -306,9 +357,16 @@ reference in the same place whichever tool it has just called.
 
 ## Binaries
 
-- `cmd/api` — HTTP server (existing).
+- `cmd/api` — HTTP server (existing). It is what a hosted product operates; it is the whole engine.
 - `cmd/flowlio` — human CLI (`init`, `project`, `token`, `task`, `issue`) **and** stdio MCP server
-  through `flowlio mcp`. Same binary, same auth, same HTTP client: local and hosted do not diverge.
+  through `flowlio mcp`. Same binary, same auth, same HTTP client.
+
+> **The CLI is the self-hosted tool.** It exists to stand up an instance and hand a token to an
+> agent on the machine that runs it — `flowlio init`, `FLOWLIO_TOKEN`, stdio. A customer of a
+> hosted product does not install it and has no token to give it. This was once written as "local
+> and hosted do not diverge"; what does not diverge is the **domain**, served by one `cmd/api` in
+> both cases. The way a human or an agent reaches that domain does diverge, and pretending
+> otherwise is what left two repositories claiming different things.
 
 ## Out of scope for v1 (accepted)
 

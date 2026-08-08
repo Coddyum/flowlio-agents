@@ -141,6 +141,15 @@ func TestAllowedOriginsSetButEmptyClosesTheSurface(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Setenv("DATABASE_URL", dsn)
 			t.Setenv("MODE", ModeLocal)
+			// ADMIN_TOKEN is cleared because THIS TEST DOES NOT OWN IT AND MUST. The Makefile
+			// exports .env into `make check`, so a developer whose .env is configured for hosted
+			// work — ADMIN_TOKEN set — made Load() fatal here on a rule that has nothing to do with
+			// origins, and the whole package went red for a reason living in their shell. Observed
+			// 2026-08-07. A config test decides its own environment or it decides nothing.
+			t.Setenv("ADMIN_TOKEN", "")
+			if err := os.Unsetenv("ADMIN_TOKEN"); err != nil {
+				t.Fatalf("unsetting ADMIN_TOKEN: %v", err)
+			}
 			if c.set {
 				t.Setenv("ALLOWED_ORIGINS", c.value)
 			} else if err := os.Unsetenv("ALLOWED_ORIGINS"); err != nil {

@@ -6,10 +6,10 @@ package main
 // |-----------------------|--------------------------------------------------------------|-------|
 // | runInit               | Prepares team, project and agent token in a single command     | 35    |
 // | announceTrustIsClosed | Warns that no trust is declared, on the 2nd project            | 143   |
-// | announceMCPConfig     | Writes the repo's MCP config and says what happened            | 196   |
-// | ensure                | Runs a creation, tolerating that it already exists             | 217   |
-// | splitFlags            | Separates flags from positional arguments, in any order        | 234   |
-// | printToken            | Prints a freshly issued token, with the warning it deserves    | 254   |
+// | announceMCPConfig     | Writes the repo's MCP config and says what happened            | 201   |
+// | ensure                | Runs a creation, tolerating that it already exists             | 222   |
+// | splitFlags            | Separates flags from positional arguments, in any order        | 239   |
+// | printToken            | Prints a freshly issued token, with the warning it deserves    | 259   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -181,11 +181,16 @@ func announceTrustIsClosed(ctx context.Context, c *client.Client, team, project 
 		return
 	}
 
+	// TWO COMMANDS, not one. The edge is directed (migration 000013): `allow A B` lets A raise
+	// issues at B and says nothing about the other way. Printing a single line here would hand the
+	// human a half-open channel while telling them the channel is open.
 	fmt.Printf("\n  Team %s now holds %d projects, and no trust is declared:\n",
 		team, len(projects))
-	fmt.Printf("  %s and %s cannot raise issues to each other. With the admin token:\n\n",
+	fmt.Printf("  %s and %s cannot raise issues at each other. With the admin token, one command\n",
 		project, sibling)
-	fmt.Printf("      flowlio trust allow %s %s --team %s\n\n", sibling, project, team)
+	fmt.Printf("  per direction:\n\n")
+	fmt.Printf("      flowlio trust allow %s %s --team %s\n", sibling, project, team)
+	fmt.Printf("      flowlio trust allow %s %s --team %s\n\n", project, sibling, team)
 }
 
 // announceMCPConfig writes the current repo's MCP configuration and says what happened.

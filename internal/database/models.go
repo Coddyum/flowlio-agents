@@ -331,8 +331,8 @@ type Project struct {
 
 type ProjectTrust struct {
 	TeamID        uuid.UUID `json:"team_id"`
-	LowProjectID  uuid.UUID `json:"low_project_id"`
-	HighProjectID uuid.UUID `json:"high_project_id"`
+	FromProjectID uuid.UUID `json:"from_project_id"`
+	ToProjectID   uuid.UUID `json:"to_project_id"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 

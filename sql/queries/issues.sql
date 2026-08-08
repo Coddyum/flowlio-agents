@@ -28,7 +28,7 @@
 -- ni dans le SELECT de l'INSERT, ni dans une query séparée, ni dans un `if` de service. Trois
 -- propriétés en découlent, dont aucune n'est reproductible par du code :
 --
---   1. Une paire non autorisée ne matche pas la CTE, exactement comme une clé inconnue ou une
+--   1. Une direction non autorisée ne matche pas la CTE, exactement comme une clé inconnue ou une
 --      clé d'une autre team : zéro ligne, sql.ErrNoRows, ErrNotFound, 404. Le refus n'a AUCUN
 --      chemin de code à lui, donc il n'existe aucun code d'erreur à faire fuir.
 --   2. Aucun numéro n'est consommé et aucun verrou de ligne n'est posé, parce que l'UPDATE ne
@@ -40,9 +40,15 @@
 --      sql/queries/projects.sql:21-25 tient telle quelle. Ne jamais transformer cet EXISTS en
 --      jointure ni en écriture sur project_trust.
 --
--- least/greatest : l'arête est symétrique et stockée une seule fois (000007). L'auto-adressage
--- donne least = greatest, forme que project_trust_ordered rend non insérable, donc jamais
--- présente : il produit le même 404 que tout le reste, sans branche dédiée. La CHECK
+-- L'ARÊTE EST DIRIGÉE depuis 000013, et ce prédicat est le seul endroit où sa direction est lue.
+-- `from_project_id = @author_project_id AND to_project_id = p.id` : l'arête `web → core` autorise
+-- WEB À OUVRIR UNE QUESTION CHEZ CORE, et rien d'autre. La réciproque `core → web` est une seconde
+-- ligne, que le client déclare ou ne déclare pas. Les deux côtés du couple ne sont plus liés :
+-- écrire ici least/greatest, ou un OR sur les deux sens, rendrait au produit le graphe non orienté
+-- que 000013 remplace, sans qu'aucune contrainte ne s'y oppose.
+--
+-- L'auto-adressage donne from = to, forme que project_trust_not_self (000013) rend non insérable,
+-- donc jamais présente : il produit le même 404 que tout le reste, sans branche dédiée. La CHECK
 -- issues_not_self (000004:47) devient de ce fait inatteignable par ce chemin, et le reste comme
 -- second tour de clé si le prédicat disparaissait un jour.
 --
@@ -64,8 +70,8 @@ WITH claimed AS (
       AND EXISTS (
           SELECT 1 FROM project_trust tr
           WHERE tr.team_id         = @team_id
-            AND tr.low_project_id  = least(@author_project_id::uuid, p.id)
-            AND tr.high_project_id = greatest(@author_project_id::uuid, p.id)
+            AND tr.from_project_id = @author_project_id::uuid
+            AND tr.to_project_id   = p.id
       )
     RETURNING p.id AS project_id, (p.next_number - 1)::bigint AS number
 )

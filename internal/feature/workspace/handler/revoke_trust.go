@@ -6,7 +6,8 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
 )
 
-// RevokeTrust closes a pair: no NEW issue between those two projects any more. Admin tokens only.
+// RevokeTrust cuts ONE DIRECTED edge: {from} may no longer open a NEW issue at {to}. The opposite
+// direction is untouched — cutting it is a second call. Admin tokens only.
 //
 // THIS IS NOT A CONTAINMENT TOOL, and the CLI says so to the human on every call. Threads already
 // open stay readable and answerable, with no time limit: the graph is a least-privilege declaration
@@ -19,6 +20,9 @@ import (
 //
 // Idempotent: removing an absent trust returns 200 with `changed: false`. But a KEY that does not
 // exist returns 404 — a typo must not look like a success.
+//
+// The two segments are ORDERED: /trust/WEB/CORE and /trust/CORE/WEB name two different edges. A
+// handler sorting them would make one of the two commands unreachable from the CLI.
 func (h *Handler) RevokeTrust(w http.ResponseWriter, r *http.Request) {
 	principal, ok := h.principal(w, r)
 	if !ok {
@@ -33,8 +37,8 @@ func (h *Handler) RevokeTrust(w http.ResponseWriter, r *http.Request) {
 
 	decision, err := h.svc.RevokeTrust(r.Context(), service.TrustPairInput{
 		TeamID: teamID,
-		First:  r.PathValue("first"),
-		Second: r.PathValue("second"),
+		From:   r.PathValue("from"),
+		To:     r.PathValue("to"),
 	})
 	if err != nil {
 		h.writeError(w, err)

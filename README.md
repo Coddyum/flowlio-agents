@@ -82,10 +82,14 @@ flowlio task create "first task"
 flowlio task list
 ```
 
-Repeat `flowlio init` in your other repo with `--project WEB`, then allow the two to talk:
+Repeat `flowlio init` in your other repo with `--project WEB`, then allow them to talk. The edge is
+DIRECTED — `allow API WEB` lets API raise issues at WEB, and says nothing about the other way — so
+a two-way channel is two commands:
 
 ```bash
 flowlio trust allow API WEB
+flowlio trust allow WEB API
+flowlio trust list            # one line per direction
 ```
 
 > **`.mcp.json` is meant to be committed, and holds no secret.** It references `${FLOWLIO_TOKEN}`,
@@ -157,7 +161,10 @@ small:
 | `check_inbox` | what is actionable right now |
 
 **No tool takes a project as a parameter.** The project comes from the token, so there is no MCP
-call able to name another repo's backlog.
+call able to name another repo's backlog. That is true of this engine's own MCP surface, whoever
+calls it. A hosted product built on top of this engine may well let a customer name their
+repository in its own request — it then resolves that name to a project token before reaching
+here, and this sentence still describes what the engine accepts.
 
 ## Model
 
@@ -171,6 +178,12 @@ team (acme)
 References are readable — `API-34`, never a UUID. An agent token is scoped to **one project**: it
 sees neither other repos' tasks nor other teams.
 
+> **Who holds that token depends on the deployment.** Self-hosted — the mode this README describes
+> — the token is yours: `flowlio init` prints it once and your agent carries it. In a hosted
+> product operated on top of this engine, the operator holds the token server-side and the customer
+> never sees one; the engine's model is unchanged either way, because the token still names exactly
+> one project.
+
 ## What it guarantees
 
 Self-hosted and open source, so the claims have to hold:
@@ -178,9 +191,11 @@ Self-hosted and open source, so the claims have to hold:
 - tokens are stored **SHA-256 hashed** — the database holds no reusable secret;
 - a secret is shown once at creation, never logged, never shown again;
 - **a refused issue is indistinguishable from a project that does not exist** — same status, same
-  bytes. Guarded by a test that compares the three refusals byte for byte, not by convention;
-- **which repo may write to which is a declared graph** (`flowlio trust allow|deny|list`). The
-  check lives in the SQL predicate itself, and a lint rule fails the build if it ever moves into Go;
+  bytes. Guarded by a test that compares the refusals byte for byte, not by convention. That covers
+  the repo you may not question as much as the repo that is not there;
+- **which repo may write to which is a declared DIRECTED graph** (`flowlio trust allow|deny|list`).
+  `A → B` lets A raise issues at B and nothing else; the check lives in the SQL predicate itself,
+  and a lint rule fails the build if it ever moves into Go;
 - team scoping is applied **inside the queries**, never only in handlers;
 - anything a third-party repo wrote is returned to your agent as **data, clearly framed — never as
   an instruction**.
@@ -213,9 +228,10 @@ imports, bounded file size, mandatory file summaries.
 
 ## Status
 
-**v0.1.0 — first public release.** The API, the CLI, the MCP server, the trust graph and the inbox
-are in and tested. What has *not* happened yet is a long run against a real multi-repo team; that
-is the next milestone, and until it does, treat rough edges as expected rather than surprising.
+**v0.3.0.** The API, the CLI, the MCP server, the trust graph and the inbox are in and tested. The
+trust graph is now directed: trust points one way, and granting it to a repo does not grant it
+back. What has *not* happened yet is a long run against a real multi-repo team; that is the next
+milestone, and until it does, treat rough edges as expected rather than surprising.
 
 Not built yet: waking a session up when its issue gets answered, versioned decisions and contracts
 (the "memory" part), and hosted accounts.

@@ -46,6 +46,17 @@ chain: the origin list is configuration (`ALLOWED_ORIGINS`), and the engine take
 outermost, which is necessary — a browser preflight carries no token, so it must be settled before
 the auth middleware.
 
+It serves **one** caller, the self-hosted web screen calling this API from the browser, and it is
+the only cross-origin door in the product. An operated deployment allows no origin at all
+(`ALLOWED_ORIGINS=,`) and the middleware is inert there. What must be true before it is deleted is
+written at the top of `internal/core/engine/cors.go`; on 2026-08-07 none of it was.
+
+> **These are the only response headers this server sets on its own.** There is no
+> `X-Content-Type-Options`, no `X-Frame-Options`, no HSTS, no CSP, no `Referrer-Policy` anywhere in
+> the repository — the global chain is `Recover`, `Logger`, and that is all. Stated here so nobody
+> reads the CORS middleware as "the security headers" and believes removing it would cost only
+> CORS: there is nothing else to lose, and nothing else to keep.
+
 | Rule | Why |
 | ----- | -------- |
 | Never `*` | this API answers to an administration token that lives on the user's machine |
@@ -207,7 +218,7 @@ understands the absence of `project_id` without opening another file.
 | File | What it carries | Why it is not rule B |
 | --- | --- | --- |
 | `projects.sql` | `team_id` alone, **without `AdminOnly`** | It is the team directory, readable by a project token: metadata only (key, name), settled in [DESIGN-V1](DESIGN-V1.md) § Isolation. Should it be filtered further? Open question, card FLWL-44. |
-| `teams.sql` | **no tenancy predicate at all** | `GET /teams` enumerates every team of the installation. Of no consequence in `local` mode — one human, one admin token — and **blocking for M7** (item 2 of card FLWL-9) the day the installation is shared. |
+| `teams.sql` | **no tenancy predicate at all** | `GET /teams` enumerates every team of the installation. Of no consequence in `local` mode — one human, one admin token. **The day is here**: an operated instance holds one team per paying customer, so the route is reachable only by the operator's admin token and must never be published to a customer-facing surface. Blocking for M7, item 2 of card FLWL-9. |
 
 Writing a query in either of these two files therefore requires knowing which of the four
 situations is being reproduced. That is precisely the reason for this table.

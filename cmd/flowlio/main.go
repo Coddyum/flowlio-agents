@@ -101,9 +101,9 @@ Usage:
   flowlio token list <KEY>             Lists a project's tokens
   flowlio token revoke <id>            Revokes a token
 
-  flowlio trust list                   Which project pairs may write to each other
-  flowlio trust allow <A> <B>          Opens the issue channel between two projects
-  flowlio trust deny <A> <B>           Closes it again (open threads are untouched)
+  flowlio trust list                   Which project may raise issues AT which
+  flowlio trust allow <from> <to>      Lets <from> raise issues at <to>, that way only
+  flowlio trust deny <from> <to>       Cuts that one direction (open threads untouched)
 
   flowlio task list [--status s]       Backlog of the token's own project
   flowlio task show <KEY>              One task and its note thread

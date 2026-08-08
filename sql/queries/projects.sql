@@ -1,7 +1,152 @@
+-- CreateProject inserts the repo AND opens its trust edges towards every repo already in the team,
+-- in ONE statement.
+--
+-- WHY THE EDGES ARE WRITTEN AND NOT IMPLIED. "All the repos of a team trust each other" is the
+-- default, and a default applied as an implicit rule is a graph that says one thing while the
+-- product shows another: flowlio.me draws the canvas FROM THIS TABLE, so an unwritten default would
+-- render as "no link" over a channel that is in fact open. The property the product owes is
+-- "no edge, no trust — always, without exception", and it only holds if the edges exist as rows.
+-- The customer then cuts what they do not want, with `flowlio trust deny`.
+--
+-- THIS DOES NOT REOPEN THE BACKFILL 000007 REFUSED. That migration declined to write a full mesh
+-- over the repos that ALREADY existed, because such a graph would have been true for zero seconds
+-- and nobody prunes a graph that never lied. Here nothing is rewritten after the fact: the edges are
+-- born with the repo, at the instant the customer states its existence, and they describe the state
+-- they create.
+--
+-- WHY ONE STATEMENT AND NOT TWO. The workspace store has no Transactor, so two calls would be two
+-- transactions: a crash between them leaves a repo that exists and can talk to nobody — the exact
+-- failure card 12 was opened for, made intermittent instead of systematic. `linked` is a
+-- data-modifying CTE, so it commits or rolls back with the project itself. Same shape as CreateIssue
+-- (issues.sql), for the same reason.
+--
+-- `linked` IS NEVER READ by the main query, and that is not an oversight: Postgres executes a
+-- data-modifying CTE exactly once and to completion whether or not anything references it. Verified
+-- on a throwaway base rather than assumed — the statement below inserted 4 edges for a third repo
+-- while the main query selected from `created` alone.
+--
+-- NO SELF-EDGE IS EVER ATTEMPTED. Every CTE of a statement shares the snapshot taken before that
+-- statement, so the scan of `projects` in `linked` does NOT see the row `created` is inserting:
+-- p.id is never c.id, hence the two arrows below never have the same end twice. Verified the same
+-- way — inside the statement the scan counted 2 projects where the table held 3 afterwards. This one
+-- is load-bearing: were the row visible, the edge would be (x, x), project_trust_not_self would
+-- raise 23514 and the WHOLE creation would fail. No guard is added on top, because a guard here
+-- would hide the day that assumption breaks instead of making it loud.
+--
+-- The composite FKs resolve against the project inserted in the same statement: they are checked at
+-- the end of the statement, by which point the row exists.
+--
+-- NO `ON CONFLICT`, deliberately. A duplicate is unreachable: `created` yields one row, `projects`
+-- yields distinct ids, and the new id is fresh so no edge can already name it — in either direction.
+-- Two CONCURRENT creations in one team do not conflict either — neither statement sees the other's
+-- project, so NEITHER arrow between the two newcomers is written. That window fails CLOSED, which is
+-- the only direction an allow-list may fail; `flowlio trust allow` reopens it in one command per
+-- direction.
+--
+-- TWO ARROWS PER PEER, since 000013 made the edge DIRECTED. The default the product owes is "the
+-- repos of a team may question each other", and under a directed table that sentence is two rows:
+-- the newcomer may open a question at the peer, and the peer at the newcomer. Writing only one of
+-- them would ship a default nobody chose — half the repos of every team silently unable to raise an
+-- issue, and the refusal indistinguishable from a repo that does not exist.
+--
+-- The LATERAL VALUES emits both directions from ONE scan and ONE reference to `created`. A UNION ALL
+-- of two SELECTs would read the same peers twice and, worse, leave the two directions as two pieces
+-- of text that can drift apart: this shape cannot write one arrow without writing the other.
 -- name: CreateProject :one
-INSERT INTO projects (team_id, key, name)
-VALUES ($1, $2, $3)
-RETURNING *;
+WITH created AS (
+    INSERT INTO projects (team_id, key, name)
+    VALUES ($1, $2, $3)
+    RETURNING *
+),
+linked AS (
+    INSERT INTO project_trust (team_id, from_project_id, to_project_id)
+    SELECT c.team_id, e.from_id, e.to_id
+    FROM created c
+    JOIN projects p ON p.team_id = c.team_id
+    CROSS JOIN LATERAL (VALUES (c.id, p.id), (p.id, c.id)) AS e (from_id, to_id)
+    RETURNING 1
+)
+SELECT * FROM created;
+
+-- DeleteProject removes a repo, and REFUSES for as long as a LIVING SIBLING repo holds a thread
+-- with it. Card FLWL2-19, decided by Maxence on 2026-08-08.
+--
+-- WHY A REFUSAL AND NOT A CASCADE. `issues` reaches `projects` through TWO foreign keys —
+-- `project_id`, the recipient, and `author_project_id`, the author — and both are ON DELETE
+-- CASCADE. Deleting WEB therefore destroys the questions CORE WROTE to WEB, with CORE's own words
+-- in them, from CORE's side, without CORE asking for anything. No status code that a repo's owner
+-- receives can undo that for the repo next door, so the delete is refused instead. The archival
+-- column that 000004 prescribed for this day (`archived_at` on `projects`) is NOT the answer:
+-- the refusal keeps the same promise with no migration and no column.
+--
+-- ONE STATEMENT, NOT TWO, and the reason is not tidiness. A `SELECT` that counts the threads
+-- followed by a `DELETE` leaves a window in which a concurrent `create_issue` commits: the count
+-- said zero, the delete succeeds, and the sibling loses its thread anyway.
+--
+-- THE GUARD AND THE MESSAGE ARE THE SAME RELATION, and this is the load-bearing shape of the
+-- query. `deleted` does not re-derive its own predicate: it refuses on `NOT EXISTS (SELECT 1 FROM
+-- blockers)`, where `blockers` is the very list returned to the customer. Narrowing `blockers` —
+-- to answered threads only, say — automatically narrows what refuses the delete, and there is no
+-- way to write a version where the customer is told about a thread that did not block, or blocked
+-- by a thread they were not told about. That divergence is the failure this shape makes
+-- unwritable; a second predicate would have made it merely tested.
+--
+-- EVERY ISSUE BLOCKS, OPEN OR CLOSED. A closed thread still carries the sibling's words, and this
+-- product has no route that deletes an issue — so "close it first" would be advice the customer
+-- cannot act on. Overruling that is one word in the join: `AND i.state <> 'closed'`.
+--
+-- NO JOIN IS NEEDED TO PROVE THE SIBLING IS ALIVE. `issues_not_self` (000004) forbids an issue
+-- whose two ends are the same project, and both foreign keys are composite against
+-- `projects (id, team_id)`: the other end of any issue touching the target is therefore a
+-- different project whose row the database guarantees exists.
+--
+-- THREE OUTCOMES, distinguished by the rows alone:
+--   * zero rows           — no such repo in this team               → ErrNotFound → 404
+--   * rows with a sibling — the repo is talked to                   → refusal     → 409
+--   * one row, no sibling — deleted                                 →               204
+-- The LEFT JOIN is what produces the third: `target` yields its row whether or not `blockers`
+-- matched, so "deleted" and "does not exist" never collapse onto the same empty result.
+--
+-- KNOWN WINDOW, not closed, and the same one that `CreateIssue` documents. Under READ COMMITTED
+-- this statement takes ONE snapshot: an issue whose transaction was still in flight at that
+-- instant is invisible to `blockers`, while the DELETE waits behind the row lock that the
+-- insertion's foreign-key check holds on the project. When that transaction commits, the delete
+-- proceeds on the older snapshot and the sibling loses that one thread. Closing it needs
+-- SERIALIZABLE or an ON DELETE RESTRICT foreign key — a migration, hence a human decision. The
+-- exposure is one thread, on a gesture a human types by hand a few times a year, and the opposite
+-- race is safe: an insertion that starts after the delete fails loudly on the foreign key.
+-- name: DeleteProject :many
+WITH target AS (
+    SELECT p.id, p.team_id
+    FROM projects p
+    WHERE p.id = @project_id AND p.team_id = @team_id
+),
+blockers AS (
+    SELECT sibling.key AS sibling_key, count(*)::bigint AS threads
+    FROM target t
+    JOIN issues i
+      ON i.team_id = t.team_id
+     AND (i.project_id = t.id OR i.author_project_id = t.id)
+    JOIN projects sibling
+      ON sibling.team_id = i.team_id
+     AND sibling.id = CASE WHEN i.project_id = t.id THEN i.author_project_id ELSE i.project_id END
+    GROUP BY sibling.key
+),
+deleted AS (
+    DELETE FROM projects p
+    USING target t
+    WHERE p.id      = t.id
+      AND p.team_id = t.team_id
+      AND NOT EXISTS (SELECT 1 FROM blockers)
+    RETURNING p.id
+)
+SELECT
+    (SELECT count(*) FROM deleted) = 1 AS deleted,
+    b.sibling_key,
+    b.threads
+FROM target t
+LEFT JOIN blockers b ON true
+ORDER BY b.sibling_key;
 
 -- Every read is scoped by team_id: the scope belongs to the query, not to the handler.
 

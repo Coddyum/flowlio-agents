@@ -4,9 +4,9 @@ package auth
 //
 // | Élément               | Résumé                                                        | Ligne |
 // |-----------------------|---------------------------------------------------------------|-------|
-// | countsAgainstIPBucket | Says whether the source IP must be counted at all               | 37    |
-// | sourceKey             | Reduces a source to its counting unit (/64 in IPv6)             | 52    |
-// | clientIP              | Extracts the client IP from r.RemoteAddr, trusting nothing else | 72    |
+// | countsAgainstIPBucket | Says whether the source IP must be counted at all               | 53    |
+// | sourceKey             | Reduces a source to its counting unit (/64 in IPv6)             | 68    |
+// | clientIP              | Extracts the client IP from r.RemoteAddr, trusting nothing else | 88    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -30,10 +30,26 @@ import (
 // normal running of the product.
 //
 // ACCEPTED CONSEQUENCE, WRITTEN PLAINLY: the per-IP bucket being the only one left, the limiter
-// slows NOTHING down from the loopback. That is consistent with the threat model and not with an
-// oversight — an attacker able to emit from 127.0.0.1 already reads the credentials file, so they
-// have no reason to guess a token. This limiter defends the hosted mode, where the source of a
-// request is a piece of information; locally, it is the filesystem that protects.
+// slows NOTHING down from the loopback. On a machine the user owns that is consistent with the
+// threat model and not an oversight — an attacker able to emit from 127.0.0.1 already reads the
+// credentials file, so they have no reason to guess a token, and it is the filesystem that
+// protects.
+//
+// WHAT THIS COMMENT USED TO CLAIM, AND NO LONGER DOES: "this limiter defends the hosted mode, where
+// the source of a request is a piece of information". MEASURED ON 2026-08-07 (FLWL-78) AND FALSE.
+// When this engine is co-deployed inside another product's container and reached over 127.0.0.1 —
+// which is how it is operated today — every request of every customer presents a loopback
+// RemoteAddr, and the per-IP bucket counts nothing at all. The proof is
+// TestCoDeployedTrafficReachesTheLimiterFromTheLoopbackAndIsNotCounted in rate_limit_test.go, which
+// drives the real middleware at the production threshold and goes red the moment this exemption is
+// removed.
+//
+// It is NOT closed by whichever caller happens to be in front: any caller reached over the loopback
+// produces the same reading. Nor is it closed by having that caller forward the real address —
+// clientIP reads r.RemoteAddr and nothing else, and making a header authoritative without a list of
+// trusted proxies would hand an attacker a per-IP limit they bypass by editing a string. Whether
+// this engine ever learns to trust such a header is a decision, not a patch: see
+// docs/DESIGN-V1.md § Calibrating the rate limiting.
 func countsAgainstIPBucket(ip string) bool {
 	return !net.ParseIP(ip).IsLoopback()
 }

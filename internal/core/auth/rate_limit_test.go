@@ -725,3 +725,94 @@ func TestSourceKey(t *testing.T) {
 		})
 	}
 }
+
+// WHAT A CO-DEPLOYED DEPLOYMENT DOES TO THIS LIMITER — measured, not deduced.
+//
+// The engine listens on the loopback inside the same container as the hosted product, which calls
+// it server-side over http://127.0.0.1. Every request arriving that way presents
+// RemoteAddr = 127.0.0.1 to this middleware, whatever address the customer's agent dialled from.
+// Combined with the loopback exemption of countsAgainstIPBucket, that means the per-IP bucket
+// counts NOTHING for a co-deployed deployment.
+//
+// This test states that outcome at the REAL production threshold rather than at a tight test one:
+// what is being measured is the shipped configuration, not a scenario built to make a point.
+func TestCoDeployedTrafficReachesTheLimiterFromTheLoopbackAndIsNotCounted(t *testing.T) {
+	now := time.Now()
+	svc := limitedService(&fakeStore{found: false}, maxAttemptsPerIP, &now)
+
+	// Twice the production quota, a distinct token each time — a public source is refused long
+	// before this point, as the second half of the test shows.
+	const attempts = 2 * maxAttemptsPerIP
+	for i := range attempts {
+		if code := attempt(svc, "127.0.0.1", newTokenOrFail(t).Plain).Code; code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: code = %d, expected 401", i+1, code)
+		}
+	}
+
+	if count := svc.limiter.add(svc.limiter.bucket(bucketIP, "127.0.0.1"), 0); count != 0 {
+		t.Errorf("loopback counter after %d attempts = %d, expected 0: nothing was counted", attempts, count)
+	}
+
+	valid := newTokenOrFail(t)
+	svc.store = &fakeStore{found: true, record: adminRecord(valid.Hash)}
+	if code := attempt(svc, "127.0.0.1", valid.Plain).Code; code != http.StatusOK {
+		t.Errorf("code = %d, expected 200: past the quota the loopback still goes through", code)
+	}
+
+	// THE SAME SWEEP FROM A PUBLIC SOURCE, for contrast. Without this half, the assertions above
+	// would read the same on a limiter that counts nobody, and would prove nothing about the
+	// loopback in particular.
+	public := limitedService(&fakeStore{found: false}, maxAttemptsPerIP, &now)
+	for i := range maxAttemptsPerIP {
+		if code := attempt(public, "203.0.113.9", newTokenOrFail(t).Plain).Code; code != http.StatusUnauthorized {
+			t.Fatalf("public attempt %d: code = %d, expected 401", i+1, code)
+		}
+	}
+
+	if count := public.limiter.add(public.limiter.bucket(bucketIP, "203.0.113.9"), 0); count != maxAttemptsPerIP {
+		t.Errorf("public counter = %d, expected %d", count, maxAttemptsPerIP)
+	}
+
+	stillValid := newTokenOrFail(t)
+	public.store = &fakeStore{found: true, record: adminRecord(stillValid.Hash)}
+	if code := attempt(public, "203.0.113.9", stillValid.Plain).Code; code != http.StatusUnauthorized {
+		t.Errorf("code = %d, expected 401: a saturated public source is refused even with a valid token", code)
+	}
+}
+
+// A FORWARDED HEADER DOES NOT GIVE THE COUNTING BACK. The hosted caller knows the address its
+// customer dialled from and could pass it along; the limiter would still not read it, because
+// clientIP trusts r.RemoteAddr and nothing else. Whoever hopes to close the exemption by having
+// the caller forward the real address must know that today it changes nothing at all — and that
+// making the header authoritative without a trusted-proxy list would hand every attacker a per-IP
+// limit they bypass by editing a string.
+func TestForwardedHeadersDoNotRestoreCountingOnTheLoopback(t *testing.T) {
+	now := time.Now()
+	svc := limitedService(&fakeStore{found: false}, 3, &now)
+
+	served := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	const forwarded = "203.0.113.42"
+	for i := range 30 {
+		req := httptest.NewRequest(http.MethodGet, "/api/whatever", nil)
+		req.RemoteAddr = "127.0.0.1:54321"
+		req.Header.Set("Authorization", "Bearer "+newTokenOrFail(t).Plain)
+		req.Header.Set("X-Forwarded-For", forwarded)
+		req.Header.Set("X-Real-IP", forwarded)
+
+		rec := httptest.NewRecorder()
+		svc.Middleware(served).ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: code = %d, expected 401", i+1, rec.Code)
+		}
+	}
+
+	if count := svc.limiter.add(svc.limiter.bucket(bucketIP, forwarded), 0); count != 0 {
+		t.Errorf("counter of the forwarded address = %d, expected 0: the header is not read", count)
+	}
+	if count := svc.limiter.add(svc.limiter.bucket(bucketIP, "127.0.0.1"), 0); count != 0 {
+		t.Errorf("loopback counter = %d, expected 0: the connection address is exempt", count)
+	}
+}

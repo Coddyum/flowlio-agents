@@ -4,19 +4,21 @@ package service
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | Service            | The contract consumed by the workspace handler                | 43    |
-// | service            | Implementation, depending on the store interface             | 74    |
-// | New                | Creates the workspace service                                | 79    |
-// | CreateTeamInput    | Input for creating a team                                    | 85    |
-// | Team               | A team as exposed by the API                                 | 91    |
-// | CreateProjectInput | Input for creating a project                                 | 100   |
-// | Project            | A project as exposed by the API                              | 107   |
-// | CreateTokenInput   | Input for issuing an agent token                             | 115   |
-// | CreatedToken       | A freshly created token: the one chance to see the secret    | 123   |
-// | TokenInfo          | A listed token, with neither secret nor hash                 | 132   |
-// | TrustPairInput     | A pair of projects named by their two keys                   | 148   |
-// | TrustDecision      | What a write on the graph actually changed                   | 159   |
-// | TrustEdge          | An edge of the graph as exposed by the API                   | 166   |
+// | ThreadHolder       | A sibling repo holding threads with a project                | 53    |
+// | ProjectInUseError  | The refusal to delete a repo, naming who is concerned        | 64    |
+// | Service            | The contract consumed by the workspace handler                | 69    |
+// | service            | Implementation, depending on the store interface             | 111   |
+// | New                | Creates the workspace service                                | 116   |
+// | CreateTeamInput    | Input for creating a team                                    | 122   |
+// | Team               | A team as exposed by the API                                 | 128   |
+// | CreateProjectInput | Input for creating a project                                 | 137   |
+// | Project            | A project as exposed by the API                              | 144   |
+// | CreateTokenInput   | Input for issuing an agent token                             | 152   |
+// | CreatedToken       | A freshly created token: the one chance to see the secret    | 160   |
+// | TokenInfo          | A listed token, with neither secret nor hash                 | 169   |
+// | TrustPairInput     | One directed edge named by the keys of its two ends           | 186   |
+// | TrustDecision      | What a write on the graph actually changed                   | 197   |
+// | TrustEdge          | A directed edge of the graph as exposed by the API           | 205   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -37,7 +39,31 @@ var (
 	ErrInvalidInput = errors.New("workspace: invalid input")
 	ErrNotFound     = errors.New("workspace: not found")
 	ErrConflict     = errors.New("workspace: already exists")
+
+	// ErrProjectInUse refuses the deletion of a repo a sibling still holds threads with.
+	//
+	// IT IS NOT ErrConflict, and reusing that one was the tempting mistake: the handler renders
+	// ErrConflict as the body "already exists", which on a DELETE is not merely unhelpful — it is
+	// false. This error's message names the siblings and says what to do instead, and it is
+	// carried by ProjectInUseError.
+	ErrProjectInUse = errors.New("workspace: the repo is still talked to")
 )
+
+// ThreadHolder is a sibling repo that holds threads with a project, and how many.
+type ThreadHolder struct {
+	Key     string `json:"repo"`
+	Threads int64  `json:"threads"`
+}
+
+// ProjectInUseError is the refusal itself, carrying WHO is concerned.
+//
+// A bare sentinel would have said no without saying by whom, and the customer would have had no
+// move left: nothing in the product lists the threads of a repo they are trying to retire. The
+// holders come from the same relation that refused the delete (sql/queries/projects.sql), so this
+// list cannot name a repo that did not block, nor omit one that did.
+type ProjectInUseError struct {
+	Holders []ThreadHolder
+}
 
 // Service carries the administration of tenancy: teams, projects, agent tokens.
 type Service interface {
@@ -46,9 +72,17 @@ type Service interface {
 	// team, or uuid.Nil for an admin bound to none — see the note on the implementation.
 	ListTeams(ctx context.Context, pinned uuid.UUID) ([]Team, error)
 	TeamBySlug(ctx context.Context, slug string) (Team, error)
+	// DeleteTeam removes a team and everything inside it. There is no *TeamInUseError to match
+	// ProjectInUseError: the refusal on a repo protects a SIBLING repo that outlives the deletion,
+	// and a team's deletion leaves no such survivor.
+	DeleteTeam(ctx context.Context, teamID uuid.UUID) error
 
 	CreateProject(ctx context.Context, in CreateProjectInput) (Project, error)
 	ListProjects(ctx context.Context, teamID uuid.UUID) ([]Project, error)
+	// DeleteProject removes a repo. It REFUSES with a *ProjectInUseError while a sibling repo
+	// holds a thread with it — deleting it would erase that sibling's own questions, from the
+	// sibling's side, without the sibling asking for anything.
+	DeleteProject(ctx context.Context, teamID, projectID uuid.UUID) error
 
 	// Whoami turns a principal's identifiers into readable names, so that neither the CLI nor an
 	// agent ever has to handle a UUID.
@@ -65,6 +99,9 @@ type Service interface {
 	// These three methods carry NO authorisation decision: they edit a declaration, and it is the
 	// CreateIssue query that enforces it. Their only validation is that of two strings typed by a
 	// human — tenancy itself lives in the query.
+	//
+	// AllowTrust and RevokeTrust act on ONE DIRECTION. `From` may open a question at `To`; the
+	// reciprocal is a second call, and ListTrust returns one edge per direction.
 	AllowTrust(ctx context.Context, in TrustPairInput) (TrustDecision, error)
 	RevokeTrust(ctx context.Context, in TrustPairInput) (TrustDecision, error)
 	ListTrust(ctx context.Context, teamID uuid.UUID) ([]TrustEdge, error)
@@ -138,33 +175,35 @@ type TokenInfo struct {
 	Revoked    bool       `json:"revoked"`
 }
 
-// TrustPairInput names a pair of projects by their KEYS.
+// TrustPairInput names ONE DIRECTED edge by the KEYS of its two ends.
 //
 // No UUID: both keys are resolved INSIDE the query, under the team_id already proven by teamFor. A
 // handler resolving the keys itself would hand-rebuild the very enumeration the model refuses to
 // expose.
 //
-// The order of the two keys carries NO meaning: the edge is a pair, not an arrow.
+// From is the repo allowed to OPEN a question, To the repo it may open it at. The order is the
+// whole content of the type: swapping the two fields names a different edge.
 type TrustPairInput struct {
 	TeamID uuid.UUID `json:"-"`
-	First  string    `json:"first"`
-	Second string    `json:"second"`
+	From   string    `json:"from"`
+	To     string    `json:"to"`
 }
 
 // TrustDecision says what the write actually changed, so the CLI can tell "done" from "it already
 // was" without a second round trip.
 //
-// Changed is false on a replay: `trust allow` on an already-open pair, `trust deny` on an
+// Changed is false on a replay: `trust allow` on an already-open edge, `trust deny` on an
 // already-closed one. Both verbs are idempotent, and this field is what makes it visible.
 type TrustDecision struct {
-	First   string `json:"first"`
-	Second  string `json:"second"`
+	From    string `json:"from"`
+	To      string `json:"to"`
 	Changed bool   `json:"changed"`
 }
 
-// TrustEdge is an edge as exposed by the API: two keys and a date.
+// TrustEdge is a DIRECTED edge as exposed by the API: a sender, a recipient and a date. A mutually
+// trusted pair is two of these.
 type TrustEdge struct {
-	First     string    `json:"first"`
-	Second    string    `json:"second"`
+	From      string    `json:"from"`
+	To        string    `json:"to"`
 	CreatedAt time.Time `json:"created_at"`
 }

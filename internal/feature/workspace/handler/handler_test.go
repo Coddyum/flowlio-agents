@@ -15,6 +15,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,6 +37,20 @@ type fakeWorkspace struct {
 	// gotPinned is the team `ListTeams` was scoped to. That argument is the whole assertion of
 	// part 2: the route used to name no scope at all.
 	gotPinned uuid.UUID
+
+	// deleteErr is what DeleteProject answers. A fake that can only succeed proves no error path:
+	// this field is what lets the 409 of `delete_project_test.go` be reached at all.
+	deleteErr error
+	// gotDeleted is the project identifier DeleteProject received, so a test can check the handler
+	// passes the one from the path and not something it made up.
+	gotDeleted uuid.UUID
+
+	// deleteTeamErr is what DeleteTeam answers, and gotDeletedTeam the identifier it received. Both
+	// exist for the same reason as the two fields above: a fake that can only succeed proves no
+	// error path, and a fake that does not record its argument cannot say WHICH team was deleted —
+	// which on this route is the entire boundary.
+	deleteTeamErr  error
+	gotDeletedTeam uuid.UUID
 }
 
 func (f *fakeWorkspace) note(name string) { f.calls = append(f.calls, name) }
@@ -60,6 +75,12 @@ func (f *fakeWorkspace) ListTeams(_ context.Context, pinned uuid.UUID) ([]servic
 	return nil, nil
 }
 
+func (f *fakeWorkspace) DeleteTeam(_ context.Context, teamID uuid.UUID) error {
+	f.note("DeleteTeam")
+	f.gotDeletedTeam = teamID
+	return f.deleteTeamErr
+}
+
 func (f *fakeWorkspace) CreateProject(context.Context, service.CreateProjectInput) (service.Project, error) {
 	f.note("CreateProject")
 	return service.Project{}, nil
@@ -68,6 +89,12 @@ func (f *fakeWorkspace) CreateProject(context.Context, service.CreateProjectInpu
 func (f *fakeWorkspace) ListProjects(context.Context, uuid.UUID) ([]service.Project, error) {
 	f.note("ListProjects")
 	return nil, nil
+}
+
+func (f *fakeWorkspace) DeleteProject(_ context.Context, _ uuid.UUID, projectID uuid.UUID) error {
+	f.note("DeleteProject")
+	f.gotDeleted = projectID
+	return f.deleteErr
 }
 
 func (f *fakeWorkspace) Whoami(context.Context, uuid.UUID, uuid.UUID) (service.Identity, error) {
@@ -130,46 +157,74 @@ func tokenServer(t *testing.T, rec auth.TokenRecord, svc service.Service) (http.
 	admin := authSvc.AdminOnly
 
 	mux := http.NewServeMux()
-	// The two `/teams` routes resolve NO slug and therefore never reach teamFor: they are absent
-	// from teamForRoutes and covered by their own tests, further down.
+	// POST and GET on `/teams` resolve NO slug and therefore never reach teamFor: they are absent
+	// from teamForRoutes and covered by their own tests, further down. The DELETE is the opposite —
+	// it names a team, so it goes through teamFor like the five `?team=` routes, and it is in the
+	// list.
 	mux.Handle("POST /teams", admin(http.HandlerFunc(h.CreateTeam)))
 	mux.Handle("GET /teams", admin(http.HandlerFunc(h.ListTeams)))
+	mux.Handle("DELETE /teams/{slug}", admin(http.HandlerFunc(h.DeleteTeam)))
 	mux.Handle("POST /projects", admin(http.HandlerFunc(h.CreateProject)))
 	mux.Handle("GET /projects", admin(http.HandlerFunc(h.ListProjects)))
+	mux.Handle("DELETE /projects/{id}", admin(http.HandlerFunc(h.DeleteProject)))
 	mux.Handle("POST /tokens", admin(http.HandlerFunc(h.CreateToken)))
 	mux.Handle("GET /tokens", admin(http.HandlerFunc(h.ListTokens)))
 	mux.Handle("DELETE /tokens/{id}", admin(http.HandlerFunc(h.RevokeToken)))
 	mux.Handle("GET /trust", admin(http.HandlerFunc(h.ListTrust)))
 	mux.Handle("POST /trust", admin(http.HandlerFunc(h.AllowTrust)))
-	mux.Handle("DELETE /trust/{first}/{second}", admin(http.HandlerFunc(h.RevokeTrust)))
+	mux.Handle("DELETE /trust/{from}/{to}", admin(http.HandlerFunc(h.RevokeTrust)))
 
 	return mux, tok.Plain
 }
 
-// teamForRoute describes a route whose team is resolved by teamFor. All five are here: the guard
+// teamForRoute describes a route whose team is resolved by teamFor. All nine are here: the guard
 // lives in teamFor, so a route added tomorrow that calls it is protected without thinking — and a
 // route that does NOT call it must leap out at whoever reads this list.
 type teamForRoute struct {
-	name    string
-	method  string
+	name   string
+	method string
+	// path is a printf template when slugInPath is set, and a plain path otherwise.
 	path    string
 	body    string
 	svcCall string
+	// slugInPath says the team is named in the PATH rather than in `?team=`. Exactly one route does
+	// that — `DELETE /teams/{slug}`, where the team is the object and not the scope — and it goes
+	// through the same teamFor as the rest, which is why it belongs in this list rather than in a
+	// harness of its own.
+	slugInPath bool
+}
+
+// url builds the request target for a slug. The two spellings differ in one place only, and this
+// method is that place.
+func (r teamForRoute) url(slug string) string {
+	if r.slugInPath {
+		return fmt.Sprintf(r.path, slug)
+	}
+	return r.path + "?team=" + slug
 }
 
 var teamForRoutes = []teamForRoute{
-	{"POST /projects", http.MethodPost, "/projects", `{"key":"FRNT","name":"Front"}`, "CreateProject"},
-	{"GET /projects", http.MethodGet, "/projects", "", "ListProjects"},
-	{"POST /tokens", http.MethodPost, "/tokens", `{"project":"FRNT","name":"agent"}`, "CreateToken"},
-	{"GET /tokens", http.MethodGet, "/tokens", "", "ListTokens"},
-	{"DELETE /tokens/{id}", http.MethodDelete, "/tokens/" + uuid.NewString(), "", "RevokeToken"},
+	// Deleting a TEAM is the most destructive gesture in the whole API — every repo of the team,
+	// their backlog, their threads, their memories and their tokens go in one statement. It resolves
+	// its team through teamFor like everything else here, so an admin pinned to a team cannot delete
+	// the neighbour's account.
+	{"DELETE /teams/{slug}", http.MethodDelete, "/teams/%s", "", "DeleteTeam", true},
+	{"POST /projects", http.MethodPost, "/projects", `{"key":"FRNT","name":"Front"}`, "CreateProject", false},
+	{"GET /projects", http.MethodGet, "/projects", "", "ListProjects", false},
+	// Deleting a repo is the most destructive gesture an admin token can make — the repo's tokens,
+	// tasks, memories and trust edges go with it — so the boundary matters here more than anywhere
+	// else in this list. An admin pinned to a team must not be able to delete the neighbour's repo.
+	{"DELETE /projects/{id}", http.MethodDelete, "/projects/" + uuid.NewString(), "", "DeleteProject", false},
+	{"POST /tokens", http.MethodPost, "/tokens", `{"project":"FRNT","name":"agent"}`, "CreateToken", false},
+	{"GET /tokens", http.MethodGet, "/tokens", "", "ListTokens", false},
+	{"DELETE /tokens/{id}", http.MethodDelete, "/tokens/" + uuid.NewString(), "", "RevokeToken", false},
 	// The trust graph edits WHO MAY WRITE TO WHOM. An admin pinned to a team that could reach
 	// `POST /trust?team=<neighbour>` would open the channel at the neighbour's — that is, exactly
 	// the hole part 2 closes, reopened through its administration door. All three routes are
 	// therefore in this list, and the four tests below cover them.
-	{"GET /trust", http.MethodGet, "/trust", "", "ListTrust"},
-	{"POST /trust", http.MethodPost, "/trust", `{"first":"FRNT","second":"CORE"}`, "AllowTrust"},
-	{"DELETE /trust/{first}/{second}", http.MethodDelete, "/trust/FRNT/CORE", "", "RevokeTrust"},
+	{"GET /trust", http.MethodGet, "/trust", "", "ListTrust", false},
+	{"POST /trust", http.MethodPost, "/trust", `{"from":"FRNT","to":"CORE"}`, "AllowTrust", false},
+	{"DELETE /trust/{from}/{to}", http.MethodDelete, "/trust/FRNT/CORE", "", "RevokeTrust", false},
 }
 
 // call plays an admin request on a route and returns the status, the body, and the calls the
@@ -180,7 +235,7 @@ func call(t *testing.T, teamID uuid.UUID, r teamForRoute, teams map[string]servi
 	svc := &fakeWorkspace{teams: teams}
 	mux, raw := adminServer(t, teamID, svc)
 
-	req := httptest.NewRequest(r.method, r.path+"?team="+slug, strings.NewReader(r.body))
+	req := httptest.NewRequest(r.method, r.url(slug), strings.NewReader(r.body))
 	req.Header.Set("Authorization", "Bearer "+raw)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)

@@ -186,10 +186,10 @@ CREATE TABLE public.memories (
 
 CREATE TABLE public.project_trust (
     team_id uuid NOT NULL,
-    low_project_id uuid NOT NULL,
-    high_project_id uuid NOT NULL,
+    from_project_id uuid NOT NULL,
+    to_project_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT project_trust_ordered CHECK ((low_project_id < high_project_id))
+    CONSTRAINT project_trust_not_self CHECK ((from_project_id <> to_project_id))
 );
 
 
@@ -389,7 +389,7 @@ ALTER TABLE ONLY public.memories
 --
 
 ALTER TABLE ONLY public.project_trust
-    ADD CONSTRAINT project_trust_pkey PRIMARY KEY (team_id, low_project_id, high_project_id);
+    ADD CONSTRAINT project_trust_pkey PRIMARY KEY (team_id, from_project_id, to_project_id);
 
 
 --
@@ -575,10 +575,10 @@ CREATE INDEX memories_search_idx ON public.memories USING gin (search);
 
 
 --
--- Name: project_trust_high_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: project_trust_to_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX project_trust_high_idx ON public.project_trust USING btree (high_project_id, team_id);
+CREATE INDEX project_trust_to_idx ON public.project_trust USING btree (to_project_id, team_id);
 
 
 --
@@ -718,19 +718,19 @@ ALTER TABLE ONLY public.memories
 
 
 --
--- Name: project_trust project_trust_high_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: project_trust project_trust_from_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_trust
-    ADD CONSTRAINT project_trust_high_fk FOREIGN KEY (high_project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_trust_from_fk FOREIGN KEY (from_project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
 
 
 --
--- Name: project_trust project_trust_low_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: project_trust project_trust_to_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_trust
-    ADD CONSTRAINT project_trust_low_fk FOREIGN KEY (low_project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_trust_to_fk FOREIGN KEY (to_project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
 
 
 --

@@ -6,8 +6,8 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
 )
 
-// AllowTrust opens a pair: both projects can now address issues to each other, in both directions.
-// Admin tokens only.
+// AllowTrust opens ONE DIRECTED edge: `from` can now address issues to `to`, and only that way
+// round. The reciprocal is a second call. Admin tokens only.
 //
 // The admin scope is not a convenience. An agent has full power over the files of its own repo
 // (docs/MODELE-DE-CONFIANCE.md): any trust declaration it could emit would be SELF-SIGNED BY THE

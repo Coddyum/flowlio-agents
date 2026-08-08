@@ -39,15 +39,39 @@ pas pour humains. Modèle : `team → project (= 1 repo) → tasks | issues`. Le
 travail interne d'un repo ; les issues sont les questions qu'un repo adresse à un repo frère de
 la même team. Aucune IA dans le produit : tout est déterministe.
 
-Interface : **CLI + MCP uniquement**, jamais de front web. Deux modes : `local` (open source,
-aucun compte) et `hosted` (comptes + Stripe, à venir).
+Interface : **CLI + MCP**, et aucun front web aujourd'hui. Pas « jamais » — D28 en décide un, servi
+**par ce binaire, en same-origin**, pour que le self-hosted cesse de dépendre d'un pont
+navigateur→localhost. Il n'est pas livré : `embed.go` n'embarque que les migrations, il n'y a ni
+`http.FileServer` ni route statique, et FLWL-62 est gelé. Écrire « jamais » ici avait fait conclure
+à deux séances que `internal/core/engine/cors.go` était supprimable — il ne l'est pas, et les trois
+préconditions sont en tête de ce fichier.
+
+Deux modes de déploiement, et la différence est **qui exploite l'instance**, jamais ce que ce dépôt
+sait faire :
+
+| Mode | Qui l'exploite | Le token admin |
+| --- | --- | --- |
+| `local` | l'utilisateur, chez lui | frappé au démarrage, écrit dans son fichier de credentials |
+| `hosted` | nous, co-déployés dans l'image de `flowlio-core` | frappé par l'opérateur, posé en `ADMIN_TOKEN` |
+
+**`hosted` n'apporte ni compte ni Stripe ici, et n'en apportera jamais** (D24). Ce dépôt n'a pas de
+table `users`, pas de JWT, pas de module de facturation, et le mot « client » n'y désigne rien. Les
+comptes, la facturation et OAuth vivent dans `flowlio-core`, qui est un **client de l'API
+d'administration** de ce dépôt — pas un fork (D25, D26). Tout ce que `hosted` change ici, c'est
+d'où vient le secret d'un token admin.
 
 Périmètre de ce repo : tout le produit — API, CLI, serveur MCP.
 
 Jalons et décisions de conception : `docs/DESIGN-V1.md`. Concept d'origine : `docs/concept.md`.
 
-**État : M1 livré** (tenancy, tokens, auth). Prochain : M2 (tâches + MCP), puis M3 (issues +
-inbox), qui est le cœur différenciant du produit.
+**État au 2026-08-08 : M1, M2 et M3 tournent tous.** Tenancy, tokens et auth (M1) ; tâches et
+serveur MCP (M2) ; issues et inbox (M3) — le cœur différenciant est en service, et deux agents réels
+se sont posé une question à travers lui le 2026-08-07. Le graphe de confiance est **dirigé** depuis
+la migration `000013`.
+
+Ce qui reste ouvert n'est plus un jalon mais une liste : la SPA embarquée de D28, le canevas de
+`flowlio-core` côté produit, et les dettes consignées dans `docs/`. L'état du produit **complet**,
+les trois dépôts ensemble, vit dans `flowlio-core/docs/PRODUIT.md` et nulle part ailleurs.
 
 ---
 
