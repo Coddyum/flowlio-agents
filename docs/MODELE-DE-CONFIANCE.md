@@ -1,5 +1,24 @@
 # Modèle de confiance
 
+> # ⚠️ PÉRIMÉ SUR UN POINT — 2026-08-08
+>
+> **Le graphe de confiance n'est plus symétrique, il est DIRIGÉ.** Migration
+> `sql/migrations/000013_directed_trust.up.sql` : une arête `A → B` autorise **A à ouvrir une
+> question chez B**, et rien de plus. B répond dans le fil que A a ouvert — c'est le même fil, pas
+> une nouvelle question — mais B ne peut pas en ouvrir une chez A sans sa propre arête.
+>
+> Partout où ce document dit « paire », « les deux sens », `low_project_id` / `high_project_id` ou
+> `least`/`greatest` : lire « une arête par sens, déclarée séparément ».
+>
+> **Le reste de ce fichier tient, et c'est l'essentiel de sa valeur** : le sceau `external:SEAL`, la
+> notice `reading`, le texte d'un pair rendu comme donnée et jamais comme instruction, l'allow-list,
+> et le refus volontairement indiscernable d'un repo qui n'existe pas. Le lot 3 a même renforcé le
+> dernier point : les **trois** refus — repo inexistant, repo d'une autre team, repo relié dans
+> l'autre sens seulement — rendent désormais des octets identiques, `Content-Length` compris.
+>
+> Non réécrit : la règle du dépôt veut qu'un `docs/` modifié passe à l'anglais, et c'est une tâche à
+> part. La vérité du modèle vit dans `000013` et dans `sql/queries/{trust,issues}.sql`.
+
 > Ce que flowlio-agents garantit, et ce qu'il ne garantit pas. À lire avant de toucher au canal
 > inter-projets ou à ce que la couche MCP restitue à un agent.
 

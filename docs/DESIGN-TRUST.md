@@ -1,5 +1,26 @@
 # Graphe de confiance entre repos (FLWL-19)
 
+> # ⚠️ PÉRIMÉ SUR LE POINT CENTRAL — 2026-08-08
+>
+> **Ce document décrit une arête SYMÉTRIQUE. Elle ne l'est plus.** La migration
+> `sql/migrations/000013_directed_trust.up.sql` l'a rendue **dirigée** : la table est
+> `(team_id, from_project_id, to_project_id)`, une arête `A → B` autorise **A à ouvrir une question
+> chez B**, et rien de plus. Chaque sens est déclaré séparément.
+>
+> Tout ce qui suit et qui parle de `low_project_id` / `high_project_id`, de normalisation par
+> `least`/`greatest`, de `CHECK (low < high)`, de « paire », ou d'une route
+> `DELETE /trust/{first}/{second}` est **faux**. La route est `DELETE /trust/{from}/{to}`, et le
+> corps de `POST /trust` porte `{"from","to"}`.
+>
+> Ce qui n'a **pas** changé, et qui reste à lire ici : l'allow-list (l'absence de ligne vaut refus),
+> le refus indiscernable d'un repo inexistant, le scope de team appliqué dans la query, et la
+> décision de garder le prédicat dans le SQL plutôt que dans un service.
+>
+> La vérité du modèle vit dans la migration `000013` et dans `sql/queries/{trust,issues}.sql`.
+> L'état du produit vit dans `flowlio-core/docs/PRODUIT.md`. Ce document n'a pas été réécrit : la
+> règle du dépôt veut qu'un fichier `docs/` modifié passe à l'anglais, et ces mille lignes sont une
+> tâche à elles seules, pas un effet de bord du lot 3.
+
 > Note de conception produite le 2026-08-03 par un fan-out d'agents (quatre angles indépendants,
 > une contradiction adversariale qui a **exécuté** le SQL, une synthèse), **avant** écriture du
 > code. Elle répond à `FLWL-19` et complète `docs/MODELE-DE-CONFIANCE.md` § Volet 2.
