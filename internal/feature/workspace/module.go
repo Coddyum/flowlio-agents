@@ -62,9 +62,17 @@ func (m *mod) Routes() http.Handler {
 
 	r.Handle("POST /teams", admin(http.HandlerFunc(m.h.CreateTeam)))
 	r.Handle("GET /teams", admin(http.HandlerFunc(m.h.ListTeams)))
+	// Deleting a team takes EVERYTHING inside it, and there is no refusal that can stand in the way:
+	// unlike a repo, a team leaves no sibling behind to lose its words. The slug is in the path
+	// because the team is the object here, not the scope; `teamFor` reads it and holds the boundary.
+	r.Handle("DELETE /teams/{slug}", admin(http.HandlerFunc(m.h.DeleteTeam)))
 
 	r.Handle("POST /projects", admin(http.HandlerFunc(m.h.CreateProject)))
 	r.Handle("GET /projects", authed(http.HandlerFunc(m.h.ListProjects)))
+	// Deleting a repo is admin, like creating one, and for a heavier reason: it takes the repo's
+	// tokens, tasks, memories and trust edges with it. It refuses while a sibling repo holds a
+	// thread with it — the guarantee lives in the query, not in this table.
+	r.Handle("DELETE /projects/{id}", admin(http.HandlerFunc(m.h.DeleteProject)))
 
 	r.Handle("POST /tokens", admin(http.HandlerFunc(m.h.CreateToken)))
 	r.Handle("GET /tokens", admin(http.HandlerFunc(m.h.ListTokens)))

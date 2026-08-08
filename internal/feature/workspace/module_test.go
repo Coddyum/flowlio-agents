@@ -56,7 +56,7 @@ type route struct {
 	adminOnly bool
 }
 
-// routes enumerates the ELEVEN routes of Routes(), by hand.
+// routes enumerates the THIRTEEN routes of Routes(), by hand.
 //
 // Written by hand rather than derived from the mux: `http.ServeMux` does not expose its patterns,
 // and even if it did, deriving the list from the object under test would make the test state what
@@ -65,8 +65,10 @@ type route struct {
 var routes = []route{
 	{http.MethodPost, "/teams", `{"slug":"t","name":"T"}`, true},
 	{http.MethodGet, "/teams", "", true},
+	{http.MethodDelete, "/teams/a-team", "", true},
 	{http.MethodPost, "/projects", `{"key":"FRNT","name":"F"}`, true},
 	{http.MethodGet, "/projects", "", false},
+	{http.MethodDelete, "/projects/" + uuid.NewString(), "", true},
 	{http.MethodPost, "/tokens", `{"project":"FRNT","name":"a"}`, true},
 	{http.MethodGet, "/tokens", "", true},
 	{http.MethodDelete, "/tokens/" + uuid.NewString(), "", true},

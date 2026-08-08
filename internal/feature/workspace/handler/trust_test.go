@@ -26,9 +26,9 @@ import (
 // separately rather than derived by a filter: a trust route added tomorrow must show up here
 // explicitly, not be caught by a prefix nobody remembered to check.
 var trustRoutes = []teamForRoute{
-	{"GET /trust", http.MethodGet, "/trust", "", "ListTrust"},
-	{"POST /trust", http.MethodPost, "/trust", `{"from":"FRNT","to":"CORE"}`, "AllowTrust"},
-	{"DELETE /trust/{from}/{to}", http.MethodDelete, "/trust/FRNT/CORE", "", "RevokeTrust"},
+	{"GET /trust", http.MethodGet, "/trust", "", "ListTrust", false},
+	{"POST /trust", http.MethodPost, "/trust", `{"from":"FRNT","to":"CORE"}`, "AllowTrust", false},
+	{"DELETE /trust/{from}/{to}", http.MethodDelete, "/trust/FRNT/CORE", "", "RevokeTrust", false},
 }
 
 // A PROJECT token — the one an agent carries — is refused on all three graph routes.

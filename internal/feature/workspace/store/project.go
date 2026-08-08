@@ -4,11 +4,12 @@ package store
 //
 // | Élément             | Résumé                                                 | Ligne |
 // |---------------------|--------------------------------------------------------|-------|
-// | store.CreateProject | Inserts a project into a team, edges to its peers included | 33  |
-// | store.ProjectByID   | Reads a project by its identifier, scoped by the team   | 52    |
-// | store.ProjectByKey  | Reads a project by its key, within the team scope       | 65    |
-// | store.ListProjects  | Lists a team's projects                                 | 77    |
-// | toProject           | Projects an sqlc row onto the domain project            | 91    |
+// | store.CreateProject | Inserts a project into a team, edges to its peers included | 34  |
+// | store.ProjectByID   | Reads a project by its identifier, scoped by the team   | 53    |
+// | store.ProjectByKey  | Reads a project by its key, within the team scope       | 66    |
+// | store.ListProjects  | Lists a team's projects                                 | 78    |
+// | store.DeleteProject | Removes a project unless a sibling holds a thread with it  | 100 |
+// | toProject           | Projects an sqlc row onto the domain project            | 126   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -85,6 +86,40 @@ func (s *store) ListProjects(ctx context.Context, teamID uuid.UUID) ([]Project, 
 		projects = append(projects, toProject(row))
 	}
 	return projects, nil
+}
+
+// DeleteProject removes a project, and refuses while a sibling repo holds a thread with it. The
+// whole decision is the query's: this method reads the outcome, it does not compute it.
+//
+// ZERO ROWS MEANS "NO SUCH PROJECT IN THIS TEAM", and only that. The query returns its target row
+// whether the deletion happened or was refused, so an empty result can carry no other meaning —
+// which is what lets a missing project answer 404 and a refused one answer with its reason.
+//
+// A row WITHOUT a sibling key is the deletion itself; the rows WITH one are the refusal. They never
+// come back together: both are read from the same relation inside the query.
+func (s *store) DeleteProject(ctx context.Context, teamID, projectID uuid.UUID) (ProjectDeletion, error) {
+	rows, err := s.q.DeleteProject(ctx, database.DeleteProjectParams{
+		ProjectID: projectID,
+		TeamID:    teamID,
+	})
+	if err != nil {
+		return ProjectDeletion{}, translate(err, "delete project")
+	}
+	if len(rows) == 0 {
+		return ProjectDeletion{}, ErrNotFound
+	}
+
+	outcome := ProjectDeletion{Deleted: rows[0].Deleted}
+	for _, row := range rows {
+		if !row.SiblingKey.Valid {
+			continue
+		}
+		outcome.Blockers = append(outcome.Blockers, Blocker{
+			Key:     row.SiblingKey.String,
+			Threads: row.Threads.Int64,
+		})
+	}
+	return outcome, nil
 }
 
 // toProject projects a generated row onto the domain type.

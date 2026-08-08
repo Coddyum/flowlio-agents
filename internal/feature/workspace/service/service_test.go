@@ -23,6 +23,19 @@ type fakeStore struct {
 	lastHash   string
 	lastPrefix string
 	failWith   error
+
+	// deletion is what DeleteProject reports back, and deleteErr what it fails with. Both are
+	// settable because the three outcomes of a delete (removed, refused, absent) are three
+	// different answers from the store, and a fake that could only produce one of them would leave
+	// the other two untested.
+	deletion  store.ProjectDeletion
+	deleteErr error
+
+	// deletedTeam records which team DeleteTeam was asked to remove, and deleteTeamErr what it
+	// answers. The recorded identifier is the assertion that matters: a delete has no return value
+	// to inspect, so "the right team was deleted" can only be read off what the store received.
+	deletedTeam   uuid.UUID
+	deleteTeamErr error
 }
 
 func newFakeStore() *fakeStore {
@@ -44,6 +57,14 @@ func (f *fakeStore) CreateTeam(_ context.Context, slug, name string) (store.Team
 	return team, nil
 }
 
+func (f *fakeStore) DeleteTeam(_ context.Context, id uuid.UUID) error {
+	if f.deleteTeamErr != nil {
+		return f.deleteTeamErr
+	}
+	f.deletedTeam = id
+	return nil
+}
+
 func (f *fakeStore) CreateProject(_ context.Context, teamID uuid.UUID, key, name string) (store.Project, error) {
 	if f.failWith != nil {
 		return store.Project{}, f.failWith
@@ -51,6 +72,13 @@ func (f *fakeStore) CreateProject(_ context.Context, teamID uuid.UUID, key, name
 	project := store.Project{ID: uuid.New(), TeamID: teamID, Key: key, Name: name}
 	f.projects[key] = project
 	return project, nil
+}
+
+func (f *fakeStore) DeleteProject(_ context.Context, _ uuid.UUID, _ uuid.UUID) (store.ProjectDeletion, error) {
+	if f.deleteErr != nil {
+		return store.ProjectDeletion{}, f.deleteErr
+	}
+	return f.deletion, nil
 }
 
 func (f *fakeStore) ProjectByKey(_ context.Context, _ uuid.UUID, key string) (store.Project, error) {

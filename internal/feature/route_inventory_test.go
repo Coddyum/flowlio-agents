@@ -5,15 +5,15 @@ package feature_test
 // WHAT IT ADDS TO matrix_integration_test.go, WHICH IS NOT THE SAME THING. The matrix picks ONE
 // representative surface per module and drives it all the way to Postgres, because its 200 column
 // is the positive control that makes the two refusal columns mean anything. That is its strength
-// and its blind spot: a module is represented by one route, always a GET, and the seven other
-// routes of `workspace` — three of which WRITE — are outside it. A `POST /trust` accidentally
+// and its blind spot: a module is represented by one or two routes, always GETs, and the ten other
+// routes of `workspace` — seven of which WRITE — are outside it. A `POST /trust` accidentally
 // mounted under `Middleware` would leave the matrix entirely green.
 //
 // This file closes that gap the other way round: EVERY route, every method, but refusals only.
 // The division is deliberate —
 //
 //	matrix          : one route per module, all three principals, real database, 200 included
-//	this inventory  : all 28 routes, the principal that must be REFUSED, no database at all
+//	this inventory  : all 30 routes, the principal that must be REFUSED, no database at all
 //
 // A refusal never reaches a store, which is why this runs in `make check` with a nil database. It
 // is not a shortcut: a route that let the wrong principal through would reach the store and PANIC
@@ -79,12 +79,14 @@ type route struct {
 // inventory is written BY HAND, exactly like the matrix, and for the same reason: derived from the
 // muxes it would say what the code does rather than what it must do.
 var inventory = []route{
-	// workspace — the mixed module, and the one this file exists for. Ten of its eleven routes are
-	// outside the matrix, and three of them write.
+	// workspace — the mixed module, and the one this file exists for. Eleven of its thirteen routes
+	// are outside the matrix, and eight of them write.
 	{workspace.Key, http.MethodPost, "POST /teams", "/teams", adminOnly},
 	{workspace.Key, http.MethodGet, "GET /teams", "/teams", adminOnly},
+	{workspace.Key, http.MethodDelete, "DELETE /teams/{slug}", "/teams/a-team", adminOnly},
 	{workspace.Key, http.MethodPost, "POST /projects", "/projects", adminOnly},
 	{workspace.Key, http.MethodGet, "GET /projects", "/projects?team=x", anyToken},
+	{workspace.Key, http.MethodDelete, "DELETE /projects/{id}", "/projects/" + uuid.NewString(), adminOnly},
 	{workspace.Key, http.MethodPost, "POST /tokens", "/tokens", adminOnly},
 	{workspace.Key, http.MethodGet, "GET /tokens", "/tokens", adminOnly},
 	{workspace.Key, http.MethodDelete, "DELETE /tokens/{id}", "/tokens/" + uuid.NewString(), adminOnly},

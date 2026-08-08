@@ -8,11 +8,11 @@ package handler
 // | New                 | Creates the handler with the shared auth and the service  | 42    |
 // | Handler.writeJSON   | Serialises a JSON response                                | 51    |
 // | Handler.writeError  | Answers a domain error without leaking internals          | 76    |
-// | Handler.decodeBody  | Decodes a JSON body, rejecting unknown fields             | 94    |
-// | Handler.principal   | Retrieves the Principal left by the middleware            | 105   |
-// | Handler.teamFor     | Resolves the request's team from the token scope          | 127   |
-// | errorBody           | The single shape of every error response                  | 145   |
-// | whoamiResponse      | The token scope added to the resolved identity            | 150   |
+// | Handler.decodeBody  | Decodes a JSON body, rejecting unknown fields             | 101   |
+// | Handler.principal   | Retrieves the Principal left by the middleware            | 112   |
+// | Handler.teamFor     | Resolves the request's team from the token scope          | 134   |
+// | errorBody           | The single shape of every error response                  | 152   |
+// | whoamiResponse      | The token scope added to the resolved identity            | 157   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -74,11 +74,18 @@ func (h *Handler) writeJSON(w http.ResponseWriter, code int, v any) {
 // writeError maps a domain error onto an HTTP code. Unexpected errors are logged server-side and
 // returned as a generic message: an internal detail in a response is an information leak.
 func (h *Handler) writeError(w http.ResponseWriter, err error) {
+	// The refusal to delete a repo a sibling still talks to has its OWN body, and it is read with
+	// errors.As rather than errors.Is: the sentence names the siblings, and it comes from the error
+	// itself so that no wrapping done on the way up can prefix or truncate it.
+	var inUse *service.ProjectInUseError
+
 	switch {
 	case errors.Is(err, service.ErrInvalidInput):
 		h.writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error()})
 	case errors.Is(err, service.ErrNotFound):
 		h.writeJSON(w, http.StatusNotFound, errorBody{Error: "not found"})
+	case errors.As(err, &inUse):
+		h.writeJSON(w, http.StatusConflict, errorBody{Error: inUse.Error()})
 	case errors.Is(err, service.ErrConflict):
 		h.writeJSON(w, http.StatusConflict, errorBody{Error: "already exists"})
 	case errors.Is(err, auth.ErrForbidden):

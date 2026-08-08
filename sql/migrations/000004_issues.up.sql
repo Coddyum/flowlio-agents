@@ -28,11 +28,20 @@ CREATE TABLE issues (
 
     CONSTRAINT issues_project_fk FOREIGN KEY (project_id, team_id)
         REFERENCES projects (id, team_id) ON DELETE CASCADE,
-    -- CASCADE aussi sur l'auteur : v1 n'expose ni DELETE /projects ni DELETE /teams, donc la
-    -- seule cascade réellement déclenchable est la suppression d'une team, qui emporte tout.
-    -- Conséquence connue et assumée : le jour où un DELETE /projects existera, supprimer le
-    -- projet auteur effacera le fil chez le destinataire. À rouvrir à ce moment-là (archived_at
-    -- sur projects), pas avant.
+    -- CASCADE on the author too, and that cascade is now REACHABLE: `DELETE /projects/{id}` has
+    -- existed since 2026-08-08. It is nonetheless never reached with a thread standing, because
+    -- the route REFUSES the deletion for as long as any issue touches the project — the guard is
+    -- the `NOT EXISTS` of DeleteProject, in sql/queries/projects.sql, and the list it refuses on
+    -- is the very list the customer is shown.
+    --
+    -- WHAT THIS COMMENT USED TO SAY, AND WHY IT NO LONGER SAYS IT. It prescribed reopening the
+    -- question with an `archived_at` column on `projects` the day a DELETE existed. That day came,
+    -- and Maxence decided otherwise on 2026-08-08 (card FLWL2-19): the refusal, form 2, over
+    -- archiving, form 3. The danger it named is exactly right and unchanged — deleting the author
+    -- would erase the thread at the recipient's, with the author's own words in it, without the
+    -- recipient asking for anything. Only the remedy moved: a 409 keeps the same promise with no
+    -- migration and no column. Do NOT add `archived_at`: the guarantee is already held one layer
+    -- up, and a second mechanism for one guarantee is two truths that will drift.
     CONSTRAINT issues_author_project_fk FOREIGN KEY (author_project_id, team_id)
         REFERENCES projects (id, team_id) ON DELETE CASCADE,
 

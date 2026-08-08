@@ -68,6 +68,86 @@ linked AS (
 )
 SELECT * FROM created;
 
+-- DeleteProject removes a repo, and REFUSES for as long as a LIVING SIBLING repo holds a thread
+-- with it. Card FLWL2-19, decided by Maxence on 2026-08-08.
+--
+-- WHY A REFUSAL AND NOT A CASCADE. `issues` reaches `projects` through TWO foreign keys —
+-- `project_id`, the recipient, and `author_project_id`, the author — and both are ON DELETE
+-- CASCADE. Deleting WEB therefore destroys the questions CORE WROTE to WEB, with CORE's own words
+-- in them, from CORE's side, without CORE asking for anything. No status code that a repo's owner
+-- receives can undo that for the repo next door, so the delete is refused instead. The archival
+-- column that 000004 prescribed for this day (`archived_at` on `projects`) is NOT the answer:
+-- the refusal keeps the same promise with no migration and no column.
+--
+-- ONE STATEMENT, NOT TWO, and the reason is not tidiness. A `SELECT` that counts the threads
+-- followed by a `DELETE` leaves a window in which a concurrent `create_issue` commits: the count
+-- said zero, the delete succeeds, and the sibling loses its thread anyway.
+--
+-- THE GUARD AND THE MESSAGE ARE THE SAME RELATION, and this is the load-bearing shape of the
+-- query. `deleted` does not re-derive its own predicate: it refuses on `NOT EXISTS (SELECT 1 FROM
+-- blockers)`, where `blockers` is the very list returned to the customer. Narrowing `blockers` —
+-- to answered threads only, say — automatically narrows what refuses the delete, and there is no
+-- way to write a version where the customer is told about a thread that did not block, or blocked
+-- by a thread they were not told about. That divergence is the failure this shape makes
+-- unwritable; a second predicate would have made it merely tested.
+--
+-- EVERY ISSUE BLOCKS, OPEN OR CLOSED. A closed thread still carries the sibling's words, and this
+-- product has no route that deletes an issue — so "close it first" would be advice the customer
+-- cannot act on. Overruling that is one word in the join: `AND i.state <> 'closed'`.
+--
+-- NO JOIN IS NEEDED TO PROVE THE SIBLING IS ALIVE. `issues_not_self` (000004) forbids an issue
+-- whose two ends are the same project, and both foreign keys are composite against
+-- `projects (id, team_id)`: the other end of any issue touching the target is therefore a
+-- different project whose row the database guarantees exists.
+--
+-- THREE OUTCOMES, distinguished by the rows alone:
+--   * zero rows           — no such repo in this team               → ErrNotFound → 404
+--   * rows with a sibling — the repo is talked to                   → refusal     → 409
+--   * one row, no sibling — deleted                                 →               204
+-- The LEFT JOIN is what produces the third: `target` yields its row whether or not `blockers`
+-- matched, so "deleted" and "does not exist" never collapse onto the same empty result.
+--
+-- KNOWN WINDOW, not closed, and the same one that `CreateIssue` documents. Under READ COMMITTED
+-- this statement takes ONE snapshot: an issue whose transaction was still in flight at that
+-- instant is invisible to `blockers`, while the DELETE waits behind the row lock that the
+-- insertion's foreign-key check holds on the project. When that transaction commits, the delete
+-- proceeds on the older snapshot and the sibling loses that one thread. Closing it needs
+-- SERIALIZABLE or an ON DELETE RESTRICT foreign key — a migration, hence a human decision. The
+-- exposure is one thread, on a gesture a human types by hand a few times a year, and the opposite
+-- race is safe: an insertion that starts after the delete fails loudly on the foreign key.
+-- name: DeleteProject :many
+WITH target AS (
+    SELECT p.id, p.team_id
+    FROM projects p
+    WHERE p.id = @project_id AND p.team_id = @team_id
+),
+blockers AS (
+    SELECT sibling.key AS sibling_key, count(*)::bigint AS threads
+    FROM target t
+    JOIN issues i
+      ON i.team_id = t.team_id
+     AND (i.project_id = t.id OR i.author_project_id = t.id)
+    JOIN projects sibling
+      ON sibling.team_id = i.team_id
+     AND sibling.id = CASE WHEN i.project_id = t.id THEN i.author_project_id ELSE i.project_id END
+    GROUP BY sibling.key
+),
+deleted AS (
+    DELETE FROM projects p
+    USING target t
+    WHERE p.id      = t.id
+      AND p.team_id = t.team_id
+      AND NOT EXISTS (SELECT 1 FROM blockers)
+    RETURNING p.id
+)
+SELECT
+    (SELECT count(*) FROM deleted) = 1 AS deleted,
+    b.sibling_key,
+    b.threads
+FROM target t
+LEFT JOIN blockers b ON true
+ORDER BY b.sibling_key;
+
 -- Every read is scoped by team_id: the scope belongs to the query, not to the handler.
 
 -- name: GetProjectByID :one

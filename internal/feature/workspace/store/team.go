@@ -4,11 +4,12 @@ package store
 //
 // | Élément          | Résumé                                                    | Ligne |
 // |------------------|-----------------------------------------------------------|-------|
-// | store.CreateTeam | Inserts a team and returns its domain shape                | 24    |
-// | store.TeamByID   | Reads a team by its identifier                             | 33    |
-// | store.TeamBySlug | Reads a team by its slug                                   | 42    |
-// | store.ListTeams  | Lists every team, oldest first                             | 51    |
-// | toTeam           | Projects an sqlc row onto the domain team                  | 65    |
+// | store.CreateTeam | Inserts a team and returns its domain shape                | 25    |
+// | store.TeamByID   | Reads a team by its identifier                             | 34    |
+// | store.TeamBySlug | Reads a team by its slug                                   | 43    |
+// | store.ListTeams  | Lists every team, oldest first                             | 52    |
+// | store.DeleteTeam | Removes a team and everything inside it, in cascade         | 76    |
+// | toTeam           | Projects an sqlc row onto the domain team                  | 84    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -59,6 +60,24 @@ func (s *store) ListTeams(ctx context.Context) ([]Team, error) {
 		teams = append(teams, toTeam(row))
 	}
 	return teams, nil
+}
+
+// DeleteTeam removes a team and, by cascade, everything that belongs to it.
+//
+// THE ABSENCE OF A BLOCKER REPORT IS THE DESIGN, not an omission. DeleteProject returns a
+// ProjectDeletion because a repo can be talked to by a repo that survives it; a team cannot. Every
+// thread has both of its ends inside one team — the composite foreign keys of `issues` see to that
+// — so a team's deletion takes both halves of everything it touches and leaves nobody holding an
+// empty shell.
+//
+// sql.ErrNoRows here means "no such team", and `translate` turns it into ErrNotFound. That is the
+// only reason the query returns the identifier it just deleted: without a row to miss, a delete
+// that matched nothing would be reported as a success.
+func (s *store) DeleteTeam(ctx context.Context, id uuid.UUID) error {
+	if _, err := s.q.DeleteTeam(ctx, id); err != nil {
+		return translate(err, "delete team")
+	}
+	return nil
 }
 
 // toTeam projects a generated row onto the domain type, so that sqlc never spills out of the store.

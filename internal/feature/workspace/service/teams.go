@@ -4,10 +4,11 @@ package service
 //
 // | Élément            | Résumé                                                    | Ligne |
 // |--------------------|-----------------------------------------------------------|-------|
-// | service.CreateTeam | Validates then creates a team                              | 25    |
-// | service.ListTeams  | Lists the existing teams                                   | 64    |
-// | service.TeamBySlug | Resolves a team by its slug                                | 86    |
-// | toTeam             | Projects a store team onto the API view                    | 95    |
+// | service.CreateTeam | Validates then creates a team                              | 26    |
+// | service.ListTeams  | Lists the existing teams                                   | 65    |
+// | service.TeamBySlug | Resolves a team by its slug                                | 87    |
+// | service.DeleteTeam | Removes a team and everything inside it                    | 107   |
+// | toTeam             | Projects a store team onto the API view                    | 118   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -89,6 +90,28 @@ func (s *service) TeamBySlug(ctx context.Context, slug string) (Team, error) {
 		return Team{}, translateStore(err, "team "+slug)
 	}
 	return toTeam(found), nil
+}
+
+// DeleteTeam removes a team and, with it, every repo, backlog, thread, memory, token and trust edge
+// inside it.
+//
+// THERE IS NO REFUSAL TO WRITE HERE, and the contrast with DeleteProject is the point. That one
+// returns a *ProjectInUseError while a SIBLING repo holds a thread with the target, because the
+// sibling outlives the deletion and would find its own questions gone from its own side. A team has
+// no such survivor: both ends of every thread live inside it, so the party that would be surprised
+// is being deleted along with the thread.
+//
+// The identifier is the one `teamFor` resolved, so it is already proven to belong to the caller.
+// This method validates that it is not nil and nothing else: a scope check written a second time
+// here would be a second truth about who may delete what.
+func (s *service) DeleteTeam(ctx context.Context, teamID uuid.UUID) error {
+	if teamID == uuid.Nil {
+		return ErrInvalidInput
+	}
+	if err := s.store.DeleteTeam(ctx, teamID); err != nil {
+		return translateStore(err, "delete team "+teamID.String())
+	}
+	return nil
 }
 
 // toTeam projects a store team onto the API view.
