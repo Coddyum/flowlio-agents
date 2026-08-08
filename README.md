@@ -228,9 +228,10 @@ imports, bounded file size, mandatory file summaries.
 
 ## Status
 
-**v0.1.0 — first public release.** The API, the CLI, the MCP server, the trust graph and the inbox
-are in and tested. What has *not* happened yet is a long run against a real multi-repo team; that
-is the next milestone, and until it does, treat rough edges as expected rather than surprising.
+**v0.3.0.** The API, the CLI, the MCP server, the trust graph and the inbox are in and tested. The
+trust graph is now directed: trust points one way, and granting it to a repo does not grant it
+back. What has *not* happened yet is a long run against a real multi-repo team; that is the next
+milestone, and until it does, treat rough edges as expected rather than surprising.
 
 Not built yet: waking a session up when its issue gets answered, versioned decisions and contracts
 (the "memory" part), and hosted accounts.
