@@ -46,6 +46,11 @@ boundary — never another repo's backlog.
 
 ## Quickstart
 
+Self-hosting is the only way this repository is meant to be run, and there are two paths to it:
+**Docker**, below, which needs nothing else installed; or [your own Postgres](#without-docker),
+which needs a Go toolchain. Both give the same instance — same schema, same admin token on disk,
+same CLI.
+
 Requirement: **Docker**. That's all.
 
 ```bash
@@ -100,6 +105,42 @@ flowlio trust list            # one line per direction
 An existing `.mcp.json` is **merged**, never replaced: your other MCP servers survive, and a
 hand-tuned `flowlio` entry is left alone.
 
+### What the repository remembers
+
+A backlog says what is left to do; it does not say why the code is the way it is. Each repository
+carries its own **memory** — decisions, things learned the hard way, where the work stands — and an
+agent reads and writes it through `remember` / `recall`, or you do, from the CLI:
+
+```bash
+flowlio memory write D25 decision "One image, one instance" "Two services meant two bills…"
+flowlio memory list --kind decision
+flowlio memory search "pgbouncer prepared statements"
+flowlio memory show D25
+```
+
+**An entry is never edited and never deleted — a newer one supersedes it** (`--supersedes a,b`),
+so the history of a reversal survives the reversal. `recall` returns what holds today; ask for the
+history to see what it replaced.
+
+The scope is **the repository, and nothing else**: no admin token reads it, no sibling repo reads
+it. A memory shared across repositories would be a channel where one agent writes text another
+agent reads as instructions — the same reason issues are framed as data.
+
+### Watching the whole team
+
+Two commands read a **whole team** rather than one repo's backlog, and they are for you, not for an
+agent — they need the admin token, and a project token is refused with exit status `2`:
+
+```bash
+flowlio watch            # the debt queue: what is blocked, unanswered, stale
+flowlio watch --follow   # same, refreshed; never clears the screen, stays greppable
+flowlio show CORE-41     # one row of that queue, in full
+```
+
+**On a healthy team the screen is empty**, and there is no "all good" line to drown that silence.
+When it is not empty, the first row is the worst thing in the system: the server sorts oldest debt
+first and the CLI never re-sorts.
+
 ### The stack listens on this machine only
 
 Both published ports are bound to `127.0.0.1`. Postgres carries the credentials written in
@@ -134,15 +175,71 @@ Every live admin token is revoked and a new one is written to `credentials.json`
 **Project tokens are untouched**: your repositories keep working. What authorises the rotation is
 being able to start this process — the same proof the first run already accepts.
 
+### Deleting a repo, or a whole team
+
+Two deletions exist, both admin, and neither has a CLI command yet — they are HTTP calls against
+your own instance:
+
+```bash
+API=$(jq -r .api_url ~/.config/flowlio/credentials.json)
+TOKEN=$(jq -r .token  ~/.config/flowlio/credentials.json)
+AUTH="Authorization: Bearer $TOKEN"
+
+# The repo is addressed by its id, and `flowlio project list` prints keys, not ids.
+curl -s -H "$AUTH" "$API/api/workspace/projects?team=acme"
+
+# Drop one repo: its tokens, tasks, memories and trust edges go with it.
+curl -X DELETE -H "$AUTH" "$API/api/workspace/projects/<id>?team=acme"
+
+# Drop the team, and everything inside it.
+curl -X DELETE -H "$AUTH" "$API/api/workspace/teams/acme"
+```
+
+`?team=` is not optional on the first two: the admin token belongs to the instance, not to a team,
+so nothing names the team for it. The refusal for a team that is not yours is a `404`, never a
+`403` — "it exists but not for you" is how one enumerates an installation by sweeping slugs.
+
+**Deleting a repo is refused while a sibling still holds an open thread with it**, and that refusal
+lives in the query rather than in a handler. Deleting a *team* has nothing to refuse: there is no
+sibling left outside it to lose its words.
+
 ### Without Docker
+
+You need a Postgres 18 of your own and a Go toolchain. Nothing else — **not golang-migrate**: in
+local mode the API carries its migrations inside the binary and applies them at start-up.
 
 ```bash
 cp .env.example .env          # DATABASE_URL pointing at your Postgres 18
-make up-dev                   # migrations (needs golang-migrate)
-make run                      # starts the API
+make run                      # applies the schema, then serves
 ```
 
-## The MCP surface — ten tools, on purpose
+The defaults differ from the Docker path in one way that matters: `ADDR` is `:8080` here, not
+`:42058`. The first start writes `~/.config/flowlio/credentials.json` (`0600`) with the API URL
+built from that address, so the CLI finds the right port on its own. A `.mcp.json` does not: it
+records the URL it was written with, so an agent set up against a Docker instance keeps calling
+`42058` until `flowlio init` runs again.
+
+Browser access is separate and stays closed by default: `ALLOWED_ORIGINS` ships as
+`https://flowlio.me,https://www.flowlio.me` — the bridge page, and nothing else. `*` is never an
+acceptable value here, dev included: this process answers to an admin token living on your machine.
+Setting the variable to an empty value is not the same as leaving it out — it closes the surface
+completely instead of falling back to the default.
+
+Two variables are worth knowing before they fail you at start-up:
+
+| Variable | Local mode |
+| --- | --- |
+| `MODE` | `local`, the default. `hosted` exists for an operated deployment and disables the bootstrap |
+| `ADMIN_TOKEN` | **must stay unset.** Local mode issues its own; the process refuses to start rather than ignore one you set |
+
+Building a binary instead of `make run`:
+
+```bash
+go build -o flowlio-api ./cmd/api && ./flowlio-api
+go build -o flowlio ./cmd/flowlio      # the CLI, if you would rather not use a release archive
+```
+
+## The MCP surface — twelve tools, on purpose
 
 Every extra tool costs context tokens on **every** agent turn, so the surface is deliberately
 small:
@@ -159,6 +256,8 @@ small:
 | `list_issues` | the questions exchanged |
 | `answer_issue` | reply, and close if that settles it |
 | `check_inbox` | what is actionable right now |
+| `remember` | writes one entry to this repository's memory, and what it retires |
+| `recall` | reads that memory — full-text search, or the most recent entries |
 
 **No tool takes a project as a parameter.** The project comes from the token, so there is no MCP
 call able to name another repo's backlog. That is true of this engine's own MCP surface, whoever
@@ -172,7 +271,8 @@ here, and this sentence still describes what the engine accepts.
 team (acme)
  └── project (= 1 repo: API, WEB)
       ├── task    ← work internal to the repo
-      └── issue   ← question addressed to a sibling repo
+      ├── issue   ← question addressed to a sibling repo
+      └── memory  ← what this repo knows about itself, read by nobody else
 ```
 
 References are readable — `API-34`, never a UUID. An agent token is scoped to **one project**: it
@@ -228,13 +328,19 @@ imports, bounded file size, mandatory file summaries.
 
 ## Status
 
-**v0.3.0.** The API, the CLI, the MCP server, the trust graph and the inbox are in and tested. The
-trust graph is now directed: trust points one way, and granting it to a repo does not grant it
-back. What has *not* happened yet is a long run against a real multi-repo team; that is the next
+**v0.3.0.** The API, the CLI, the MCP server, the trust graph, the inbox, the per-repository memory
+and the team debt queue are in and tested. The trust graph is directed: trust points one way, and
+granting it to a repo does not grant it back. A repo and a team can be deleted, and a repo's
+deletion is refused while a sibling still holds a thread with it.
+
+What has *not* happened yet is a long run against a real multi-repo team; that is the next
 milestone, and until it does, treat rough edges as expected rather than surprising.
 
-Not built yet: waking a session up when its issue gets answered, versioned decisions and contracts
-(the "memory" part), and hosted accounts.
+Not built yet: waking a session up when its issue gets answered, MCP over HTTP, the local web page
+the binary is meant to serve on its own origin, and a CLI command for the two deletions above.
+Hosted accounts are **not part of this repository at all** — this engine runs `MODE=hosted` for an
+operated deployment, and the accounts, billing and screens that go with it live in a separate
+codebase.
 
 Scope and the reasoning behind each decision: [docs/DESIGN-V1.md](docs/DESIGN-V1.md) (French).
 
