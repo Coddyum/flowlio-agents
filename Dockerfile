@@ -1,30 +1,30 @@
-# Image de l'API. Deux étages : on compile avec la chaîne Go, on expédie un binaire seul.
+# The API image. Two stages: compile with the Go toolchain, ship a binary on its own.
 #
-# La version de Go n'est PAS écrite ici : elle est lue depuis go.mod par le tag de l'image de
-# build. Dupliquer un numéro de version, c'est se garantir qu'un des deux sera oublié.
+# The Go version is NOT written here: it is read from go.mod through the build image's tag.
+# Duplicating a version number guarantees that one of the two ends up forgotten.
 
 FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 
-# Les dépendances d'abord, dans leur propre couche : tant que go.mod et go.sum ne bougent pas,
-# le téléchargement est réutilisé d'une image à l'autre.
+# Dependencies first, in their own layer: as long as go.mod and go.sum do not move, the download is
+# reused from one image to the next.
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-# CGO désactivé : le binaire doit tourner tel quel dans une image sans libc.
+# CGO disabled: the binary has to run as it is in an image with no libc.
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/flowlio ./cmd/flowlio
 
 FROM alpine:3.21
 
-# Certificats racine : l'API parle à Neon en TLS en production.
+# Root certificates: the API talks to Neon over TLS in production.
 RUN apk add --no-cache ca-certificates
 
-# Utilisateur non privilégié. Le répertoire de configuration lui appartient, sinon l'écriture du
-# fichier d'identifiants au premier démarrage échouerait.
+# Unprivileged user. The configuration directory belongs to it, otherwise writing the credentials
+# file on the first start would fail.
 RUN adduser -D -u 10001 flowlio && mkdir -p /home/flowlio/.config && chown -R flowlio /home/flowlio
 USER flowlio
 

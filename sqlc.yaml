@@ -1,15 +1,15 @@
 version: "2"
 sql:
   - engine: "postgresql"
-    # sqlc lit directement les migrations : pas de schéma dupliqué, donc pas de dérive possible.
-    # `make schema` produit sql/schema/schema.sql, un instantané lisible (pg_dump) de la base.
+    # sqlc reads the migrations directly: no duplicated schema, so no drift possible.
+    # `make schema` produces sql/schema/schema.sql, a readable snapshot (pg_dump) of the database.
     schema: "sql/migrations"
     queries: "sql/queries"
     gen:
       go:
         package: "database"
         out: "internal/database"
-        # database/sql (et non pgx natif) : le pattern Transactor des stores repose sur *sql.DB.
+        # database/sql (and not native pgx): the stores' Transactor pattern rests on *sql.DB.
         sql_package: "database/sql"
         emit_json_tags: true
         emit_empty_slices: true

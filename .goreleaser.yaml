@@ -1,13 +1,13 @@
-# Release des binaires. Déclenchée par un tag, jamais à la main.
+# Binary releases. Triggered by a tag, never by hand.
 #
-# Deux binaires, deux publics : `flowlio` est celui que tout le monde télécharge — la CLI et le
-# serveur MCP. `api` n'est utile qu'à qui héberge son instance sans Docker ; il est publié parce
-# que ne pas le publier obligerait cette personne à installer la chaîne Go.
+# Two binaries, two audiences: `flowlio` is the one everybody downloads — the CLI and the MCP
+# server. `api` is only useful to somebody self-hosting without Docker; it is published because not
+# publishing it would force that person to install a Go toolchain.
 #
-# Rien ici ne signe avec une clé : une signature dont la clé privée vit dans les secrets d'un
-# dépôt ne prouve pas grand-chose. L'attestation de provenance est produite par le workflow
-# GitHub (`actions/attest-build-provenance`), qui la rattache à l'identité du dépôt et du tag.
-# Les checksums restent publiés, ils servent à vérifier un téléchargement, pas à authentifier.
+# Nothing here signs with a key: a signature whose private key lives in a repository's secrets does
+# not prove much. The provenance attestation is produced by the GitHub workflow
+# (`actions/attest-build-provenance`), which ties it to the identity of the repository and the tag.
+# Checksums are still published; they verify a download, they do not authenticate it.
 version: 2
 
 project_name: flowlio
@@ -21,16 +21,20 @@ builds:
     main: ./cmd/flowlio
     binary: flowlio
     env:
-      # Aucune dépendance à la libc de la machine cible : le binaire doit tourner sur une Alpine
-      # comme sur une Ubuntu.
+      # No dependency on the target machine's libc: the binary has to run on an Alpine as well as on
+      # an Ubuntu.
       - CGO_ENABLED=0
     goos: [linux, darwin]
     goarch: [amd64, arm64]
     flags:
-      # -trimpath retire les chemins de la machine de build du binaire : ils n'apprennent rien à
-      # l'utilisateur et rendent la compilation non reproductible.
+      # -trimpath strips the build machine's paths out of the binary: they teach the user nothing
+      # and they make the compilation non-reproducible.
       - -trimpath
     ldflags:
+      # THE TARGET SYMBOLS HAVE TO EXIST. The Go linker writes into a symbol it can find and says
+      # NOTHING when it cannot — v0.1.0 through v0.3.0 shipped unstamped because neither binary
+      # declared `version`. They now do (cmd/*/version.go), and a test asserts the agreement between
+      # this line and those declarations.
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
 
   - id: api
@@ -48,7 +52,7 @@ builds:
 archives:
   - id: default
     ids: [flowlio, api]
-    # Un nom d'archive qui se lit sans documentation : produit, version, OS, architecture.
+    # An archive name that reads without documentation: product, version, OS, architecture.
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     formats: [tar.gz]
@@ -64,18 +68,18 @@ changelog:
   use: github
   sort: asc
   filters:
-    # Le journal de release s'adresse aux utilisateurs : la plomberie interne n'y a pas sa place.
+    # The release log addresses users: internal plumbing has no place in it.
     #
-    # Le groupe `(\(...\))?` n'est pas décoratif. Les motifs ancrés sans lui — `^docs:` — ne
-    # filtraient QUE la forme sans scope, et ce dépôt écrit presque tout avec un scope. Mesuré sur
-    # le journal de v0.1.0 : les 7 commits `docs:`/`test:`/`chore:`/`ci:` nus étaient bien absents,
-    # et les 6 commits `docs(m3):`, `test(trust):`… étaient TOUS présents. C'est ce contraste qui
-    # désigne la cause — les filtres marchaient, c'est la forme qui leur échappait.
+    # The `(\(...\))?` group is not decoration. Patterns anchored without it — `^docs:` — matched
+    # ONLY the scopeless form, and this repository writes almost everything with a scope. Measured
+    # on the v0.1.0 log: the 7 bare `docs:`/`test:`/`chore:`/`ci:` commits were indeed absent, and
+    # the 6 `docs(m3):`, `test(trust):`… commits were ALL present. That contrast is what named the
+    # cause — the filters worked, it was the shape that escaped them.
     #
-    # Guillemets SIMPLES : en YAML ils laissent les antislashs tels quels, donc le motif écrit est
-    # celui que Go compile. En guillemets doubles il faudrait les doubler, et un `\(` devenu `(`
-    # transformerait la parenthèse littérale en groupe — le filtre repasserait silencieusement à
-    # côté, exactement le défaut qu'on corrige.
+    # SINGLE quotes: in YAML they leave backslashes as they are, so the pattern written is the one
+    # Go compiles. Double quotes would need them doubled, and a `\(` turned into `(` would make the
+    # literal parenthesis a group — the filter would silently miss again, which is the exact defect
+    # being fixed.
     exclude:
       - '^docs(\(.+\))?:'
       - '^test(\(.+\))?:'
@@ -83,8 +87,8 @@ changelog:
       - '^ci(\(.+\))?:'
 
 release:
-  # Une release reste un brouillon jusqu'à relecture humaine : un tag poussé par erreur ne doit
-  # pas publier des binaires au monde entier dans la seconde.
+  # A release stays a draft until a human has read it: a tag pushed by mistake must not publish
+  # binaries to the whole world within the second.
   draft: true
   prerelease: auto
   footer: |
@@ -93,13 +97,22 @@ release:
     ```sh
     tar xzf flowlio_{{ .Version }}_<os>_<arch>.tar.gz
     sudo install flowlio /usr/local/bin/
-    flowlio help
+    flowlio version
     ```
 
-    Vérifier le téléchargement :
+    Verify the download:
 
     ```sh
     sha256sum -c checksums.txt --ignore-missing
     ```
 
-    Sous licence AGPL-3.0. Le code de la version publiée est le tag `{{ .Tag }}`.
+    Verify where the binaries came from — this repository, this tag, this workflow:
+
+    ```sh
+    gh attestation verify --repo Coddyum/flowlio-agents flowlio_{{ .Version }}_<os>_<arch>.tar.gz
+    ```
+
+    Setting up an instance: [README](https://github.com/Coddyum/flowlio-agents#setup).
+    What changed: [CHANGELOG](https://github.com/Coddyum/flowlio-agents/blob/main/CHANGELOG.md).
+
+    Licensed under AGPL-3.0. The code of this release is the tag `{{ .Tag }}`.
