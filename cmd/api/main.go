@@ -5,10 +5,10 @@ package main
 // | Élément        | Résumé                                                         | Ligne |
 // |----------------|----------------------------------------------------------------|-------|
 // | main           | Loads config, wires infra, mounts the modules, serves the API    | 54    |
-// | buildModules   | Instantiates the feature modules — the single place to add one   | 142   |
-// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 166   |
-// | bootstrapLocal | Issues the admin token on the very first local start             | 198   |
-// | apiURL         | Composes the URL a client dials from the listen address          | 231   |
+// | buildModules   | Instantiates the feature modules — the single place to add one   | 149   |
+// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 173   |
+// | bootstrapLocal | Issues the admin token on the very first local start             | 205   |
+// | apiURL         | Composes the URL a client dials from the listen address          | 238   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -62,6 +62,13 @@ func main() {
 		if err := mintAdminToken(os.Stdout); err != nil {
 			log.Fatalf("main: %v", err)
 		}
+		return
+	}
+
+	// Same reasoning, one step further: identifying the binary must not require a database either.
+	// An operator asks a container what it is running precisely when it is failing to start.
+	if len(os.Args) > 1 && os.Args[1] == versionCommand {
+		printVersion(os.Stdout)
 		return
 	}
 
