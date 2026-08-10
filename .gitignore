@@ -33,3 +33,8 @@ docs/lecons.md
 # security findings and internal state — it is somebody else's context, not this project's, and
 # nothing in it belongs in a public repository.
 docs/memory-agents/
+
+# The repository's own MCP configuration is per-machine: `flowlio connect` writes it,
+# and it names the instance this checkout is pointed at. Committing one would hand every
+# clone somebody else's board.
+.mcp.json
