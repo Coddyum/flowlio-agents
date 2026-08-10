@@ -4,12 +4,14 @@ package main
 //
 // | Élément     | Résumé                                                          | Ligne |
 // |-------------|-----------------------------------------------------------------|-------|
-// | teamFlag    | Adds the --team option shared by the admin commands               | 32    |
-// | teamQuery   | Builds the ?team=<slug> parameter when one is given               | 37    |
-// | runWhoami   | Prints the identity of the current token                          | 45    |
-// | runTeam     | Subcommands for managing teams                                    | 71    |
-// | runProject  | Subcommands for managing projects                                 | 110   |
-// | runToken    | Subcommands for managing agent tokens                             | 159   |
+// | teamFlag    | Adds the --team option shared by the admin commands               | 34    |
+// | teamQuery   | Builds the ?team=<slug> parameter when one is given               | 39    |
+// | runWhoami   | Prints the identity of the current token                          | 47    |
+// | runTeam     | Subcommands for managing teams                                    | 73    |
+// | runProject  | Subcommands for managing projects                                 | 112   |
+// | runToken    | Subcommands for managing agent tokens                             | 161   |
+// | splitFlags  | Separates flags from positional arguments, in any order           | 237   |
+// | printToken  | Prints a freshly issued token, with the warning it deserves       | 261   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -225,4 +227,40 @@ func runToken(ctx context.Context, args []string) error {
 	default:
 		return fmt.Errorf("unknown token subcommand: %s", sub)
 	}
+}
+
+// splitFlags separates flags from positional arguments, whatever their order: neither an agent nor
+// a human in a hurry should have to guess that --team goes before the key.
+//
+// It lived in init.go until that command became a shim. It belongs here: every command in this file
+// leans on it.
+func splitFlags(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+	rest := args
+
+	for len(rest) > 0 {
+		if err := fs.Parse(rest); err != nil {
+			return nil, err
+		}
+		rest = fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		positional = append(positional, rest[0])
+		rest = rest[1:]
+	}
+	return positional, nil
+}
+
+// printToken prints an issued token. This is the only chance to read it: the server keeps nothing
+// but a hash.
+//
+// `flowlio token create` is now the ONLY command that shows a secret, and it is explicitly a
+// request for one. `setup` and `connect` file theirs in 0600 and print a path — a token nobody sees
+// is a token nobody pastes into a repository.
+func printToken(created service.CreatedToken) {
+	fmt.Printf("\ntoken %q for repo %s — shown once:\n\n    %s\n\n",
+		created.Name, created.ProjectKey, created.Secret)
+	fmt.Printf("A repository set up with `flowlio connect` needs none of this: its token is filed in\n" +
+		"the configuration directory, and the .mcp.json carries two names and no secret.\n")
 }
