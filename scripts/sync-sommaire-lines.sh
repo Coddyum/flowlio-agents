@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # sync-sommaire-lines.sh
-# Recalcule la colonne "Ligne" des blocs // SOMMAIRE à partir des déclarations réelles.
+# Recomputes the "Ligne" column of the // SOMMAIRE blocks from the real declarations.
 #
-# Ne crée ni ne supprime aucune ligne de tableau : si le nombre de lignes ne correspond pas au
-# nombre de déclarations, le fichier est signalé et laissé intact — c'est à l'auteur d'écrire la
-# description de la déclaration ajoutée ou de retirer celle qui a disparu.
+# It creates and removes no table row: when the number of rows does not match the number of
+# declarations, the file is reported and left untouched — writing the description of an added
+# declaration, or dropping the one that disappeared, is the author's judgement call.
 #
-# Usage :
-#   ./scripts/sync-sommaire-lines.sh            → tout le repo
-#   ./scripts/sync-sommaire-lines.sh <fichier>  → un seul fichier
+# Usage:
+#   ./scripts/sync-sommaire-lines.sh          → the whole repository
+#   ./scripts/sync-sommaire-lines.sh <file>   → one file
+#
+# MARKER, HEADER and the "Ligne" column heading stay in French: they are compared literally against
+# the text of the .go files, and the same strings are shared with flowlio-core and Flowlio. See the
+# note at the top of check-sommaire.sh.
 
 set -euo pipefail
 
@@ -50,7 +54,7 @@ def sync(path):
     decls = [i + 1 for i, line in enumerate(lines) if DECL.match(line)]
 
     if len(rows) != len(decls):
-        return f"{path}: {len(rows)} lignes de tableau vs {len(decls)} déclarations — à corriger à la main"
+        return f"{path}: {len(rows)} table rows vs {len(decls)} declarations — fix it by hand"
 
     changed = False
     for row_index, decl_line in zip(rows, decls):
@@ -66,7 +70,7 @@ def sync(path):
 
     if changed:
         path.write_text("\n".join(lines) + "\n")
-        print(f"sommaire resynchronisé : {path}")
+        print(f"sommaire resynchronised: {path}")
     return None
 
 
