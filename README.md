@@ -44,29 +44,96 @@ boundary — never another repo's backlog.
 > isolation. Two agents editing `NOTES.md` clobber each other, neither knows a question is waiting,
 > and every agent reads everything. That file is the real competitor, and it loses on all three.
 
-## Quickstart
+---
 
-Self-hosting is the only way this repository is meant to be run, and there are two paths to it:
-**Docker**, below, which needs nothing else installed; or [your own Postgres](#without-docker),
-which needs a Go toolchain. Both give the same instance — same schema, same admin token on disk,
-same CLI.
+## The three moving parts
 
-Requirement: **Docker**. That's all.
+Read this once and the rest of the README stops being surprising. Everything runs on **your**
+machine; nothing calls out to us, and there is no account anywhere.
+
+```
+   ┌───────────────────────────────────────────────────────────────┐
+   │ your machine                                                  │
+   │                                                               │
+   │  ① the instance                    ② the CLI                  │
+   │  ┌────────────┐  ┌──────────┐      ┌──────────────┐           │
+   │  │ flowlio-api│──│ Postgres │      │  flowlio     │  you type │
+   │  │  :42058    │  │  :5433   │      │  (one binary)│  these    │
+   │  └────────────┘  └──────────┘      └──────────────┘           │
+   │        ▲   two containers               │                     │
+   │        │   `docker compose up -d`       │ writes tokens into  │
+   │        │                                ▼ ~/.config/flowlio/  │
+   │        │                                                      │
+   │        │   ③ the MCP server: `flowlio mcp`, over stdio        │
+   │        └──────────────── started BY your agent client ────────┤
+   │                          (Claude Code, Codex, …) — never by you│
+   └───────────────────────────────────────────────────────────────┘
+```
+
+| # | What | Who starts it | How often |
+| --- | --- | --- | --- |
+| ① | the instance — API + Postgres, in Docker | you, once | survives reboots on its own |
+| ② | the `flowlio` CLI | you, when you want to look at something | never in the background |
+| ③ | the MCP server (`flowlio mcp`) | your agent client, from `.mcp.json` | automatic, per session |
+
+**There is no daemon of ours to babysit, and nothing to launch every morning.** See
+[Everyday use](#everyday-use) for the whole answer.
+
+---
+
+## Setup
+
+Four steps, ten minutes, and the fourth one is the check that the first three worked.
+
+Requirement: **Docker**. That is the entire prerequisite list. (Prefer your own Postgres and a Go
+toolchain? See [Without Docker](#without-docker) — you get the same instance either way.)
+
+### 1. Start the instance
 
 ```bash
 git clone https://github.com/Coddyum/flowlio-agents && cd flowlio-agents
 docker compose up -d
 ```
 
-Two containers start: Postgres, then the API. The API carries its own migrations and applies them
-itself, so the image is all you need — nothing to sequence, nothing else to install.
+Two containers start: Postgres, then the API. The API **carries its own migrations** and applies
+them at start-up, so there is no third step to sequence, nothing to install, and no `migrate`
+binary to find. The first run builds the image and takes a minute; later ones are instant.
+
+Check it came up:
+
+```bash
+docker compose ps          # both services "running", postgres "healthy"
+```
 
 **No token to copy.** The admin credential is never printed: the API writes it to a `0600` file the
 stack keeps on a Docker volume, and the CLI picks it up from there on its own. Nothing to grep out
 of a log, nothing to paste into an `export`.
 
-Install the CLI from the [latest release](https://github.com/Coddyum/flowlio-agents/releases)
-(`flowlio_<version>_<os>_<arch>.tar.gz`), then create a project and its repositories:
+### 2. Install the CLI
+
+Download `flowlio_<version>_<os>_<arch>.tar.gz` from the
+[latest release](https://github.com/Coddyum/flowlio-agents/releases), then:
+
+```bash
+tar xzf flowlio_<version>_<os>_<arch>.tar.gz
+sudo install flowlio /usr/local/bin/
+flowlio version           # says which release you are on — paste this into any bug report
+```
+
+Verify the download first if you like: `sha256sum -c checksums.txt --ignore-missing`.
+
+<details>
+<summary>Building it yourself instead (needs Go 1.26)</summary>
+
+```bash
+go build -o flowlio ./cmd/flowlio && sudo install flowlio /usr/local/bin/
+```
+
+A binary built this way reports `flowlio dev`, which is the honest answer: a checkout is not a
+release.
+</details>
+
+### 3. Create a project, and connect each repository
 
 ```bash
 flowlio setup
@@ -77,16 +144,28 @@ flowlio setup
   Add another repo? [y/N] n
 ```
 
-It creates everything on the instance, issues one token per repository and files each one in
-`~/.config/flowlio/repos/` (`0600`). **No secret is printed and none goes into a repository.** It
-ends on one line per repo, to be run from that repository's root:
+A **project** is your team or product; a **repo** is one git repository with one agent working in
+it. `setup` creates both on the instance, issues one token per repository and files each one in
+`~/.config/flowlio/repos/` (`0600`). **No secret is printed and none goes into a repository.**
+
+It ends on one line per repo, to be run from that repository's root:
 
 ```bash
 cd ../acme-api && flowlio connect API
 cd ../acme-web && flowlio connect WEB
 ```
 
-`connect` writes four things and says so before touching any of them:
+Closed the terminal before copying them? `flowlio setup --list` reprints them from what is already
+filed on this host.
+
+Scriptable form, for when you would rather not answer questions:
+
+```bash
+flowlio setup --project acme --repo API:acme-api --repo WEB:acme-web
+flowlio connect API --yes
+```
+
+`connect` writes four things, and says so before touching any of them:
 
 | File | What it is | Asked first? |
 | --- | --- | --- |
@@ -101,9 +180,27 @@ or run it with no terminal, and it prints exactly what it would have written.
 
 It ends by checking itself: the instance answers, the token is accepted, it belongs to the repo the
 `.mcp.json` names, and twelve tools are offered. Nothing green is announced without having been
-observed. Later, `flowlio doctor` replays the same ground and adds the trust graph.
+observed.
 
-Your agent can now see flowlio:
+### 4. Restart your agent client, then check
+
+**An agent client reads `.mcp.json` when it starts, and not again.** A session that was already
+open when you ran `connect` will not see Flowlio — quit it and reopen it in that repository. Claude
+Code will also ask you to approve the new MCP server the first time; approve it, or nothing is
+loaded.
+
+Then, from the repository:
+
+```bash
+flowlio doctor
+```
+
+It replays the same ground `connect` covered — instance reachable, credential readable, token
+accepted, right repo, workflow file current — and reports on **every** check rather than stopping
+at the first. Somebody runs this because they do not know what is wrong, and three red lines locate
+a problem one red line does not.
+
+Ask your agent to run `list_tasks`, or check by hand:
 
 ```bash
 flowlio task create "first task"
@@ -127,13 +224,161 @@ hand-tuned `flowlio-agents` entry is left alone.
 > issue a token, and that credential lives here. A teammate who clones the repository elsewhere gets
 > the `.mcp.json` and not the token — their agent says so, and names the command.
 
-Taking it back out, and taking it down:
+---
+
+## Everyday use
+
+The short version: **once it is set up, you run nothing.**
+
+| Situation | What you do |
+| --- | --- |
+| every morning | nothing |
+| after a reboot | nothing — as long as Docker itself starts (see below) |
+| starting an agent session | nothing; your client launches `flowlio mcp` from `.mcp.json` |
+| adding a repo to an existing project | `flowlio project create <KEY> <name>` then `flowlio connect <KEY>` in it |
+| looking at the whole team | `flowlio watch` |
+| something feels off | `flowlio doctor` |
+
+**Why nothing after a reboot.** Both containers carry `restart: unless-stopped`, so Docker brings
+them back by itself when the daemon starts. The only link in that chain that is yours is Docker:
+on macOS and Windows, Docker Desktop must be set to open at login (Settings → General → *Start
+Docker Desktop when you sign in*); on Linux, `systemctl enable docker` does the same. If the
+instance is down, everything says so plainly rather than hanging — `flowlio doctor` names it, and
+an agent's tool call comes back as a refusal it can read.
+
+Starting and stopping it by hand, from the `flowlio-agents` checkout:
 
 ```bash
-flowlio disconnect                # this repository only, no network call
-flowlio remove API                # the repo on the instance; refused while a sibling holds a thread
-flowlio remove --project acme     # the project and everything in it, after retyping the slug
+docker compose ps        # is it up?
+docker compose stop      # stop, keeping everything
+docker compose start     # back up
+docker compose logs -f api   # what the API is doing
 ```
+
+`docker compose down` also removes the containers; your data survives, because it lives in a volume
+(next section). **`docker compose down -v` is the one that deletes it.**
+
+**You never run `flowlio mcp` yourself.** It is the MCP server, it speaks over stdin/stdout, and it
+is started by your agent client on demand from the `.mcp.json` entry. Typing it into a terminal
+gets you a process waiting for JSON-RPC that will never come.
+
+---
+
+## Where your data lives
+
+Everything is in Postgres, in a container, on your machine. Three locations, and that is the
+complete list:
+
+| What | Where | Removed by |
+| --- | --- | --- |
+| tasks, issues, memory, trust edges, token hashes | Docker volume `flowlio-pgdata` | `docker compose down -v` |
+| the instance's admin credential, container side | Docker volume `flowlio-config` | `docker compose down -v` |
+| your copy of the admin credential + one token per repo | `~/.config/flowlio/` (`0700`, files `0600`) | `rm -rf ~/.config/flowlio` |
+
+`$XDG_CONFIG_HOME` wins over `~/.config` if you set it — on macOS too, deliberately: the CLI does
+not scatter itself into `~/Library/Application Support`.
+
+**The database.** Postgres 18, user/password/database all `flowlio`, published on
+`127.0.0.1:5433` so it cannot collide with a Postgres you may already run on 5432. The API talks to
+it over the compose network, not through that published port; the port is there for you, to run
+`psql` against it.
+
+**The schema.** Migrations are compiled into the API binary (`embed.go`) and applied at start-up in
+local mode. There is nothing to run, no `migrate` to install, and upgrading the image upgrades the
+schema. In an operated deployment (`MODE=hosted`) the API does the opposite: it checks the schema
+and **refuses to serve** on one it does not match, rather than migrating on its own — a redeploy
+must never change a schema without someone having decided so.
+
+**Backing it up.** One command, and the dump is a plain SQL file:
+
+```bash
+docker exec flowlio-postgres pg_dump -U flowlio -d flowlio > flowlio-backup.sql
+```
+
+Restoring it into a fresh instance:
+
+```bash
+docker exec -i flowlio-postgres psql -U flowlio -d flowlio < flowlio-backup.sql
+```
+
+A backup of the database alone is enough to keep your boards. It does **not** contain any usable
+token — tokens are stored SHA-256 hashed — so after a restore, re-issue them with
+`flowlio connect <REPO>` in each repository.
+
+**Looking at it directly**, if you want to:
+
+```bash
+docker exec -it flowlio-postgres psql -U flowlio -d flowlio
+```
+
+---
+
+## Upgrading
+
+```bash
+cd flowlio-agents
+git pull
+docker compose up -d --build      # rebuilds the API, applies any new migration at start-up
+```
+
+Then install the matching CLI from the [releases](https://github.com/Coddyum/flowlio-agents/releases)
+page and re-run, in each connected repository:
+
+```bash
+flowlio doctor        # says if the workflow prompt is at an older version
+flowlio connect <REPO>   # rewrites it if it is
+```
+
+The workflow prompt written into `.flowlio/workflow.md` carries a version number in its heading, so
+a repository holding an old one is visible rather than merely stale. `connect` replaces a file at
+another version and leaves a current one alone.
+
+**Keep the CLI and the instance on the same release.** They are published together, in the same
+archive, for that reason.
+
+---
+
+## Uninstalling
+
+```bash
+flowlio disconnect                       # in each repository — no network call, no instance needed
+docker compose down -v                   # deletes both volumes: THE DATABASE GOES WITH THEM
+rm -rf ~/.config/flowlio                 # your admin credential and repo tokens
+sudo rm /usr/local/bin/flowlio           # the CLI
+```
+
+`docker compose down -v` is irreversible and takes every task, issue and memory entry with it. Take
+a `pg_dump` first if you might want any of it back.
+
+`flowlio disconnect` lifts the blocks bounded by the `flowlio:start` markers out of your own files
+and removes ours; it does not touch the instance. To also drop the repo server-side, see
+[Removing things](#removing-things).
+
+---
+
+## What you can do from the CLI
+
+Everything an agent can do through MCP, plus the administration an agent has no business doing.
+
+```bash
+flowlio task list [--status s]     # backlog of this repository
+flowlio task show API-34           # one task and its note thread
+flowlio task create "title"
+flowlio task status API-34 done    # todo | in_progress | blocked | done
+flowlio task note API-34 "text"
+flowlio task archive API-34
+
+flowlio whoami                     # which token am I using, and for what
+flowlio project list               # the repos of the project
+flowlio trust list                 # who may raise issues at whom, one line per direction
+flowlio doctor                     # is this repository going to work
+flowlio version
+```
+
+`flowlio help` prints the whole surface, including the `team` / `project` / `token` commands, which
+speak the engine's words rather than the product's — a *team* there is what `setup` calls a project,
+and a *project* is what it calls a repo. The translation happens at the CLI boundary and stops
+there.
 
 ### What the repository remembers
 
@@ -171,44 +416,19 @@ flowlio show CORE-41     # one row of that queue, in full
 When it is not empty, the first row is the worst thing in the system: the server sorts oldest debt
 first and the CLI never re-sorts.
 
-### The stack listens on this machine only
-
-Both published ports are bound to `127.0.0.1`. Postgres carries the credentials written in
-`docker-compose.yml`, so publishing it on every interface would hand the database to anyone sharing
-the network. Nothing legitimate needs it from off-box: the API talks to Postgres over the compose
-network, the CLI runs here, and the browser bridge runs in *your* browser.
-
-Reaching the instance from another machine is a deliberate choice, so it is yours to make, in a
-`compose.override.yml` that Docker reads automatically and that you never commit:
-
-```yaml
-services:
-  api:
-    ports: !override ["42058:42058"]
-```
-
-`!override` matters: a plain `ports:` in an override file is *merged* with the base, so you would
-end up listening on both — the loopback binding would still be there, quietly doing nothing.
-Publishing Postgres the same way is a worse idea; if you need it remotely, tunnel it over SSH
-instead.
-
-### If you lose the admin token
-
-The server keeps a hash of it and nothing else, and the first run issues a token only when the
-database holds none — so a deleted `credentials.json` locks you out of your own instance. Rotate it:
+### Removing things
 
 ```bash
-docker compose run --rm api rotate-admin   # or: ./api rotate-admin, outside Docker
+flowlio disconnect                # this repository only, no network call
+flowlio remove API                # the repo on the instance; refused while a sibling holds a thread
+flowlio remove --project acme     # the project and everything in it, after retyping the slug
 ```
 
-Every live admin token is revoked and a new one is written to `credentials.json`, never printed.
-**Project tokens are untouched**: your repositories keep working. What authorises the rotation is
-being able to start this process — the same proof the first run already accepts.
+**Deleting a repo is refused while a sibling still holds an open thread with it**, and that refusal
+lives in the query rather than in a handler. Deleting a *project* has nothing to refuse: there is no
+sibling left outside it to lose its words.
 
-### Deleting a repo, or a whole team
-
-Two deletions exist, both admin, and neither has a CLI command yet — they are HTTP calls against
-your own instance:
+The same two deletions over HTTP, if you would rather script them against your own instance:
 
 ```bash
 API=$(jq -r .api_url ~/.config/flowlio/credentials.json)
@@ -217,11 +437,7 @@ AUTH="Authorization: Bearer $TOKEN"
 
 # The repo is addressed by its id, and `flowlio project list` prints keys, not ids.
 curl -s -H "$AUTH" "$API/api/workspace/projects?team=acme"
-
-# Drop one repo: its tokens, tasks, memories and trust edges go with it.
 curl -X DELETE -H "$AUTH" "$API/api/workspace/projects/<id>?team=acme"
-
-# Drop the team, and everything inside it.
 curl -X DELETE -H "$AUTH" "$API/api/workspace/teams/acme"
 ```
 
@@ -229,46 +445,75 @@ curl -X DELETE -H "$AUTH" "$API/api/workspace/teams/acme"
 so nothing names the team for it. The refusal for a team that is not yours is a `404`, never a
 `403` — "it exists but not for you" is how one enumerates an installation by sweeping slugs.
 
-**Deleting a repo is refused while a sibling still holds an open thread with it**, and that refusal
-lives in the query rather than in a handler. Deleting a *team* has nothing to refuse: there is no
-sibling left outside it to lose its words.
+### If you lose the admin token
 
-### Without Docker
-
-You need a Postgres 18 of your own and a Go toolchain. Nothing else — **not golang-migrate**: in
-local mode the API carries its migrations inside the binary and applies them at start-up.
+The server keeps a hash of it and nothing else, and the first run issues a token only when the
+database holds none — so a deleted `credentials.json` locks you out of your own instance. Rotate it:
 
 ```bash
-cp .env.example .env          # DATABASE_URL pointing at your Postgres 18
-make run                      # applies the schema, then serves
+docker compose run --rm api rotate-admin   # or: ./flowlio-api rotate-admin, outside Docker
 ```
 
-The defaults differ from the Docker path in one way that matters: `ADDR` is `:8080` here, not
-`:42058`. The first start writes `~/.config/flowlio/credentials.json` (`0600`) with the API URL
-built from that address, so the CLI finds the right port on its own. A repository's `.mcp.json` no
-longer records an address at all — it names a project and a repo, and the address travels with the
-token in `~/.config/flowlio/repos/`, which `flowlio connect` rewrites. An agent set up against a
-Docker instance no longer keeps calling `42058` forever.
+Every live admin token is revoked and a new one is written to `credentials.json`, never printed.
+**Project tokens are untouched**: your repositories keep working. What authorises the rotation is
+being able to start this process — the same proof the first run already accepts.
 
-Browser access is separate and stays closed by default: `ALLOWED_ORIGINS` ships as
-`https://flowlio.me,https://www.flowlio.me` — the bridge page, and nothing else. `*` is never an
-acceptable value here, dev included: this process answers to an admin token living on your machine.
-Setting the variable to an empty value is not the same as leaving it out — it closes the surface
-completely instead of falling back to the default.
+---
 
-Two variables are worth knowing before they fail you at start-up:
+## Troubleshooting
 
-| Variable | Local mode |
-| --- | --- |
-| `MODE` | `local`, the default. `hosted` exists for an operated deployment and disables the bootstrap |
-| `ADMIN_TOKEN` | **must stay unset.** Local mode issues its own; the process refuses to start rather than ignore one you set |
+Run `flowlio doctor` first, from the repository in question. Almost everything below is a line it
+prints.
 
-Building a binary instead of `make run`:
+**My agent does not see Flowlio at all.**
+The client read `.mcp.json` at start-up and has not read it since. Quit it, reopen it in that
+repository, and approve the server if it asks. `flowlio doctor` passing while the agent sees
+nothing is exactly this.
+
+**`no credentials found — run flowlio setup`.**
+No `~/.config/flowlio/credentials.json` on this host. If the instance is running, any command will
+adopt the credential from the container by itself; if it is not, start it with `docker compose up -d`
+from the `flowlio-agents` checkout.
+
+**`the instance answers at …` fails.**
+The containers are down, or Docker is. `docker compose ps` from the checkout, then
+`docker compose up -d`. If the API container restarts in a loop, `docker compose logs api` names the
+cause on its first lines — a bad `DATABASE_URL` and an `ADMIN_TOKEN` set in local mode are the two
+that stop it on purpose.
+
+**A second repository gets 401 while the first works.**
+That was the `${FLOWLIO_TOKEN}` era. Re-run `flowlio connect <REPO>` in it: the token moves into
+`~/.config/flowlio/repos/`, one file per repository, and the `.mcp.json` stops carrying an
+environment reference.
+
+**My agent calls the wrong address / a stale port.**
+An old `.mcp.json` froze the API address. `flowlio connect <REPO>` rewrites it; addresses now travel
+with the token in `~/.config/flowlio/repos/`, which is host-local and rewritable.
+
+**`create_issue` is refused.**
+Either the trust edge is closed in that direction, or the target repo does not exist — and the two
+refusals are **byte for byte identical**, on purpose. Check with `flowlio trust list`, and open one
+with `flowlio trust allow <from> <to>`. Trust is directed: `A → B` does not grant `B → A`.
+
+**`flowlio watch` exits with status 2.**
+It needs the admin token and you are running under a project token. Run it outside a connected
+repository, or unset `FLOWLIO_TOKEN`.
+
+**Port 5433 or 42058 is already taken.**
+Change the host side of the mapping in a `compose.override.yml` (Docker reads it automatically);
+if you move the API port, re-run `flowlio connect <REPO>` in each repository so the stored address
+follows.
+
+**Everything is broken and I want to start over**, keeping nothing:
 
 ```bash
-go build -o flowlio-api ./cmd/api && ./flowlio-api
-go build -o flowlio ./cmd/flowlio      # the CLI, if you would rather not use a release archive
+docker compose down -v && rm -rf ~/.config/flowlio && docker compose up -d && flowlio setup
 ```
+
+This deletes every task, issue and memory entry. It is the nuclear option, listed because looking
+for it is how people end up doing something worse.
+
+---
 
 ## The MCP surface — twelve tools, on purpose
 
@@ -335,6 +580,71 @@ What it does **not** guarantee is written down too, in
 [docs/MODELE-DE-CONFIANCE.md](docs/MODELE-DE-CONFIANCE.md) (French). A security claim that is false
 is worse than one that is absent.
 
+Found a vulnerability? [SECURITY.md](SECURITY.md) says where to send it, and where not to.
+
+### The stack listens on this machine only
+
+Both published ports are bound to `127.0.0.1`. Postgres carries the credentials written in
+`docker-compose.yml`, so publishing it on every interface would hand the database to anyone sharing
+the network. Nothing legitimate needs it from off-box: the API talks to Postgres over the compose
+network, the CLI runs here, and the browser bridge runs in *your* browser.
+
+Reaching the instance from another machine is a deliberate choice, so it is yours to make, in a
+`compose.override.yml` that Docker reads automatically and that you never commit:
+
+```yaml
+services:
+  api:
+    ports: !override ["42058:42058"]
+```
+
+`!override` matters: a plain `ports:` in an override file is *merged* with the base, so you would
+end up listening on both — the loopback binding would still be there, quietly doing nothing.
+Publishing Postgres the same way is a worse idea; if you need it remotely, tunnel it over SSH
+instead.
+
+---
+
+## Without Docker
+
+You need a Postgres 18 of your own and a Go toolchain. Nothing else — **not golang-migrate**: in
+local mode the API carries its migrations inside the binary and applies them at start-up.
+
+```bash
+cp .env.example .env          # DATABASE_URL pointing at your Postgres 18
+make run                      # applies the schema, then serves
+```
+
+The defaults differ from the Docker path in one way that matters: `ADDR` is `:8080` here, not
+`:42058`. The first start writes `~/.config/flowlio/credentials.json` (`0600`) with the API URL
+built from that address, so the CLI finds the right port on its own. A repository's `.mcp.json` no
+longer records an address at all — it names a project and a repo, and the address travels with the
+token in `~/.config/flowlio/repos/`, which `flowlio connect` rewrites. An agent set up against a
+Docker instance no longer keeps calling `42058` forever.
+
+Browser access is separate and stays closed by default: `ALLOWED_ORIGINS` ships as
+`https://flowlio.me,https://www.flowlio.me` — the bridge page, and nothing else. `*` is never an
+acceptable value here, dev included: this process answers to an admin token living on your machine.
+Setting the variable to an empty value is not the same as leaving it out — it closes the surface
+completely instead of falling back to the default.
+
+Two variables are worth knowing before they fail you at start-up:
+
+| Variable | Local mode |
+| --- | --- |
+| `MODE` | `local`, the default. `hosted` exists for an operated deployment and disables the bootstrap |
+| `ADMIN_TOKEN` | **must stay unset.** Local mode issues its own; the process refuses to start rather than ignore one you set |
+
+Building the binaries instead of `make run`:
+
+```bash
+go build -o flowlio-api ./cmd/api && ./flowlio-api
+go build -o flowlio ./cmd/flowlio      # the CLI, if you would rather not use a release archive
+```
+
+Backups here are yours to take against your own Postgres; the `pg_dump` line in
+[Where your data lives](#where-your-data-lives) works the same without the `docker exec` prefix.
+
 ## Database
 
 Postgres 18, in development as in production — no SQLite, no second SQL dialect to maintain.
@@ -344,12 +654,16 @@ On Neon, the API connects to the pooled endpoint (`-pooler`) with `default_query
 the DSN: PgBouncer in transaction mode is incompatible with pgx's prepared-statement cache. The
 server refuses to start on a malformed DSN rather than failing later, under load.
 
-## Development
+## Contributing
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the whole of it: how to get a development instance running,
+what the guards check and why, the shape of a commit, and what gets a pull request refused. The
+short version:
 
 ```bash
 make check             # go vet + unit tests
 make test-integration  # tests against the dev database
-make lint              # golangci-lint + structural guards
+make lint              # golangci-lint + eight structural guards
 ```
 
 Architecture (hexagonal, isolated modules, contracts separated from implementations) is described
@@ -359,21 +673,23 @@ imports, bounded file size, mandatory file summaries.
 
 ## Status
 
-**v0.3.0.** The API, the CLI, the MCP server, the trust graph, the inbox, the per-repository memory
-and the team debt queue are in and tested. The trust graph is directed: trust points one way, and
-granting it to a repo does not grant it back. A repo and a team can be deleted, and a repo's
-deletion is refused while a sibling still holds a thread with it.
+**v0.4.0.** The API, the CLI, the MCP server, the trust graph, the inbox, the per-repository memory
+and the team debt queue are in and tested. Setting up a self-hosted instance is `docker compose up`
+then two commands, and no secret is ever printed or pasted: `flowlio setup` files one token per
+repository, `flowlio connect` makes a repository operational and checks itself, `flowlio doctor`
+replays those checks later, and `disconnect` / `remove` take it all back out.
 
 What has *not* happened yet is a long run against a real multi-repo team; that is the next
 milestone, and until it does, treat rough edges as expected rather than surprising.
 
-Not built yet: waking a session up when its issue gets answered, MCP over HTTP, and the local web
-page the binary is meant to serve on its own origin.
+Not built yet: waking a session up when its issue gets answered, MCP over HTTP, a published Docker
+image, and the local web page the binary is meant to serve on its own origin.
 Hosted accounts are **not part of this repository at all** — this engine runs `MODE=hosted` for an
 operated deployment, and the accounts, billing and screens that go with it live in a separate
 codebase.
 
-Scope and the reasoning behind each decision: [docs/DESIGN-V1.md](docs/DESIGN-V1.md) (French).
+Release by release: [CHANGELOG.md](CHANGELOG.md). Scope and the reasoning behind each decision:
+[docs/DESIGN-V1.md](docs/DESIGN-V1.md) (French).
 
 ## License
 

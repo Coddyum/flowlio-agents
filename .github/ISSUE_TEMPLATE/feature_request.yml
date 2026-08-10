@@ -1,0 +1,45 @@
+name: Feature request
+description: Something the product should do and does not
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A few things are permanently out of scope, with the reasoning written down in `docs/`:
+        an LLM anywhere in the product, accounts / billing / OAuth (they live in a separate
+        codebase), an HTTP framework or an ORM, SQLite or any second SQL dialect, and any new
+        external dependency that has not been agreed first. `CONTRIBUTING.md` has the table.
+
+        A web UI is **not** on that list — it is not built yet, which is different.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: |
+        What are you trying to do, and what stops you? Describe the situation, not the feature —
+        the best solution is often not the one that comes to mind first.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: If you already know what you would build, say so. A command line or a tool call is enough.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: What you are doing today to work around it, and why it is not good enough.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This does not require an LLM inside the product
+          required: true
+        - label: This does not require accounts, billing or OAuth in this repository
+          required: true

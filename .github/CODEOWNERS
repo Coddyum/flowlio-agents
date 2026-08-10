@@ -1,0 +1,17 @@
+# Every path needs a review from the owner. Paired with "Require review from Code Owners" in the
+# main ruleset, this is what stops a pull request being merged by anybody but a maintainer — see
+# docs/GITHUB-SETTINGS.md.
+*                                   @Coddyum
+
+# The files below decide what the repository refuses. They are called out separately not because
+# the owner differs — it does not — but because a diff touching one of them is a doctrine change
+# wearing the clothes of a configuration change, and it should be read as such.
+/.github/                           @Coddyum
+/scripts/                           @Coddyum
+/sql/migrations/                    @Coddyum
+/internal/core/                     @Coddyum
+/cmd/api/main.go                    @Coddyum
+/.goreleaser.yaml                   @Coddyum
+/docker-compose.yml                 @Coddyum
+/go.mod                             @Coddyum
+/go.sum                             @Coddyum

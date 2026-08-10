@@ -6,8 +6,8 @@ package main
 // |-----------|---------------------------------------------------------------------|-------|
 // | main      | Entry point of the CLI: dispatch and exit code                        | 34    |
 // | run       | Routes the requested command to its implementation                    | 47    |
-// | usage     | Prints the help                                                       | 98    |
-// | newClient | Builds the API client from the local credentials or from the env      | 160   |
+// | usage     | Prints the help                                                       | 100   |
+// | newClient | Builds the API client from the local credentials or from the env      | 163   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -85,6 +85,8 @@ func run(args []string) error {
 		return runDoctor(ctx, args[1:])
 	case "mcp":
 		return runMCP(ctx, args[1:])
+	case "version", "--version", "-v":
+		return runVersion(args[1:])
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -139,6 +141,7 @@ both and prints one connect line per repo; run each from that repository's root.
   flowlio show <REF>                   Detail of one row of the queue (e.g. CORE-41)
 
   flowlio mcp                          MCP server over stdio, for an agent
+  flowlio version                      Which release this binary is, for a bug report
 
   flowlio init                         Gone — see setup and connect above
 

@@ -1,0 +1,78 @@
+name: Bug report
+description: Something does not do what it says it does
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Found a security vulnerability?** Do not file it here — use the
+        [Security tab](https://github.com/Coddyum/flowlio-agents/security/advisories/new).
+        A public issue is a public description of the flaw before anybody can upgrade.
+
+        Run `flowlio doctor` from the repository first if the problem is that an agent cannot see
+        Flowlio. It reports on every check rather than stopping at the first, and its output is
+        usually the whole answer.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: The shortest sequence that shows it. Commands, in order.
+      placeholder: |
+        1. flowlio setup --project demo --repo API:demo-api
+        2. cd ../demo-api && flowlio connect API
+        3. …
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `flowlio version`. `dev` is a valid answer — say which commit.
+      placeholder: flowlio v0.4.0 (a1b2c3d, go1.26.1 darwin/arm64)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How the instance runs
+      options:
+        - Docker (docker compose up -d)
+        - My own Postgres, no Docker
+        - Somebody else's hosted instance
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 15.3 arm64 / Ubuntu 24.04 / Windows 11 + WSL2
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`flowlio doctor` output"
+      description: Run from the repository in question. Optional, but it usually locates the problem.
+      render: text
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        `docker compose logs api --tail 50` if the instance is involved.
+        **Read them before pasting** — redact anything that looks like a token.
+      render: text
