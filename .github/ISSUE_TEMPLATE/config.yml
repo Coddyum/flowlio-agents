@@ -1,0 +1,11 @@
+# Blank issues are off: the two templates ask the questions that would otherwise be the first
+# comment on every thread. Questions have a better home than the issue tracker, and a vulnerability
+# has a channel that is not public at all.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Coddyum/flowlio-agents/security/advisories/new
+    about: Privately, through a security advisory. Never as an issue or a pull request — see SECURITY.md.
+  - name: Question, or an idea that is not a request yet
+    url: https://github.com/Coddyum/flowlio-agents/discussions
+    about: Setup that will not cooperate, or something you are not sure is a bug. Run `flowlio doctor` first.
