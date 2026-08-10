@@ -1,17 +1,18 @@
-# Release — déclenchée par un tag de version, jamais sur push.
+# Release — triggered by a version tag, never on push.
 #
-# Le workflow ne fait AUCUN raccourci sur les garde-fous : il rejoue build, vet et tests avant de
-# produire quoi que ce soit. Publier des binaires depuis un arbre qui ne passe pas la CI, c'est
-# distribuer un défaut connu.
+# The workflow takes NO shortcut on the guards: it replays build, vet and the tests before producing
+# anything. Publishing binaries from a tree that does not pass CI is distributing a known defect.
 #
-# La release est créée en BROUILLON (voir .goreleaser.yaml) : un tag poussé par erreur ne publie
-# rien au monde entier avant relecture.
+# The release is created as a DRAFT (see .goreleaser.yaml): a tag pushed by mistake publishes
+# nothing to anybody before a human has read it.
+#
+# Third-party actions are pinned to a commit SHA — see the note at the top of ci.yml.
 name: Release
 
 on:
   push:
     tags:
-      # Uniquement les tags de version. Un tag de travail ne déclenche rien.
+      # Version tags only. A working tag triggers nothing.
       - "v[0-9]+.[0-9]+.[0-9]+"
       - "v[0-9]+.[0-9]+.[0-9]+-*"
 
@@ -22,29 +23,29 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      # Créer la release et téléverser les archives.
+      # Create the release and upload the archives.
       contents: write
-      # Attestation de provenance : elle rattache les binaires à ce dépôt et à ce tag, ce qu'une
-      # clé privée rangée dans les secrets du dépôt ne prouverait pas.
+      # Provenance attestation: it ties the binaries to this repository and this tag, which a
+      # private key sitting in the repository's secrets would not prove.
       id-token: write
       attestations: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # goreleaser lit l'historique pour composer le journal de release : un clone superficiel
-          # le rendrait vide sans erreur.
+          # goreleaser reads the history to compose the release log: a shallow clone would make it
+          # empty without an error.
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          # Version lue depuis go.mod, jamais dupliquée ici.
+          # Version read from go.mod, never duplicated here.
           go-version-file: go.mod
           cache: true
 
-      # Les garde-fous d'abord. Les tests d'intégration ne tournent pas ici : ils exigent un
-      # Postgres, et la CI les a déjà passés sur le commit que ce tag désigne.
-      - name: Garde-fous
+      # The guards first. The integration tests do not run here: they need a Postgres, and CI has
+      # already passed them on the commit this tag points at.
+      - name: Guards
         run: |
           go build ./...
           go vet ./...
@@ -53,19 +54,18 @@ jobs:
           ./scripts/check-file-size.sh
           ./scripts/check-sommaire.sh
 
-      - name: Le tag doit pointer sur un commit de main
+      - name: The tag must point at a commit of main
         run: |
-          # Pas de --depth ici : checkout@v4 ci-dessus fixe fetch-depth: 0, donc l'historique est
-          # déjà complet. `--depth=0` n'est pas « profondeur illimitée » mais une valeur refusée
-          # par git (`fatal: depth 0 is not a positive number`), et elle a fait échouer le tout
-          # premier passage réel de ce workflow, sur v0.1.0.
+          # No --depth here: checkout above sets fetch-depth: 0, so the history is already complete.
+          # `--depth=0` is not "unlimited depth" but a value git refuses (`fatal: depth 0 is not a
+          # positive number`), and it failed this workflow's very first real run, on v0.1.0.
           git fetch origin main
           if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
-            echo "Le tag ne descend pas de main : release refusée." >&2
+            echo "The tag does not descend from main: release refused." >&2
             exit 1
           fi
 
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         id: goreleaser
         with:
           version: "~> v2"
@@ -73,18 +73,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # GitHub REFUSE de persister une attestation pour un dépôt privé appartenant à un compte
-      # personnel (« Feature not available for user-owned private repositories »). Ce n'est pas une
-      # erreur de configuration : c'est une limite de la plateforme, constatée sur le premier
-      # passage réel de ce workflow.
+      # GitHub REFUSES to persist an attestation for a private repository owned by a personal
+      # account ("Feature not available for user-owned private repositories"). That is not a
+      # misconfiguration: it is a platform limit, observed on this workflow's first real run.
       #
-      # La condition porte sur la VISIBILITÉ, pas sur `continue-on-error`. Une étape tolérante aux
-      # erreurs produirait des releases sans attestation sans que rien ne le dise — et une garantie
-      # de provenance silencieusement absente est plus dangereuse qu'une garantie absente. Ici,
-      # l'étape apparaît explicitement « ignorée » tant que le dépôt est privé, et se rallume
-      # d'elle-même le jour du passage en public, sans qu'on ait à s'en souvenir.
-      - name: Attestation de provenance
+      # The condition is on VISIBILITY, not on `continue-on-error`. An error-tolerant step would
+      # produce releases without an attestation without anything saying so — and a provenance
+      # guarantee that is silently absent is more dangerous than one that is absent. Here the step
+      # shows up explicitly as "skipped" while the repository is private, and turns itself back on
+      # the day it goes public, without anybody having to remember.
+      #
+      # It did: v0.4.0 is the first release to carry one.
+      - name: Provenance attestation
         if: ${{ !github.event.repository.private }}
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: dist/*.tar.gz

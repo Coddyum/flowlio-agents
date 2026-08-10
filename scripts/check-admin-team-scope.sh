@@ -1,43 +1,42 @@
 #!/usr/bin/env bash
 # check-admin-team-scope.sh
-# Toute route montée derrière AdminOnly doit BORNER une team.
+# Every route mounted behind AdminOnly has to BOUND a team.
 #
-# POURQUOI CE SCRIPT EXISTE. `AdminOnly` prouve une PORTÉE de token, jamais une PORTÉE DE REQUÊTE.
-# Il répond à « ce token est-il d'administration ? » et rien d'autre : la question « et sur quelle
-# team ? » n'est posée nulle part dans le middleware. Chaque handler admin doit donc la poser
-# lui-même, et rien dans le langage ne l'y oblige.
+# WHY THIS SCRIPT EXISTS. `AdminOnly` proves a TOKEN's scope, never a REQUEST's. It answers "is this
+# an administration token?" and nothing else: the question "and on which team?" is asked nowhere in
+# the middleware. Each admin handler therefore has to ask it itself, and nothing in the language
+# forces it to.
 #
-# C'est le point 1 de FLWL-70. Deux routes l'avaient oublié — `GET /teams` énumérait toute
-# l'installation, `POST /teams` ne lisait même pas son principal — et rien ne l'avait signalé :
-# elles compilaient, passaient `AdminOnly`, et les tests d'isolation des features restaient verts
-# parce qu'ils vérifient que les queries de `task` et `issue` sont scopées, pas qu'une route admin
-# borne quoi que ce soit.
+# This is point 1 of FLWL-70. Two routes had forgotten it — `GET /teams` enumerated the whole
+# installation, `POST /teams` did not even read its principal — and nothing had flagged it: they
+# compiled, they passed `AdminOnly`, and the features' isolation tests stayed green because they
+# check that the `task` and `issue` queries are scoped, not that an admin route bounds anything.
 #
-# Ce que le script vérifie, et c'est tout ce qu'il peut vérifier mécaniquement : le corps du
-# handler NOMME la team du principal, d'une des deux façons admises —
+# What the script checks, and it is all it can check mechanically: the handler's body NAMES the
+# principal's team, in one of the two admitted ways —
 #
-#   * `teamFor(...)`      — il résout un `?team=<slug>` et le confronte au principal (le cas
-#                           général : huit routes sur dix) ;
-#   * `principal.TeamID`  — il décide lui-même, et le commentaire au-dessus dit pourquoi (les deux
-#                           routes `/teams`, qui ne résolvent aucun slug).
+#   * `teamFor(...)`      — it resolves a `?team=<slug>` and confronts it with the principal (the
+#                           general case: eight routes out of ten);
+#   * `principal.TeamID`  — it decides for itself, and the comment above it says why (the two
+#                           `/teams` routes, which resolve no slug).
 #
-# Il ne prouve pas que la borne est JUSTE — ça, c'est le rôle des tests de mutation de
-# `workspace/handler/handler_test.go`. Il rend bruyant le fait de n'en avoir mis aucune.
+# It does not prove the bound is RIGHT — that is the job of the mutation tests in
+# `workspace/handler/handler_test.go`. It makes having put none of them loud.
 #
-# Usage : ./scripts/check-admin-team-scope.sh  (exit 1 si violation)
-# Utilisé par `make lint`.
+# Usage: ./scripts/check-admin-team-scope.sh  (exit 1 on a violation)
+# Used by `make lint`.
 
 set -uo pipefail
 
 status=0
 found_any=0
 
-# --- 1. Inventaire des handlers montés derrière `admin(...)` ---------------------------------
+# --- 1. Inventory of the handlers mounted behind `admin(...)` --------------------------------
 #
-# Le motif suivi est celui, unique dans le dépôt, de `Routes()` : `admin` est l'alias local de
-# `m.auth.AdminOnly`, lié une fois en tête de la méthode (règle de module-system.md). Un module qui
-# écrirait `m.auth.AdminOnly(...)` en toutes lettres dans la table de routes échapperait à ce
-# grep — la seconde passe, plus bas, est là pour ça.
+# The pattern followed is the one, unique in this repository, of `Routes()`: `admin` is the local
+# alias of `m.auth.AdminOnly`, bound once at the top of the method (the rule in module-system.md). A
+# module writing `m.auth.AdminOnly(...)` out in full in its route table would escape this grep — the
+# second pass, below, exists for that.
 for module_file in internal/feature/*/module.go; do
 	feature_dir="$(dirname "${module_file}")"
 	handler_dir="${feature_dir}/handler"
@@ -52,7 +51,7 @@ for module_file in internal/feature/*/module.go; do
 	while IFS= read -r name; do
 		found_any=1
 
-		# Le corps du handler : de sa signature jusqu'à l'accolade fermante en colonne 0.
+		# The handler's body: from its signature to the closing brace in column 0.
 		body="$(awk -v want="func (h *Handler) ${name}(" '
 			index($0, want) == 1 { inside = 1 }
 			inside { print }
@@ -60,10 +59,10 @@ for module_file in internal/feature/*/module.go; do
 		' "${handler_dir}"/*.go)"
 
 		if [[ -z "${body}" ]]; then
-			echo "VIOLATION : handler admin ${name} introuvable dans ${handler_dir}/"
-			echo "    Monté derrière admin(...) dans ${module_file}, mais aucun"
-			echo "    'func (h *Handler) ${name}(' ne lui correspond. Le grep de ce script a"
-			echo "    dérivé, ou la route pointe ailleurs — les deux se corrigent ici."
+			echo "VIOLATION: admin handler ${name} not found in ${handler_dir}/"
+			echo "    Mounted behind admin(...) in ${module_file}, but no matching"
+			echo "    'func (h *Handler) ${name}(' exists. Either this script's grep has drifted,"
+			echo "    or the route points elsewhere — both are fixed here."
 			status=1
 			continue
 		fi
@@ -72,41 +71,40 @@ for module_file in internal/feature/*/module.go; do
 			continue
 		fi
 
-		echo "VIOLATION : ${feature_dir#internal/feature/} — ${name} ne borne aucune team."
-		echo "    Monté derrière AdminOnly dans ${module_file}, il ne nomme ni teamFor(),"
-		echo "    ni la team du principal. AdminOnly prouve la portée du TOKEN, pas celle de la"
-		echo "    REQUÊTE : en l'état, un admin épinglé à une team agit hors de la sienne, et le"
-		echo "    jour où le troisième scope existe, personne ne repassera par ici."
+		echo "VIOLATION: ${feature_dir#internal/feature/} — ${name} bounds no team."
+		echo "    Mounted behind AdminOnly in ${module_file}, it names neither teamFor() nor the"
+		echo "    principal's team. AdminOnly proves the scope of the TOKEN, not of the REQUEST:"
+		echo "    as it stands, an admin pinned to one team acts outside their own, and the day a"
+		echo "    third scope exists, nobody will come back through here."
 		status=1
 	done <<<"${handlers}"
 done
 
-# --- 2. Aucun AdminOnly écrit en toutes lettres dans une table de routes ----------------------
+# --- 2. No AdminOnly written out in full in a route table ------------------------------------
 #
-# La première passe ne voit que l'alias `admin(...)`. Une route écrite `m.auth.AdminOnly(...)`
-# directement dans `Routes()` passerait donc sous le radar en gardant l'air correcte. On refuse la
-# forme plutôt que d'essayer de la suivre : la liaison unique du middleware est déjà une règle du
-# dépôt (module-system.md).
+# The first pass only sees the `admin(...)` alias. A route written `m.auth.AdminOnly(...)` straight
+# into `Routes()` would slip under the radar while looking correct. The form is refused rather than
+# followed: binding the middleware once is already a rule of this repository (module-system.md).
 inline="$(grep -n 'r\.Handle(.*m\.auth\.AdminOnly' internal/feature/*/module.go || true)"
 
 if [[ -n "${inline}" ]]; then
-	echo "VIOLATION : AdminOnly appelé directement dans une table de routes."
+	echo "VIOLATION: AdminOnly called directly inside a route table."
 	echo "${inline}" | sed 's/^/    /'
 	echo
-	echo "    Lier le middleware une fois en tête de Routes() — 'admin := m.auth.AdminOnly' —"
-	echo "    puis l'utiliser. Sans cet alias, l'inventaire ci-dessus ne voit pas la route."
+	echo "    Bind the middleware once at the top of Routes() — 'admin := m.auth.AdminOnly' — then"
+	echo "    use it. Without that alias, the inventory above does not see the route."
 	status=1
 fi
 
-# --- 3. L'inventaire n'est pas vide ----------------------------------------------------------
+# --- 3. The inventory is not empty -----------------------------------------------------------
 #
-# Un grep qui ne matche plus rien reste vert, et c'est la panne la plus coûteuse d'un garde-fou :
-# il continue de s'afficher OK en ne gardant plus rien. Renommer l'alias `admin` suffirait à le
-# provoquer.
+# A grep that no longer matches anything stays green, and that is the most expensive way for a guard
+# to break: it goes on reporting OK while guarding nothing. Renaming the `admin` alias would be
+# enough to cause it.
 if [[ ${found_any} -eq 0 ]]; then
-	echo "VIOLATION : aucune route admin trouvée dans internal/feature/*/module.go."
-	echo "    Le motif suivi par ce script ne matche plus rien. Il ne garde donc plus rien,"
-	echo "    tout en restant vert. Corriger le motif, pas ce message."
+	echo "VIOLATION: no admin route found in internal/feature/*/module.go."
+	echo "    The pattern this script follows no longer matches anything. It therefore guards"
+	echo "    nothing while staying green. Fix the pattern, not this message."
 	status=1
 fi
 

@@ -1,75 +1,67 @@
-# Règle — conventions de code
+# Rule — code conventions
 
-Référencée par `CLAUDE.md`. Détail de la brique "Conventions de code".
+Referenced by `CLAUDE.md`. Detail of the "code conventions" piece.
 
-## Langue — anglais
+## Language — English
 
-> Le dépôt part en open source. Un historique et des commentaires en français excluent les
-> contributeurs et se lisent comme un projet interne.
+> The repository is open source. A history and comments in French exclude contributors and read as
+> somebody's internal project.
 
-- **Messages de commit : anglais.** Sans exception, depuis le 2026-08-05.
-- **Tout texte porté par le code : anglais** — commentaires, descriptions de `// SOMMAIRE`, noms
-  d'identifiants, messages d'erreur, aide CLI.
-- **Un fichier neuf naît en anglais**, même si ses voisins sont en français. Ne jamais
-  « harmoniser » un fichier neuf vers le français au nom de la cohérence locale.
-- **`cmd/` et `internal/` sont en anglais depuis le 2026-08-05** — aucun français n'y subsiste,
-  marqueurs de sommaire exceptés. Une régression s'y traite comme une faute de style ordinaire,
-  pas comme une dette.
-- **Il reste `docs/` et `sql/`, et ils se traduisent AU PASSAGE, jamais en séance dédiée.** Arbitré
-  par Maxence le 2026-08-06 : trois heures de traduction pure ne font pas avancer le produit. La
-  règle mécanique qui remplace la carte : **un fichier de `docs/` ou `sql/` qu'on modifie pour une
-  autre raison part en anglais dans le même commit.** On ne traduit pas un fichier qu'on n'avait
-  pas de raison d'ouvrir.
-- Exceptions, et elles seules : les **marqueurs littéraux** du bloc sommaire
-  (`SOMMAIRE (lire en premier…)`, `Fin du sommaire.`), vérifiés tels quels par
-  `scripts/check-sommaire.sh` ; les **descriptions de tâches Flowlio** et les échanges avec
-  Maxence, qui ne sont pas du code.
+- **Commit messages: English.** Without exception, since 2026-08-05.
+- **Every text the code carries: English** — comments, `// SOMMAIRE` descriptions, identifier names,
+  error messages, CLI help, guard output, `make help` descriptions, release notes.
+- **A new file is born in English**, even when its neighbours are French. Never "harmonise" a new
+  file back into French for the sake of local consistency.
+- **`cmd/` and `internal/` have been English since 2026-08-05.** No French survives there, summary
+  markers excepted. A regression is treated as an ordinary style mistake, not as debt.
+- **`docs/`, `sql/`, the configuration files and the scripts followed on 2026-08-10.** The rule that
+  applied until then — translate a file only when opening it for another reason — was withdrawn by
+  Maxence that day, and the remaining stock was cleared in one pass. There is no French left to
+  clear; there is only French not to write.
+- Exceptions, and only these: the **literal markers** of the summary block
+  (`SOMMAIRE (lire en premier…)`, `Fin du sommaire.`) and the `| Élément |` header row, compared
+  verbatim by `scripts/check-sommaire.sh` and `scripts/sync-sommaire-lines.sh` and shared with
+  `flowlio-core` and `Flowlio`; the **Flowlio task descriptions** and the conversations with
+  Maxence, which are not code.
 
-> **Un titre traduit sans sa citation est pire qu'un titre français** : la citation pointe une
-> section qui n'existe plus. Avant de renommer un `##` dans `docs/`, chercher qui le cite —
-> `grep -rn '§ <titre>' --include='*.go' --include='*.sql' --include='*.md'` — et tout changer d'un
-> geste. Les citations de `sql/queries/` sont recopiées par sqlc dans `internal/database/` : un
-> `make sqlc` fait partie du geste.
+> **A translated heading without its citations is worse than a French heading**: the citation points
+> at a section that no longer exists. Before renaming a `##` in `docs/`, look for who cites it —
+> `grep -rn '§ <heading>' --include='*.go' --include='*.sql' --include='*.md'` — and change
+> everything in one gesture. Citations from `sql/queries/` are copied by sqlc into
+> `internal/database/`: a `make sqlc` is part of that gesture.
 
-### Les deux dettes précises, à solder le jour où ces fichiers s'ouvrent
+Two headings are cited from code today, and they are the ones to be careful with:
 
-Vérifiées le 2026-08-06 — elles sont réelles, pas un inventaire recopié. La carte qui les portait
-(FLWL-49) est archivée : la règle ci-dessus fait le travail, une carte qui ne peut jamais être
-finie ne le fait pas.
-
-| Fichier | Ce qu'il faut faire au passage |
+| Heading | Cited by |
 | --- | --- |
-| `docs/DESIGN-TUI.md` l. 780 | Titre `## Garanties de sécurité — …` cité tel quel par 4 tests (`cmd/flowlio/mcp_overview_test.go`, `internal/feature/overview/{module,handler/handler,store/store_integration}_test.go`). Les 5 lignes bougent d'un seul geste — ce sont les seules occurrences de français sous `cmd/`+`internal/`. |
-| `docs/DESIGN-M3.md` l. 41 et 596 | Citent `"transaction imbriquée"` ; le code dit `"nested transaction"` depuis les lots 6b/6c. Une doc qui cite une chaîne périmée est fausse — c'est une correction, pas une traduction. |
-| `docs/DESIGN-M3.md` ~l. 846, `docs/DESIGN-TRUST.md` ~l. 556 | Citent les instructions de session, changées au lot 5. |
+| `docs/DESIGN-TUI.md` § *Security guarantees* | `cmd/flowlio/mcp_overview_test.go`, `internal/feature/overview/{module,handler/handler,store/store_integration}_test.go` |
+| `docs/DESIGN-TRUST.md` § *The indistinguishable refusal* | `cmd/flowlio/mcp_refusal_test.go`, `internal/feature/issue/module_integration_test.go`, `internal/feature/issue/provider.go` |
 
-## Nommage
+## Naming
 
-> Si un nom de variable, fonction ou fichier nécessite un commentaire pour être compris, le nom
-> est mauvais. Renomme d'abord.
+> If the name of a variable, function or file needs a comment to be understood, the name is wrong.
+> Rename first.
 
-- Noms explicites (`userSessionStore` > `uss`, `createUserHandler` > `cuh`).
-- Fichiers nommés par responsabilité unique et claire.
+- Explicit names (`userSessionStore` over `uss`, `createUserHandler` over `cuh`).
+- Files named after one single, clear responsibility.
 
-## Gestion des erreurs
+## Error handling
 
-- Un log doit permettre de savoir **quoi** a échoué, **où**, et **pourquoi** sans chercher dans
-  le code.
-- Toujours wrapper avec contexte : `fmt.Errorf("user store: get by id %s: %w", id, err)`.
-- **`log.Fatal` interdit hors de `main.go`** et des initialisations au démarrage.
-- Pas de `panic` dans la logique métier.
+- A log has to say **what** failed, **where**, and **why**, without going back to the code.
+- Always wrap with context: `fmt.Errorf("user store: get by id %s: %w", id, err)`.
+- **`log.Fatal` is forbidden outside `main.go`** and start-up initialisation.
+- No `panic` in business logic.
 
-## Principes
+## Principles
 
-- **Performance** : pas de travail inutile, pas d'allocation évitable.
-- **DRY** : si un pattern se répète plus de deux fois, extraire.
-- **SRP** : chaque fichier, fonction, type a une seule responsabilité.
-- Pas d'over-engineering : si la solution simple suffit, c'est la bonne.
+- **Performance**: no needless work, no avoidable allocation.
+- **DRY**: a pattern repeated more than twice gets extracted.
+- **SRP**: one responsibility per file, function and type.
+- No over-engineering: if the simple solution is enough, it is the right one.
 
-## Style général
+## General style
 
-- Conventions Go idiomatiques (`errors.Is`/`errors.As`, interfaces petites et ciblées,
-  table-driven tests).
-- Pas de `interface{}` / `any` sauf nécessité absolue justifiée.
-- Pas d'ORM.
-- Pas de `func init()`.
+- Idiomatic Go conventions (`errors.Is`/`errors.As`, small focused interfaces, table-driven tests).
+- No `interface{}` / `any` without an absolute, stated need.
+- No ORM.
+- No `func init()`.

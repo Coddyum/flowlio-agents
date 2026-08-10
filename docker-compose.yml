@@ -1,8 +1,8 @@
-# Full development stack. One command, nothing to install locally:
+# The full development stack. One command, nothing to install locally:
 #   docker compose up -d
 #
 # Two services: Postgres, then the API. The API carries its own migrations — they are embedded in
-# the binary (see embed.go) and applied at startup in local mode, so there is no third container to
+# the binary (see embed.go) and applied at start-up in local mode, so there is no third container to
 # sequence and, more importantly, the image is usable WITHOUT a checkout of this repository.
 #
 # In production the schema stays a human, explicit operation (`make up-prod`). The API detects that
@@ -60,8 +60,8 @@ services:
       - "127.0.0.1:42058:42058"
     volumes:
       # The credentials the API writes at first boot, kept out of the container's writable layer so
-      # they survive `docker compose up --build`. `flowlio init` copies them onto the host from
-      # here, which is why nobody has to grep a token out of the logs any more.
+      # they survive `docker compose up --build`. The CLI copies them onto the host from here, which
+      # is why nobody has to grep a token out of the logs any more.
       #
       # A NAMED volume, not a bind mount of ~/.config: Docker initialises a named volume's
       # ownership from the image, where that directory already belongs to the container's user. A

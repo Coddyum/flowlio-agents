@@ -1,7 +1,12 @@
-# CI — garde-fous du dépôt, exécutés pour tout le monde et pas seulement dans le hook local.
+# CI — the repository's guards, run for everybody and not only in the local hook.
 #
-# Un seul job : un garde-fou rouge = CI rouge. Aucun secret n'est nécessaire, la CI tourne donc
-# telle quelle sur un fork.
+# One job: a red guard is a red CI. No secret is needed, so this workflow runs as it stands on a
+# fork.
+#
+# THIRD-PARTY ACTIONS ARE PINNED TO A COMMIT SHA, with the tag kept in a trailing comment. A tag is
+# mutable: whoever owns that repository can move `v9` onto new code, and this pipeline would run it
+# without a diff anywhere. The comment is what makes the pin readable; the SHA is what makes it a
+# pin.
 name: CI
 
 on:
@@ -10,24 +15,29 @@ on:
   pull_request:
     branches: [main]
 
-# Lecture seule : ce workflow ne publie rien, ne commente rien.
+# Read-only: this workflow publishes nothing and comments nowhere.
 permissions:
   contents: read
 
 env:
-  # Version du CLI golang-migrate, alignée sur la stack documentée dans CLAUDE.md.
+  # golang-migrate CLI version, aligned with the stack documented in CLAUDE.md.
   MIGRATE_VERSION: v4.19.1
-  # Version de golangci-lint, épinglée pour que la CI et les postes de dev voient les mêmes
-  # linters activés par défaut.
+  # golangci-lint version, pinned so that CI and a developer's machine see the same linters enabled
+  # by default.
   GOLANGCI_LINT_VERSION: v2.11.4
 
 jobs:
   build-and-check:
-    name: build, garde-fous et tests
+    # THIS NAME IS LOAD-BEARING. It is the required status check of the `main` ruleset, matched as a
+    # literal string. Renaming it makes the required check stop being reported, and a pull request
+    # then waits forever on a status nothing will ever post. Change it and the ruleset together —
+    # see docs/GITHUB-SETTINGS.md.
+    name: build, guards and tests
     runs-on: ubuntu-latest
 
     services:
-      # Même version majeure qu'en dev (docker-compose.yml) et qu'en prod (Neon) : Postgres 18.
+      # Same major version as in development (docker-compose.yml) and in production (Neon):
+      # Postgres 18.
       postgres:
         image: postgres:18-alpine
         env:
@@ -43,55 +53,55 @@ jobs:
           --health-retries 10
 
     env:
-      # Lu par le Makefile (DB_URL_DEV) pour `make up-dev` et `make test-integration`.
-      # Aucun .env dans la CI : la variable vient uniquement de l'environnement.
+      # Read by the Makefile (DB_URL_DEV) for `make up-dev` and `make test-integration`.
+      # No .env in CI: the variable comes from the environment and nowhere else.
       DATABASE_URL: postgres://flowlio:flowlio@localhost:5432/flowlio?sslmode=disable
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: Installer Go
-        uses: actions/setup-go@v6
+      - name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          # La version vient de go.mod : elle n'est jamais dupliquée ici.
+          # The version comes from go.mod: it is never duplicated here.
           go-version-file: go.mod
-          # Cache des modules et du cache de build Go.
+          # Cache the modules and the Go build cache.
           cache: true
 
-      - name: Compiler et vet
+      - name: Build and vet
         run: |
           go build ./...
           go vet ./...
 
-      - name: Garde-fous structurels
+      - name: Structural guards
         run: |
           ./scripts/check-cross-feature-imports.sh
           ./scripts/check-file-size.sh
           ./scripts/check-sommaire.sh
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
 
-      - name: Tests unitaires (make check)
+      - name: Unit tests (make check)
         run: make check
 
-      # Sans cette étape, les six garde-fous structurels du dépôt ne tournent QUE si un humain
-      # tape `make lint`. Le garde qui empêche la décision de confiance de quitter la query, celui
-      # qui interdit math/rand pour le sceau, et celui qui tient authtest hors du binaire n'ont
-      # aucune valeur s'ils ne sont pas exécutés par le pipeline.
-      - name: Garde-fous structurels (make lint)
+      # Without this step, the repository's eight structural guards would run ONLY when a human
+      # types `make lint`. The guard keeping the trust decision inside the query, the one forbidding
+      # math/rand for the seal, and the one holding authtest out of the binary are worth nothing if
+      # the pipeline does not run them.
+      - name: Structural guards (make lint)
         run: make lint
 
-      - name: Installer golang-migrate
+      - name: Install golang-migrate
         run: |
           curl -fsSL "https://github.com/golang-migrate/migrate/releases/download/${MIGRATE_VERSION}/migrate.linux-amd64.tar.gz" \
             | sudo tar -xz -C /usr/local/bin migrate
           migrate -version
 
-      - name: Appliquer les migrations
+      - name: Apply the migrations
         run: make up-dev
 
-      - name: Tests d'intégration
+      - name: Integration tests
         run: make test-integration

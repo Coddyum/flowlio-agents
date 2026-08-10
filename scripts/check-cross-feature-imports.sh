@@ -1,37 +1,37 @@
 #!/usr/bin/env bash
 # check-cross-feature-imports.sh
-# Interdit qu'une feature en importe une autre directement.
-# Une feature ne peut importer QUE sa propre sous-arbo internal/feature/<self>/...
-# Toute dépendance inter-features passe par FeatureRegistry / CoreServices.
+# Forbids a feature importing another one directly.
+# A feature may import ONLY its own subtree, internal/feature/<self>/...
+# Every cross-feature dependency goes through FeatureRegistry / CoreServices.
 #
-# Usage : ./scripts/check-cross-feature-imports.sh  (exit 1 si violation)
-# Utilisé par `make lint` et le hook PostToolUse.
+# Usage: ./scripts/check-cross-feature-imports.sh  (exit 1 on a violation)
+# Used by `make lint` and by the PostToolUse hook.
 
 set -euo pipefail
 
 FEATURE_ROOT="internal/feature"
-# Module path Go (ex: github.com/you/project) — extrait de go.mod.
+# The Go module path (e.g. github.com/you/project), read out of go.mod.
 MODULE_PATH="$(awk '/^module /{print $2; exit}' go.mod)"
 
 if [[ -z "${MODULE_PATH}" ]]; then
-	echo "check-cross-feature-imports: module path introuvable dans go.mod" >&2
+	echo "check-cross-feature-imports: no module path found in go.mod" >&2
 	exit 1
 fi
 
 status=0
 
-# Pour chaque fichier .go sous une feature, repérer les imports d'une AUTRE feature.
+# For every .go file under a feature, spot the imports of ANOTHER feature.
 while IFS= read -r -d '' file; do
-	# feature à laquelle appartient le fichier (segment après internal/feature/)
+	# the feature this file belongs to (the segment after internal/feature/)
 	self="$(printf '%s\n' "$file" | sed -E "s#^.*${FEATURE_ROOT}/([^/]+)/.*#\1#")"
 
-	# imports pointant vers internal/feature/<other>
+	# imports pointing at internal/feature/<other>
 	while IFS= read -r imported; do
 		other="$(printf '%s\n' "$imported" | sed -E "s#^.*${FEATURE_ROOT}/([^/\"]+).*#\1#")"
 		if [[ -n "${other}" && "${other}" != "${self}" ]]; then
-			echo "VIOLATION import inter-feature : ${file}"
-			echo "    feature '${self}' importe feature '${other}' (${imported})"
-			echo "    → passer par FeatureRegistry.Get(\"${other}\") ou CoreServices"
+			echo "CROSS-FEATURE IMPORT: ${file}"
+			echo "    feature '${self}' imports feature '${other}' (${imported})"
+			echo "    → go through FeatureRegistry.Get(\"${other}\") or CoreServices"
 			status=1
 		fi
 	done < <(grep -oE "\"${MODULE_PATH}/${FEATURE_ROOT}/[^\"]+\"" "$file" || true)

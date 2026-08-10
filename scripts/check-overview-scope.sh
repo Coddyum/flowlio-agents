@@ -1,47 +1,45 @@
 #!/usr/bin/env bash
 # check-overview-scope.sh
-# overview est le seul endroit du dépôt qui lit des lignes métier sans prédicat de projet.
+# overview is the only place in the repository that reads business rows without a project predicate.
 #
-# POURQUOI CE SCRIPT EXISTE. Partout ailleurs, une query oubliant son scope se fait rattraper par
-# le fait que le projet vient du token. Ici la règle est INVERSE — team_id seul — et il n'existe
-# donc plus de garde-fou implicite. Trois choses peuvent mal tourner, et aucune ne se voit à la
-# relecture d'un diff :
+# WHY THIS SCRIPT EXISTS. Everywhere else, a query that forgets its scope is caught by the fact that
+# the project comes from the token. Here the rule is the OPPOSITE — team_id alone — so there is no
+# implicit guard left. Three things can go wrong, and none of them shows up when reading a diff:
 #
-#   1. une query d'overview qui oublie `team_id = @team_id` lit TOUTE la base, toutes teams
-#      confondues ;
-#   2. un INSERT/UPDATE/DELETE qui s'y glisse rend mutable une surface conçue en lecture pure,
-#      derrière une route qu'aucun test d'écriture ne couvre ;
-#   3. et surtout : `internal/database` est importable de partout. Un contributeur qui trouve
-#      `OverviewIssueDebts` pratique et l'appelle depuis `issue/store` obtient une fuite complète
-#      — et check-cross-feature-imports.sh ne voit RIEN, parce que `internal/database` n'est pas
-#      une feature.
+#   1. an overview query that forgets `team_id = @team_id` reads the WHOLE database, every team
+#      together;
+#   2. an INSERT/UPDATE/DELETE slipping in makes a read-only surface mutable, behind a route no
+#      write test covers;
+#   3. and above all: `internal/database` is importable from anywhere. A contributor who finds
+#      `OverviewIssueDebts` handy and calls it from `issue/store` gets a complete leak — and
+#      check-cross-feature-imports.sh sees NOTHING, because `internal/database` is not a feature.
 #
-# La troisième est le vrai risque permanent. Ce script ne le rend pas nul, il le rend bruyant.
+# The third one is the real standing risk. This script does not make it zero, it makes it loud.
 #
-# Usage : ./scripts/check-overview-scope.sh  (exit 1 si violation)
-# Utilisé par `make lint`.
+# Usage: ./scripts/check-overview-scope.sh  (exit 1 on a violation)
+# Used by `make lint`.
 
 set -uo pipefail
 
 QUERIES="sql/queries/overview.sql"
 FEATURE_DIR="internal/feature/overview/"
 
-# OverviewTeamBySlug est l'exception NOMMÉE : elle PRODUIT le scope à partir d'un slug, donc elle
-# ne peut pas le porter. Toute autre exception ajoutée ici est une décision de sécurité.
+# OverviewTeamBySlug is the NAMED exception: it PRODUCES the scope out of a slug, so it cannot carry
+# it. Any other exception added here is a security decision.
 SCOPE_EXEMPT="OverviewTeamBySlug"
 
 status=0
 
 if [[ ! -f "${QUERIES}" ]]; then
-	echo "check-overview-scope: ${QUERIES} introuvable"
+	echo "check-overview-scope: ${QUERIES} not found"
 	exit 1
 fi
 
-# --- 1. Chaque bloc `-- name:` porte team_id = @team_id -------------------------------------
+# --- 1. Every `-- name:` block carries team_id = @team_id ------------------------------------
 #
-# Le découpage se fait sur les lignes `-- name:` : le corps d'une query est tout ce qui la suit
-# jusqu'à la prochaine. Compter les occurrences sur le fichier entier ne dirait rien — c'est
-# précisément la query qui oublie le scope, seule, qu'on cherche.
+# The split happens on the `-- name:` lines: a query's body is everything following it up to the
+# next one. Counting occurrences over the whole file would say nothing — what is being looked for is
+# precisely the one query, on its own, that forgot the scope.
 missing="$(awk -v exempt="${SCOPE_EXEMPT}" '
 	/^-- name:/ {
 		if (name != "" && !scoped && name != exempt) print name
@@ -56,30 +54,31 @@ missing="$(awk -v exempt="${SCOPE_EXEMPT}" '
 ' "${QUERIES}")"
 
 if [[ -n "${missing}" ]]; then
-	echo "VIOLATION : query d'overview sans 'team_id = @team_id' :"
+	echo "VIOLATION: overview query without 'team_id = @team_id':"
 	echo "${missing}" | sed 's/^/    /'
 	echo
-	echo "    Ces queries lisent sans prédicat de projet. Sans le scope de team, elles lisent"
-	echo "    la base entière. La seule exception admise est ${SCOPE_EXEMPT}, qui produit le scope."
+	echo "    These queries read with no project predicate. Without the team scope they read the"
+	echo "    entire database. The only admitted exception is ${SCOPE_EXEMPT}, which produces the"
+	echo "    scope."
 	status=1
 fi
 
-# --- 2. Lecture seule ------------------------------------------------------------------------
+# --- 2. Read-only ----------------------------------------------------------------------------
 #
-# Les mots-clés sont cherchés en début d'instruction pour ne pas se déclencher sur un commentaire
-# qui les mentionne — ce fichier en contient, et un garde-fou qui crie à tort finit désactivé.
+# The keywords are looked for at the start of a statement so as not to fire on a comment mentioning
+# them — this file contains some, and a guard that cries wolf ends up switched off.
 writes="$(grep -nE '^[[:space:]]*(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP)[[:space:]]' "${QUERIES}" || true)"
 
 if [[ -n "${writes}" ]]; then
-	echo "VIOLATION : ${QUERIES} doit rester en lecture seule."
+	echo "VIOLATION: ${QUERIES} has to stay read-only."
 	echo "${writes}" | sed 's/^/    /'
 	status=1
 fi
 
-# --- 3. Aucun Overview* appelé hors de la feature --------------------------------------------
+# --- 3. No Overview* called outside the feature ----------------------------------------------
 #
-# internal/database/ est le code généré, il EST la query. Le reste du Go ne doit nommer Overview
-# que dans internal/feature/overview/.
+# internal/database/ is the generated code, it IS the query. The rest of the Go may name Overview
+# only inside internal/feature/overview/.
 leaks="$(grep -rn --include='*.go' 'Overview' . \
 	| grep -v '/internal/database/' \
 	| grep -v "/${FEATURE_DIR}" \
@@ -87,11 +86,11 @@ leaks="$(grep -rn --include='*.go' 'Overview' . \
 	| grep -v '^\./\.claude/' || true)"
 
 if [[ -n "${leaks}" ]]; then
-	echo "VIOLATION : une query d'overview est nommée hors de ${FEATURE_DIR}"
+	echo "VIOLATION: an overview query is named outside ${FEATURE_DIR}"
 	echo "${leaks}" | sed 's/^/    /'
 	echo
-	echo "    Ces queries lisent toute une team. Les appeler depuis une autre feature contourne"
-	echo "    l'isolation par projet sans qu'aucun test de tenancy ne tombe."
+	echo "    These queries read a whole team. Calling them from another feature bypasses the"
+	echo "    per-project isolation without a single tenancy test failing."
 	status=1
 fi
 

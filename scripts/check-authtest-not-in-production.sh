@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 # check-authtest-not-in-production.sh
-# Le harnais d'authentification n'entre jamais dans le binaire.
+# The authentication harness never enters the binary.
 #
-# `internal/core/auth/authtest` expose un auth.Store factice dont un test choisit la portée. C'est
-# exactement ce qu'il faut à un test de route, et exactement ce qu'il ne faut nulle part ailleurs :
-# importé depuis un fichier de production, il donnerait un chemin d'authentification qui ne
-# consulte pas la base.
+# `internal/core/auth/authtest` exposes a fake auth.Store whose scope a test chooses. That is
+# exactly what a route test needs, and exactly what nothing else may have: imported from a
+# production file, it would give an authentication path that never consults the database.
 #
-# Un paquet `*test` n'est pas protégé par le compilateur — seuls les fichiers `_test.go` d'un même
-# paquet le sont. Ce grep est la seule barrière.
+# A `*test` package is NOT protected by the compiler — only the `_test.go` files of one package are.
+# This grep is the only barrier.
 #
-# Usage : ./scripts/check-authtest-not-in-production.sh  (exit 1 si violation)
-# Utilisé par `make lint`.
+# Usage: ./scripts/check-authtest-not-in-production.sh  (exit 1 on a violation)
+# Used by `make lint`.
 
 set -uo pipefail
 
@@ -21,11 +20,11 @@ hits="$(grep -rln --include='*.go' 'core/auth/authtest' . \
 	| grep -v '^\./\.claude/' || true)"
 
 if [[ -n "${hits}" ]]; then
-	echo "VIOLATION : authtest est importé depuis du code de production."
+	echo "VIOLATION: authtest is imported from production code."
 	echo "${hits}" | sed 's/^/    /'
 	echo
-	echo "    Ce paquet fabrique un auth.Store qui ne consulte aucune base. Il n'a de sens que"
-	echo "    dans un _test.go."
+	echo "    This package builds an auth.Store that consults no database. It only makes sense"
+	echo "    inside a _test.go."
 	exit 1
 fi
 

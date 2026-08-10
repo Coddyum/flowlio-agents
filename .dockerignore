@@ -1,18 +1,18 @@
-# Ce que l'image de build ne doit PAS recevoir.
+# What the build image must NOT receive.
 #
-# .env en tête de liste : il porte un DSN avec mot de passe. Une image Docker se pousse sur un
-# registre, et chaque couche reste lisible par qui la télécharge — un secret copié ici est un
-# secret publié, même si une couche ultérieure le supprime.
+# .env at the top of the list: it carries a DSN with a password. A Docker image gets pushed to a
+# registry, and every layer stays readable by whoever pulls it — a secret copied in here is a secret
+# published, even if a later layer deletes it.
 .env
 .env.*
 !.env.example
 
-# Identifiants locaux, s'ils traînent dans l'arbre.
+# Local credentials, if any are lying around in the tree.
 credentials.json
 *.pem
 *.key
 
-# Inutile à la compilation, et coûteux à copier.
+# Useless to the build, and expensive to copy.
 .git
 .github
 .claude

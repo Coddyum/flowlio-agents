@@ -1,49 +1,49 @@
 #!/usr/bin/env bash
 # check-seal-source.sh
-# Le sceau de balisage est tiré par crypto/rand, jamais par math/rand.
+# The framing seal is drawn from crypto/rand, never from math/rand.
 #
-# POURQUOI CE SCRIPT EXISTE. Tout le volet 1 du modèle de confiance repose sur une seule
-# propriété : l'auteur d'un corps d'issue écrit son texte AVANT que la réponse existe, donc il ne
-# peut pas connaître le sceau, donc il ne peut pas refermer son bloc. Un sceau prévisible rend la
-# fausse balise fermante exploitable et le balisage devient décoratif.
+# WHY THIS SCRIPT EXISTS. The whole of part 1 of the trust model rests on a single property: the
+# author of an issue body writes their text BEFORE the reply exists, so they cannot know the seal,
+# so they cannot close the block themselves. A predictable seal makes the forged closing marker
+# usable and the framing becomes decorative.
 #
-# CE QU'AUCUN TEST NE PEUT FAIRE. Un test de sortie en boîte noire ne distingue pas un CSPRNG d'un
-# PRNG bien amorcé : mesuré, un PCG amorcé sur time.Now().Unix() passe go test, go vet,
-# golangci-lint et les autres garde-fous — et sa graine se retrouve par recherche exhaustive sur
-# quelques secondes, ce qui rend le sceau SUIVANT prédictible. C'est une limite de principe, pas
-# un manque de rigueur des tests. Ce grep est la seule barrière possible.
+# WHAT NO TEST CAN DO. A black-box output test does not tell a CSPRNG from a well-seeded PRNG:
+# measured, a PCG seeded on time.Now().Unix() passes go test, go vet, golangci-lint and every other
+# guard — and its seed is recovered by exhaustive search over a few seconds, which makes the NEXT
+# seal predictable. That is a limit of principle, not a lack of rigour in the tests. This grep is
+# the only barrier available.
 #
-# Il borne l'ACCIDENT — le refactor qui remplace un import sans y penser. Il ne borne pas
-# l'intention, et rien ne le peut.
+# It bounds the ACCIDENT — the refactor that swaps an import without thinking. It does not bound
+# intent, and nothing can.
 #
-# Usage : ./scripts/check-seal-source.sh  (exit 1 si violation)
-# Utilisé par `make lint`.
+# Usage: ./scripts/check-seal-source.sh  (exit 1 on a violation)
+# Used by `make lint`.
 
 set -uo pipefail
 
 FILE="cmd/flowlio/mcp_untrusted.go"
 
-# Les worktrees jetables des agents ne sont pas le checkout : ce script ne regarde qu'un chemin
-# fixe, donc il y est immunisé par construction.
+# The agents' throwaway worktrees are not the checkout: this script looks at one fixed path only,
+# so it is immune to them by construction.
 
 if [[ ! -f "${FILE}" ]]; then
-	echo "check-seal-source: ${FILE} introuvable — le fichier a-t-il été déplacé ?" >&2
+	echo "check-seal-source: ${FILE} not found — has the file been moved?" >&2
 	exit 1
 fi
 
 status=0
 
-# Le \b évite d'accrocher crypto/rand. math/rand comme math/rand/v2 sont refusés.
+# The pattern avoids catching crypto/rand. Both math/rand and math/rand/v2 are refused.
 if grep -nE '"math/rand(/v2)?"' "${FILE}"; then
-	echo "VIOLATION : ${FILE} importe math/rand."
-	echo "    Le sceau doit être imprévisible. math/rand est déterministe à graine connue, et une"
-	echo "    graine tirée de l'horloge se retrouve par recherche exhaustive en quelques secondes."
+	echo "VIOLATION: ${FILE} imports math/rand."
+	echo "    The seal has to be unpredictable. math/rand is deterministic under a known seed, and"
+	echo "    a seed taken from the clock is recovered by exhaustive search in seconds."
 	status=1
 fi
 
 if ! grep -q '"crypto/rand"' "${FILE}"; then
-	echo "VIOLATION : ${FILE} n'importe plus crypto/rand."
-	echo "    C'est la seule source d'entropie acceptable pour le sceau de balisage."
+	echo "VIOLATION: ${FILE} no longer imports crypto/rand."
+	echo "    It is the only acceptable source of entropy for the framing seal."
 	status=1
 fi
 
