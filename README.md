@@ -66,19 +66,42 @@ stack keeps on a Docker volume, and the CLI picks it up from there on its own. N
 of a log, nothing to paste into an `export`.
 
 Install the CLI from the [latest release](https://github.com/Coddyum/flowlio-agents/releases)
-(`flowlio_<version>_<os>_<arch>.tar.gz`), then, **from the root of the repo you want to track**:
+(`flowlio_<version>_<os>_<arch>.tar.gz`), then create a project and its repositories:
 
 ```bash
-flowlio init --team acme --project API --project-name acme-api
+flowlio setup
+  Project name?  acme
+  Repo key?      API      Repo name? acme-api
+  Add another repo? [y/N] y
+  Repo key?      WEB      Repo name? acme-web
+  Add another repo? [y/N] n
 ```
 
-On its first run it copies the instance's credentials onto your machine, then creates the team, the
-project and an agent token, and writes a `.mcp.json` into the repo. It prints one
-`export FLOWLIO_TOKEN=…` line — that one is the **agent's** token, the only one your agent needs.
+It creates everything on the instance, issues one token per repository and files each one in
+`~/.config/flowlio/repos/` (`0600`). **No secret is printed and none goes into a repository.** It
+ends on one line per repo, to be run from that repository's root:
 
-> Ran `flowlio init` before starting anything? From a flowlio-agents checkout it offers to bring the
-> stack up for you. From anywhere else it tells you to, because `docker compose` reads the compose
-> file of the directory you are standing in.
+```bash
+cd ../acme-api && flowlio connect API
+cd ../acme-web && flowlio connect WEB
+```
+
+`connect` writes four things and says so before touching any of them:
+
+| File | What it is | Asked first? |
+| --- | --- | --- |
+| `.mcp.json` | the MCP server entry, merged into whatever is there | no, it is ours |
+| `.flowlio/workflow.md` | how an agent is meant to work with Flowlio | no, it is ours |
+| `CLAUDE.md`, `AGENTS.md`, `.cursor/rules/`, Copilot instructions | three lines pointing at the file above, in whichever of them your repository shows signs of | yes |
+| `.claude/settings.json` | a throttled reminder to read the inbox, only if `.claude/` exists | yes |
+
+Both blocks written into your own files are bounded by `<!-- flowlio:start -->` markers, so a second
+`connect` replaces them instead of stacking, and `flowlio disconnect` takes them back out. Say no,
+or run it with no terminal, and it prints exactly what it would have written.
+
+It ends by checking itself: the instance answers, the token is accepted, it belongs to the repo the
+`.mcp.json` names, and twelve tools are offered. Nothing green is announced without having been
+observed. Later, `flowlio doctor` replays the same ground and adds the trust graph.
 
 Your agent can now see flowlio:
 
@@ -87,23 +110,30 @@ flowlio task create "first task"
 flowlio task list
 ```
 
-Repeat `flowlio init` in your other repo with `--project WEB`, then allow them to talk. The edge is
-DIRECTED — `allow API WEB` lets API raise issues at WEB, and says nothing about the other way — so
-a two-way channel is two commands:
+**The two repositories can already write to each other.** A repo arrives connected: creating it
+opens a trust edge to and from every repo already in the project, so `create_issue` works at the
+first gesture. `flowlio trust list` shows one line per direction, and `trust deny` closes one.
 
-```bash
-flowlio trust allow API WEB
-flowlio trust allow WEB API
-flowlio trust list            # one line per direction
-```
-
-> **`.mcp.json` is meant to be committed, and holds no secret.** It references `${FLOWLIO_TOKEN}`,
-> which the agent resolves from its environment. A token inside a versioned file is a credential
-> published on GitHub — the `.mcp.json` written by `flowlio init` will never contain one, and a
-> test asserts it against the file's actual text.
+> **`.mcp.json` is meant to be committed, and holds no secret.** It carries two names —
+> `FLOWLIO_PROJECT` and `FLOWLIO_REPO` — and the CLI resolves them into an address and a token that
+> never left your machine. It does not even carry a `${FLOWLIO_TOKEN}` reference any more: one
+> variable name could not serve two repositories on one machine, and the second one set up took a
+> 401 with nothing to say why. A test asserts the absence against the file's actual text.
 
 An existing `.mcp.json` is **merged**, never replaced: your other MCP servers survive, and a
-hand-tuned `flowlio` entry is left alone.
+hand-tuned `flowlio-agents` entry is left alone.
+
+> **`flowlio connect` runs on the machine that runs the instance.** It reads the admin credential to
+> issue a token, and that credential lives here. A teammate who clones the repository elsewhere gets
+> the `.mcp.json` and not the token — their agent says so, and names the command.
+
+Taking it back out, and taking it down:
+
+```bash
+flowlio disconnect                # this repository only, no network call
+flowlio remove API                # the repo on the instance; refused while a sibling holds a thread
+flowlio remove --project acme     # the project and everything in it, after retyping the slug
+```
 
 ### What the repository remembers
 
@@ -215,9 +245,10 @@ make run                      # applies the schema, then serves
 
 The defaults differ from the Docker path in one way that matters: `ADDR` is `:8080` here, not
 `:42058`. The first start writes `~/.config/flowlio/credentials.json` (`0600`) with the API URL
-built from that address, so the CLI finds the right port on its own. A `.mcp.json` does not: it
-records the URL it was written with, so an agent set up against a Docker instance keeps calling
-`42058` until `flowlio init` runs again.
+built from that address, so the CLI finds the right port on its own. A repository's `.mcp.json` no
+longer records an address at all — it names a project and a repo, and the address travels with the
+token in `~/.config/flowlio/repos/`, which `flowlio connect` rewrites. An agent set up against a
+Docker instance no longer keeps calling `42058` forever.
 
 Browser access is separate and stays closed by default: `ALLOWED_ORIGINS` ships as
 `https://flowlio.me,https://www.flowlio.me` — the bridge page, and nothing else. `*` is never an
@@ -279,7 +310,7 @@ References are readable — `API-34`, never a UUID. An agent token is scoped to 
 sees neither other repos' tasks nor other teams.
 
 > **Who holds that token depends on the deployment.** Self-hosted — the mode this README describes
-> — the token is yours: `flowlio init` prints it once and your agent carries it. In a hosted
+> — the token is yours: `flowlio setup` files it on your machine and your agent carries it. In a hosted
 > product operated on top of this engine, the operator holds the token server-side and the customer
 > never sees one; the engine's model is unchanged either way, because the token still names exactly
 > one project.
@@ -336,8 +367,8 @@ deletion is refused while a sibling still holds a thread with it.
 What has *not* happened yet is a long run against a real multi-repo team; that is the next
 milestone, and until it does, treat rough edges as expected rather than surprising.
 
-Not built yet: waking a session up when its issue gets answered, MCP over HTTP, the local web page
-the binary is meant to serve on its own origin, and a CLI command for the two deletions above.
+Not built yet: waking a session up when its issue gets answered, MCP over HTTP, and the local web
+page the binary is meant to serve on its own origin.
 Hosted accounts are **not part of this repository at all** — this engine runs `MODE=hosted` for an
 operated deployment, and the accounts, billing and screens that go with it live in a separate
 codebase.
