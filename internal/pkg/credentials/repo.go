@@ -1,0 +1,238 @@
+package credentials
+
+// SOMMAIRE (lire en premier, sauter directement au bon passage)
+//
+// | Élément     | Résumé                                                            | Ligne |
+// |-------------|-------------------------------------------------------------------|-------|
+// | RepoFile    | What one repository needs in order to reach its own board           | 52    |
+// | reposDir    | Directory holding every repository credential of this host          | 60    |
+// | safeSegment | Refuses a name that would compose a path out of that directory      | 74    |
+// | RepoPath    | Path of one repository's credential file, names normalised          | 89    |
+// | LoadRepo    | Reads one repository's credential file                              | 107   |
+// | SaveRepo    | Writes it in 0600, with its names normalised                        | 134   |
+// | DeleteRepo  | Removes one, for a repository that no longer exists server-side     | 165   |
+// | ListRepos   | Every repository credential on this host, project then repo         | 188   |
+// | normaliseProject | Lower-cases a project slug, the one spelling that is stored    | 236   |
+// | normaliseRepo    | Upper-cases a repo key, the one spelling that is stored        | 238   |
+//
+// Fin du sommaire.
+// =====================================================================
+//
+// WHY THE PROJECT TOKEN LEAVES THE ENVIRONMENT.
+//
+// Until now a repository's `.mcp.json` carried `${FLOWLIO_TOKEN}`, and the token itself lived in
+// the user's shell. Two repositories on one machine therefore fought over ONE variable name: the
+// second one to be set up took a 401 and nothing said why. Exporting per directory is not a fix
+// either — an agent launched from an editor inherits neither.
+//
+// So the secret moves here, keyed by the pair that identifies it: one file per repository, under
+// the project it belongs to. The `.mcp.json` then carries names instead of a secret, which is what
+// makes it committable AND makes two repositories on one machine work at the same time.
+//
+// The api_url travels with the token on purpose. It used to live in the committed `.mcp.json`,
+// which froze the address a repository was initialised against: a repo set up against the Docker
+// stack kept calling :42058 forever, even when the API had moved. Here it is host-local state,
+// rewritten by `flowlio connect`, and no longer something a teammate inherits by cloning.
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// reposDirName is the sub-directory holding one file per repository.
+const reposDirName = "repos"
+
+// RepoFile is what one repository needs in order to reach its own board: where the API is, who it
+// is, and the secret that proves it.
+type RepoFile struct {
+	APIURL  string `json:"api_url"`
+	Project string `json:"project"`
+	Repo    string `json:"repo"`
+	Token   string `json:"token"`
+}
+
+// reposDir yields the directory holding every repository credential of this host.
+func reposDir() (string, error) {
+	base, err := dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, reposDirName), nil
+}
+
+// safeSegment refuses a name that would compose a path outside reposDir.
+//
+// The names come from a command line, and a repo key of `../../..` would otherwise have RepoPath
+// hand a caller a path to somewhere else entirely — then have SaveRepo write a token there. The
+// check is cheap and it is the only thing standing between a typo and a file written outside the
+// configuration directory.
+func safeSegment(kind, name string) error {
+	if name == "" {
+		return fmt.Errorf("credentials: %s is empty", kind)
+	}
+	if name != filepath.Base(name) || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("credentials: %s %q is not a plain name", kind, name)
+	}
+	return nil
+}
+
+// RepoPath yields $XDG_CONFIG_HOME/flowlio/repos/<project>/<REPO>.json.
+//
+// The repo key is upper-cased and the project slug lower-cased BEFORE the path is composed.
+// Without it, `API.json` and `api.json` coexist on a case-sensitive filesystem while being the same
+// repository everywhere else, and the second one written is the only one anything ever finds.
+func RepoPath(project, repo string) (string, error) {
+	project, repo = normaliseProject(project), normaliseRepo(repo)
+	if err := safeSegment("project", project); err != nil {
+		return "", err
+	}
+	if err := safeSegment("repo", repo); err != nil {
+		return "", err
+	}
+
+	base, err := reposDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, project, repo+".json"), nil
+}
+
+// LoadRepo reads one repository's credentials. Yields ErrNotFound when that repository has never
+// been set up on this host — the normal case before `flowlio setup`, not a run-time error.
+func LoadRepo(project, repo string) (RepoFile, error) {
+	path, err := RepoPath(project, repo)
+	if err != nil {
+		return RepoFile{}, err
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return RepoFile{}, ErrNotFound
+		}
+		return RepoFile{}, fmt.Errorf("credentials: reading %s: %w", path, err)
+	}
+
+	var f RepoFile
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return RepoFile{}, fmt.Errorf("credentials: %s unreadable: %w", path, err)
+	}
+	return f, nil
+}
+
+// SaveRepo writes one repository's credentials in 0600 inside 0700 directories, and yields the path
+// written.
+//
+// The names are normalised INSIDE the file too, not only in its path: what a caller reads back is
+// then exactly what composed the path, and the `.mcp.json` it writes from that carries the same
+// spelling the MCP server will look up.
+func SaveRepo(f RepoFile) (string, error) {
+	f.Project, f.Repo = normaliseProject(f.Project), normaliseRepo(f.Repo)
+
+	path, err := RepoPath(f.Project, f.Repo)
+	if err != nil {
+		return "", err
+	}
+	if f.APIURL == "" || f.Token == "" {
+		return "", fmt.Errorf("credentials: repo %s/%s: address and token are both required", f.Project, f.Repo)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
+		return "", fmt.Errorf("credentials: creating %s: %w", filepath.Dir(path), err)
+	}
+
+	raw, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("credentials: encoding: %w", err)
+	}
+
+	if err := os.WriteFile(path, append(raw, '\n'), filePerm); err != nil {
+		return "", fmt.Errorf("credentials: writing %s: %w", path, err)
+	}
+	return path, nil
+}
+
+// DeleteRepo removes one repository's credential file, and says whether there was one to remove.
+//
+// It exists for `flowlio remove`: a repository deleted server-side leaves a token here that
+// authenticates nothing, and a credential outliving what it opens is how a host accumulates secrets
+// nobody can account for.
+func DeleteRepo(project, repo string) (removed bool, err error) {
+	path, err := RepoPath(project, repo)
+	if err != nil {
+		return false, err
+	}
+
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("credentials: removing %s: %w", path, err)
+	}
+	return true, nil
+}
+
+// ListRepos yields every repository credential of this host, ordered by project then repo.
+//
+// An absent directory is an empty list, not an error: nothing has been set up yet, which is a state
+// `flowlio setup --list` and `flowlio doctor` both have to be able to report calmly.
+//
+// A file that does not decode is SKIPPED rather than fatal. This list serves commands whose whole
+// job is to say what is there; failing the lot because one file was hand-edited would hide the
+// other repositories, which are fine.
+func ListRepos() ([]RepoFile, error) {
+	base, err := reposDir()
+	if err != nil {
+		return nil, err
+	}
+
+	projects, err := os.ReadDir(base)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("credentials: reading %s: %w", base, err)
+	}
+
+	var out []RepoFile
+	for _, project := range projects {
+		if !project.IsDir() {
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(base, project.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("credentials: reading %s: %w", filepath.Join(base, project.Name()), err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+			repo := strings.TrimSuffix(entry.Name(), ".json")
+			f, err := LoadRepo(project.Name(), repo)
+			if err != nil {
+				continue
+			}
+			out = append(out, f)
+		}
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Project != out[j].Project {
+			return out[i].Project < out[j].Project
+		}
+		return out[i].Repo < out[j].Repo
+	})
+	return out, nil
+}
+
+// normaliseProject and normaliseRepo carry the one spelling rule of this package: a project slug is
+// lower-case, a repo key is upper-case. Everything that composes a path or writes a file goes
+// through them, so a caller never has to remember which is which.
+func normaliseProject(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+
+func normaliseRepo(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }

@@ -6,8 +6,8 @@ package main
 // |-----------|---------------------------------------------------------------------|-------|
 // | main      | Entry point of the CLI: dispatch and exit code                        | 34    |
 // | run       | Routes the requested command to its implementation                    | 47    |
-// | usage     | Prints the help                                                       | 88    |
-// | newClient | Builds the API client from the local credentials or from the env      | 139   |
+// | usage     | Prints the help                                                       | 98    |
+// | newClient | Builds the API client from the local credentials or from the env      | 160   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -53,6 +53,8 @@ func run(args []string) error {
 	ctx := context.Background()
 
 	switch args[0] {
+	case "setup":
+		return runSetup(ctx, args[1:])
 	case "init":
 		return runInit(ctx, args[1:])
 	case "whoami":
@@ -73,6 +75,14 @@ func run(args []string) error {
 		return runWatch(ctx, args[1:])
 	case "show":
 		return runShow(ctx, args[1:])
+	case "connect":
+		return runConnect(ctx, args[1:])
+	case "remove":
+		return runRemove(ctx, args[1:])
+	case "disconnect":
+		return runDisconnect(ctx, args[1:])
+	case "doctor":
+		return runDoctor(ctx, args[1:])
 	case "mcp":
 		return runMCP(ctx, args[1:])
 	case "help", "-h", "--help":
@@ -88,17 +98,24 @@ func run(args []string) error {
 func usage() {
 	fmt.Print(`flowlio — project management for AI agents
 
-Usage:
-  flowlio init --team <slug> --project <KEY> [--team-name <name>] [--project-name <name>]
-      Sets up a team, a project and an agent token in one command.
+Setting up:
+  flowlio setup                        Creates a project, its repos and one token each
+  flowlio connect <REPO>               Makes the current repository operational
+  flowlio doctor                       Checks that it really is, and says what is not
+  flowlio disconnect                   Takes the configuration back out of this repository
+  flowlio remove <REPO>                Deletes a repo on the instance
+  flowlio remove --project <slug>      Deletes a project and everything in it
+
+A project holds repos, and a repo is one git repository with one agent. setup asks for
+both and prints one connect line per repo; run each from that repository's root.
 
   flowlio whoami                       Identity of the current token
-  flowlio team create <slug> <name>    Creates a team
+  flowlio team create <slug> <name>    Creates a team (a project, in this CLI's words)
   flowlio team list                    Lists the teams
-  flowlio project create <KEY> <name>  Creates a project inside the team
-  flowlio project list                 Lists the team's projects
-  flowlio token create <KEY> <name>    Issues an agent token for a project
-  flowlio token list <KEY>             Lists a project's tokens
+  flowlio project create <KEY> <name>  Creates a project (a repo, in this CLI's words)
+  flowlio project list                 Lists them
+  flowlio token create <KEY> <name>    Issues an agent token, and prints it once
+  flowlio token list <KEY>             Lists a repo's tokens
   flowlio token revoke <id>            Revokes a token
 
   flowlio trust list                   Which project may raise issues AT which
@@ -123,6 +140,8 @@ Usage:
 
   flowlio mcp                          MCP server over stdio, for an agent
 
+  flowlio init                         Gone — see setup and connect above
+
 Common options:
   --team <slug>   Target team (required with an admin token)
 
@@ -130,7 +149,9 @@ Exit status:
   0  the command succeeded    1  error    2  non-admin token on watch/show
 
 Environment:
-  FLOWLIO_API_URL, FLOWLIO_TOKEN  Take precedence over the local credentials file
+  FLOWLIO_API_URL, FLOWLIO_TOKEN     An explicit address and token, ahead of everything else
+  FLOWLIO_PROJECT, FLOWLIO_REPO      What connect writes into a repository's .mcp.json;
+                                     the token is read from the configuration directory
 `)
 }
 
@@ -151,8 +172,8 @@ func newClient() (*client.Client, error) {
 	adopted, adoptErr := adoptCredentials(context.Background(), execDocker)
 	if adoptErr != nil {
 		if errors.Is(adoptErr, errNoInstance) {
-			return nil, errors.New("no credentials found — run `flowlio init` from the repository you want to track, " +
-				"or set FLOWLIO_API_URL and FLOWLIO_TOKEN")
+			return nil, errors.New("no credentials found — run `flowlio setup` to create a project " +
+				"and its repositories, or set FLOWLIO_API_URL and FLOWLIO_TOKEN")
 		}
 		return nil, adoptErr
 	}

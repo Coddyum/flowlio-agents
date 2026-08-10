@@ -4,13 +4,13 @@ package main
 //
 // | Élément                | Résumé                                                    | Ligne |
 // |------------------------|-----------------------------------------------------------|-------|
-// | mcpServer              | MCP server state: API client and the token's project       | 54    |
-// | runMCP                 | Starts the MCP server on stdio                             | 78    |
-// | mcpServer.serve        | Message read loop, one JSON line per message               | 113   |
-// | mcpServer.dispatch     | Routes an MCP method, and survives a tool panic            | 167   |
-// | mcpServer.initialize   | Answers the MCP handshake                                  | 203   |
-// | mcpServer.instructions | Tells the agent where it works, before its first message   | 222   |
-// | mcpServer.siblingKeys  | Resolves the other projects of the team                    | 268   |
+// | mcpServer              | MCP server state: API client and the token's project       | 57    |
+// | runMCP                 | Starts the MCP server on stdio                             | 81    |
+// | mcpServer.serve        | Message read loop, one JSON line per message               | 116   |
+// | mcpServer.dispatch     | Routes an MCP method, and survives a tool panic            | 170   |
+// | mcpServer.initialize   | Answers the MCP handshake                                  | 206   |
+// | mcpServer.instructions | Tells the agent where it works, before its first message   | 225   |
+// | mcpServer.siblingKeys  | Resolves the other projects of the team                    | 271   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -42,8 +42,11 @@ import (
 const (
 	// protocolVersion is the MCP protocol revision announced to the client.
 	protocolVersion = "2025-06-18"
-	serverName      = "flowlio"
-	serverVersion   = "0.1.0"
+	// serverName is what the handshake announces, and it matches the key `.mcp.json` carries: an
+	// agent that reads one name in its configuration and another in serverInfo has no way to tell it
+	// is the same server.
+	serverName    = "flowlio-agents"
+	serverVersion = "0.1.0"
 
 	// maxMessageBytes bounds an incoming message line. An agent never sends a message that large;
 	// the bound keeps a malformed stream from growing the buffer without limit.
@@ -76,7 +79,7 @@ type mcpServer struct {
 // the readable identifiers (CORE-34), and an invalid token must fail right away with a clear
 // message rather than on every tool call.
 func runMCP(ctx context.Context, _ []string) error {
-	api, err := newClient()
+	api, err := mcpClient()
 	if err != nil {
 		return err
 	}
