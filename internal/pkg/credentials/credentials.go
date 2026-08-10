@@ -4,10 +4,11 @@ package credentials
 //
 // | Élément     | Résumé                                                            | Ligne |
 // |-------------|-------------------------------------------------------------------|-------|
-// | File        | Content of the local credentials file                               | 36    |
-// | Path        | Path of the credentials file, following XDG                         | 43    |
-// | Load        | Reads the local credentials                                         | 55    |
-// | Save        | Writes the credentials with restrictive permissions                 | 77    |
+// | File        | Content of the local credentials file                               | 37    |
+// | dir         | Configuration directory of the CLI, following XDG                   | 48    |
+// | Path        | Path of the credentials file, following XDG                         | 61    |
+// | Load        | Reads the local credentials                                         | 70    |
+// | Save        | Writes the credentials with restrictive permissions                 | 92    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -38,17 +39,31 @@ type File struct {
 	Token  string `json:"token"`
 }
 
-// Path yields the path of the credentials file: $XDG_CONFIG_HOME/flowlio/credentials.json, or
-// ~/.config/flowlio/credentials.json failing that.
-func Path() (string, error) {
-	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
-		return filepath.Join(dir, "flowlio", "credentials.json"), nil
+// dir yields the CLI's configuration directory: $XDG_CONFIG_HOME/flowlio, or ~/.config/flowlio
+// failing that.
+//
+// Split out of Path because the admin credentials are no longer the only thing that lives there:
+// the per-repository tokens sit next to them (repo.go), and two copies of the XDG rule would drift
+// the day one of them learns about a new environment.
+func dir() (string, error) {
+	if configHome := os.Getenv("XDG_CONFIG_HOME"); configHome != "" {
+		return filepath.Join(configHome, "flowlio"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("credentials: home not found: %w", err)
 	}
-	return filepath.Join(home, ".config", "flowlio", "credentials.json"), nil
+	return filepath.Join(home, ".config", "flowlio"), nil
+}
+
+// Path yields the path of the credentials file: $XDG_CONFIG_HOME/flowlio/credentials.json, or
+// ~/.config/flowlio/credentials.json failing that.
+func Path() (string, error) {
+	base, err := dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "credentials.json"), nil
 }
 
 // Load reads the local credentials. Yields ErrNotFound if the file does not exist yet.
