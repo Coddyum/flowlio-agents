@@ -1,128 +1,126 @@
-# Règle — suivi du projet dans Flowlio (MCP `mcp__flowlio__*`)
+# Rule — tracking this project in Flowlio (MCP `mcp__flowlio__*`)
 
-Référencée par `CLAUDE.md`. Flowlio est le tracker qui porte l'état de **ce** projet entre les
-sessions. Il remplace les fichiers de suivi en markdown : aucun `PROGRESS.md`, `TODO.md` ou
-`NEXT-STEPS.md` ne doit exister dans ce dépôt.
+Referenced by `CLAUDE.md`. Flowlio is the tracker that carries the state of **this** project between
+sessions. It replaces markdown tracking files: no `PROGRESS.md`, `TODO.md` or `NEXT-STEPS.md` may
+exist in this repository.
 
-Trois niveaux de mémoire, à ne pas mélanger :
+Three levels of memory, not to be mixed up:
 
-| Niveau      | Outil                | Durée de vie                                  |
-| ----------- | -------------------- | --------------------------------------------- |
-| Session     | `TodoWrite`          | meurt avec la conversation                     |
-| Projet      | **Flowlio**          | survit aux sessions — état réel du produit     |
-| Conception  | `docs/` du dépôt     | décisions et architecture, versionnées avec le code |
+| Level       | Tool                 | Lifetime                                            |
+| ----------- | -------------------- | --------------------------------------------------- |
+| Session     | `TodoWrite`          | dies with the conversation                           |
+| Project     | **Flowlio**          | survives sessions — the real state of the product    |
+| Design      | the repo's `docs/`   | decisions and architecture, versioned with the code  |
 
-Une décision d'architecture va dans `docs/`, pas dans une tâche. Une tâche dit **quoi faire**,
-`docs/` dit **pourquoi c'est comme ça**.
+An architecture decision goes into `docs/`, not into a task. A task says **what to do**, `docs/` says
+**why it is the way it is**.
 
 ---
 
-## Le board
+## The board
 
-Team **Flowlio** (`FLOWL`) → projet **FLOWLIO_IA** (`FLWL`).
+Team **Flowlio** (`FLOWL`) → project **FLOWLIO_IA** (`FLWL`).
 
-Résoudre les ids par nom à chaque session (`list_teams` → `list_projects` → `list_columns`).
-**Ne jamais coder un id en dur** : le board peut être réorganisé entre deux sessions.
+Resolve the ids by name every session (`list_teams` → `list_projects` → `list_columns`).
+**Never hard-code an id**: the board can be reorganised between two sessions.
 
-| Colonne              | Contenu                                                              |
+| Column               | Contents                                                             |
 | -------------------- | -------------------------------------------------------------------- |
-| `Ready`              | Prêt à démarrer, périmètre clair. **C'est ici qu'on pioche.**         |
-| `Unnamed column`     | Backlog — jalons pas encore ouverts (à renommer « Backlog » côté UI)  |
-| `In progress`        | En cours dans la session courante. Une seule tâche à la fois.         |
-| `Blocked / decision` | Attend un arbitrage de Maxence, ou une dépendance non livrée.         |
-| `Done`               | Livré, testé, commité.                                                |
+| `Ready`              | Ready to start, scope clear. **This is where you pick from.**         |
+| `Unnamed column`     | Backlog — milestones not opened yet (to be renamed "Backlog" in the UI) |
+| `In progress`        | Under way in the current session. One task at a time.                 |
+| `Blocked / decision` | Waiting on a call from Maxence, or on an undelivered dependency.      |
+| `Done`               | Delivered, tested, committed.                                         |
 
 ---
 
-## Protocole de session — non négociable
+## Session protocol — not negotiable
 
-**Au démarrage, avant toute autre chose :**
+**At start-up, before anything else:**
 
-1. `list_project_tasks` sur FLOWLIO_IA — c'est la source de vérité de ce qui reste à faire.
-2. Lire la colonne `In progress` : une tâche qui y traîne signale une session interrompue.
-   Reprendre celle-là avant d'en ouvrir une nouvelle.
-3. Lire `Blocked / decision` : si Maxence a tranché depuis, la débloquer.
-4. `get_task` sur la tâche choisie pour récupérer le périmètre complet, puis `move_task` vers
-   `In progress`.
+1. `list_project_tasks` on FLOWLIO_IA — it is the source of truth for what is left to do.
+2. Read the `In progress` column: a task lingering there signals an interrupted session. Pick that
+   one back up before opening a new one.
+3. Read `Blocked / decision`: if Maxence has ruled since, unblock it.
+4. `get_task` on the chosen task to get its full scope, then `move_task` to `In progress`.
 
-**Pendant :** `TodoWrite` pour le découpage fin de la session. Ne pas dupliquer dans Flowlio.
+**During:** `TodoWrite` for the session's fine-grained breakdown. Do not duplicate it into Flowlio.
 
-**En fin de session, systématiquement :**
+**At the end of a session, every time:**
 
-- `update_task` : compléter la description avec ce qui est fait, ce qui reste, et les décisions
-  prises. C'est ce que lira la session suivante — écrire pour quelqu'un qui n'a aucun contexte.
-- `move_task` vers `Done` si livré et commité, `Blocked / decision` si ça attend un arbitrage,
-  sinon laisser dans `In progress` avec l'état à jour.
-- Créer une tâche pour tout travail identifié en chemin et non fait.
+- `update_task`: complete the description with what is done, what is left, and the decisions taken.
+  This is what the next session will read — write it for somebody with no context at all.
+- `move_task` to `Done` when delivered and committed, `Blocked / decision` when it waits on a call,
+  otherwise leave it in `In progress` with its state up to date.
+- Create a task for any work spotted along the way and not done.
 
-> Une session qui se termine sans mise à jour du board fait perdre son contexte à la suivante.
-> C'est le seul défaut réellement coûteux de ce dispositif.
-
----
-
-## Archiver
-
-`archive_task` dès qu'une tâche est **réellement** terminée : livrée, testée, commitée, et son
-jalon clos. Pas « rangée » — terminée.
-
-Garder dans `Done` le dernier jalon livré : il sert de point de repère à la session suivante.
-Archiver les précédents. Une archive reste lisible (`list_project_archived_tasks`,
-`get_archived_task`) et se rouvre avec `unarchive_task` en cas de régression.
-
-Ne jamais chercher dans les archives ce qu'il faut faire maintenant : c'est le rôle de
-`list_project_tasks`.
+> A session that ends without updating the board costs the next one its context. It is the only
+> genuinely expensive failure of this arrangement.
 
 ---
 
-## Écrire une tâche
+## Archiving
 
-Markdown complet supporté, et le board est fait pour être scanné en quelques secondes :
+`archive_task` as soon as a task is **really** finished: delivered, tested, committed, and its
+milestone closed. Not "tidied away" — finished.
 
-- **Tableau** dès qu'il y a une correspondance à lister (brique/état, option/coût)
-- **Bloc de code** pour une signature, une commande, une surface d'API — jamais décrit en prose
-- **Blockquote** (`>`) pour isoler ce qui compte : contrainte de sécurité, dépendance bloquante
-- `##` pour découper « Périmètre » / « Règles » / « Fini quand »
+Keep the last delivered milestone in `Done`: it is the next session's landmark. Archive the ones
+before it. An archive stays readable (`list_project_archived_tasks`, `get_archived_task`) and comes
+back with `unarchive_task` in case of a regression.
 
-Toute tâche de développement porte une section **Fini quand**, exprimée en critères vérifiables
-(`make check` vert, test d'intégration couvrant X), pas en intentions.
-
-Si la description dépasse ce qui se lit en 30 secondes, la tâche est trop grosse : la découper,
-ou renvoyer vers `docs/DESIGN-V1.md`.
+Never look in the archives for what to do now: that is `list_project_tasks`'s job.
 
 ---
 
-## Secrets — spécifique à ce projet
+## Writing a task
 
-> Ce projet **fabrique des tokens**. Un `flw_...` collé dans une description de tâche est un
-> secret publié sur un board tiers, et il n'existe pas d'outil de suppression dans Flowlio :
-> seulement l'archive, qui conserve le contenu.
+Full markdown is supported, and the board is meant to be scanned in seconds:
 
-Jamais de token, de DSN avec mot de passe, ni de contenu de `~/.config/flowlio/credentials.json`
-dans une tâche. Pour illustrer, écrire `flw_<prefix>_<secret>`.
+- **A table** as soon as there is a correspondence to list (piece/state, option/cost)
+- **A code block** for a signature, a command, an API surface — never described in prose
+- **A blockquote** (`>`) to isolate what matters: a security constraint, a blocking dependency
+- `##` to split "Scope" / "Rules" / "Done when"
+
+Every development task carries a **Done when** section, expressed as verifiable criteria (`make
+check` green, an integration test covering X), not as intentions.
+
+If the description goes beyond what reads in 30 seconds, the task is too big: split it, or point at
+`docs/DESIGN-V1.md`.
 
 ---
 
-## Vocabulaire des labels
+## Secrets — specific to this project
 
-Le serveur refuse les labels inconnus. Constaté :
+> This project **manufactures tokens**. An `flw_...` pasted into a task description is a secret
+> published on a third-party board, and Flowlio has no deletion tool: only the archive, which keeps
+> the content.
 
-| Champ      | Valide      | Refusé                 |
+Never a token, a DSN with a password, or the contents of `~/.config/flowlio/credentials.json` in a
+task. To illustrate one, write `flw_<prefix>_<secret>`.
+
+---
+
+## Label vocabulary
+
+The server refuses unknown labels. Observed:
+
+| Field      | Valid       | Refused                |
 | ---------- | ----------- | ---------------------- |
 | `priority` | `urgent`    | `high`                 |
 | `status`   | —           | `in-progress`          |
 
-Par défaut : `no-priority` / `no-status`. Ne pas deviner un label — la colonne porte déjà l'état,
-la priorité ne sert qu'à marquer ce qui passe avant le reste. Liste complète à confirmer avec
-Maxence si le besoin se présente.
+Defaults: `no-priority` / `no-status`. Do not guess a label — the column already carries the state,
+and priority only marks what goes ahead of the rest. Full list to be confirmed with Maxence if the
+need comes up.
 
 ---
 
-## Ce que Claude ne fait pas
+## What Claude does not do
 
-- Démarrer à coder sans avoir lu le board — la session précédente y a laissé son état
-- Deviner un id de team, projet, colonne ou tâche sans le `list_*` correspondant
-- Créer une tâche pour un fix trivial fait dans la foulée (`TodoWrite` suffit)
-- Recréer en markdown un suivi que le board porte déjà
-- Mettre un secret, un token ou un DSN dans une description
-- Archiver une tâche non terminée, ou modifier une archivée sans `unarchive_task` d'abord
-- Laisser une tâche en `In progress` sans description à jour en fin de session
+- Start coding without having read the board — the previous session left its state there
+- Guess a team, project, column or task id without the matching `list_*`
+- Create a task for a trivial fix done on the spot (`TodoWrite` is enough)
+- Recreate in markdown a tracking the board already carries
+- Put a secret, a token or a DSN in a description
+- Archive an unfinished task, or edit an archived one without `unarchive_task` first
+- Leave a task in `In progress` with a stale description at the end of a session

@@ -1,32 +1,34 @@
-# Règle — système de modules
+# Rule — the module system
 
-Référencée par `CLAUDE.md`. Détail de la brique "Système de modules" + "Architecture imposée".
+Referenced by `CLAUDE.md`. Detail of the "module system" and "imposed architecture" pieces.
 
-## Interfaces et wiring
+## Interfaces and wiring
 
-- Interfaces dans `internal/core/module/module.go`. Wiring dans `cmd/api/main.go`. Pas de `func init()`.
-- `CoreServices` expose uniquement des **services partagés** (ex: `Auth()`, `Billing()`), jamais un
-  service feature-specific.
-- `ModuleConfig` regroupe toute l'infra partagée (DB, RawDB, Config, Ctx, Cache…) — un seul
-  paramètre par `NewModule()`.
+- Interfaces in `internal/core/module/module.go`. Wiring in `cmd/api/main.go`. No `func init()`.
+- `CoreServices` exposes **shared services** only (e.g. `Auth()`, `Billing()`), never a
+  feature-specific service.
+- `ModuleConfig` gathers all the shared infrastructure (DB, RawDB, Config, Ctx, Cache…) — one single
+  parameter per `NewModule()`.
 
-## Règles inter-modules
+## Rules between modules
 
-- Les modules **n'importent jamais** d'autres modules directement. À vérifier automatiquement
-  (hook bloquant sur édition + `make lint`).
-- Toute dépendance inter-features passe par `FeatureRegistry.Get("clé")` ou `CoreServices`.
-- Ajouter une interface inter-module dans `module.go` = fichier critique, valider avec l'humain.
-- Si `FeatureRegistry` est reçu mais jamais utilisé, le supprimer.
-- Carte des interfaces existantes : `docs/ARCHITECTURE.md`.
+- Modules **never import** other modules directly. Checked automatically (blocking hook on edit +
+  `make lint`).
+- Every cross-feature dependency goes through `FeatureRegistry.Get("key")` or `CoreServices`.
+- Adding an inter-module interface to `module.go` = a critical file, validate it with the human.
+- If `FeatureRegistry` is received and never used, drop it.
+- Map of the existing interfaces: `docs/ARCHITECTURE.md`.
 
-## Autres règles structurelles
+## Other structural rules
 
-- **Middleware** : lié une fois dans `module.go`, jamais à l'intérieur des handlers.
-- **Config** : `NewModule(cfg module.ModuleConfig)` — jamais de params directs (db, secret, timeout…).
-- **Store** : le service reçoit une interface locale, jamais `*database.Queries` directement.
-- **Transactions** : exposer un `Transactor` dans le store — `*sql.DB` ne fuite jamais dans le service.
-- **Singletons** : pas de `var` globaux mutables — tout état passe par `CoreServices` ou `ModuleConfig`.
+- **Middleware**: bound once in `module.go`, never inside a handler.
+- **Config**: `NewModule(cfg module.ModuleConfig)` — never direct params (db, secret, timeout…).
+- **Store**: the service receives a local interface, never `*database.Queries` directly.
+- **Transactions**: expose a `Transactor` on the store — `*sql.DB` never leaks into a service.
+- **Singletons**: no mutable global `var` — all state travels through `CoreServices` or
+  `ModuleConfig`.
 
-## Taille des fichiers
+## File size
 
-- Fichier `.go` > 300 lignes (hors `internal/database` généré et `_test.go`) → à découper.
+- A `.go` file over 300 lines (excluding generated `internal/database` and `_test.go`) is to be
+  split.

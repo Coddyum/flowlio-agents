@@ -1,28 +1,28 @@
-# Règle — sommaire en tête de fichier .go
+# Rule — the summary header of a .go file
 
-Référencée par `CLAUDE.md`.
+Referenced by `CLAUDE.md`.
 
-## Principe
+## Principle
 
-Un fichier `.go` avec **≥ 2 déclarations top-level** (`func`/`type`) doit avoir, juste après
-`package xxx`, un bloc commentaire `// SOMMAIRE` listant chaque déclaration avec une description
-en une phrase et son numéro de ligne. Objectif : sauter directement au bon passage sans relire
-tout le fichier.
+A `.go` file with **≥ 2 top-level declarations** (`func`/`type`) must carry, right after
+`package xxx`, a `// SOMMAIRE` comment block listing each declaration with a one-sentence
+description and its line number. The point: jump straight to the right passage without rereading the
+whole file.
 
-Fichiers exclus : `internal/database/*` (généré sqlc), fichiers avec en-tête
-`// Code generated ... DO NOT EDIT`.
+Excluded files: `internal/database/*` (sqlc-generated), files headed
+`// Code generated ... DO NOT EDIT`, and `_test.go`.
 
-## Format exact
+## Exact format
 
 ```go
 package service
 
 // SOMMAIRE (lire en premier, sauter directement au bon passage)
 //
-// | Élément    | Résumé                                      | Ligne |
+// | Élément    | Résumé                                       | Ligne |
 // |------------|----------------------------------------------|-------|
-// | NewService | Crée le service avec ses dépendances          | 14    |
-// | CreateUser | Insère un utilisateur et renvoie son ID        | 30    |
+// | NewService | Builds the service with its dependencies      | 14    |
+// | CreateUser | Inserts a user and returns its ID             | 30    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -32,33 +32,39 @@ import (
 )
 ```
 
-- Marqueur de début exact : `// SOMMAIRE (lire en premier, sauter directement au bon passage)`.
-- Marqueur de fin : ligne `// ====...` (longueur libre, ≥ quelques `=`).
-- **La ligne d'en-tête `| Élément | Résumé | Ligne |` reste en français**, même dans un fichier
-  neuf. `check-sommaire.sh` l'écarte du compte par `grep -vE '^// \| *Élément'` : traduite, elle
-  est comptée comme une déclaration et le hook bloque. Seules les **descriptions dans les cellules**
-  suivent la langue du dépôt.
-- Une ligne de tableau par déclaration top-level (func, méthode `Type.Method`, type).
-- Colonne "Ligne" = numéro de ligne **final** (après insertion du bloc, donc décalé).
-- Description = 1 phrase courte, écrite à partir de la compréhension du code, pas une extraction
-  mécanique du nom de fonction.
+- Exact opening marker: `// SOMMAIRE (lire en premier, sauter directement au bon passage)`.
+- Closing marker: a `// ====...` line (free length, a few `=` at least).
+- **The three French strings stay French, even in a brand-new file**: the two markers and the
+  `| Élément | Résumé | Ligne |` header row. `check-sommaire.sh` drops the header from the count
+  with `grep -vE '^// \| *Élément'`; translated, it is counted as a declaration and the hook blocks.
+  `sync-sommaire-lines.sh` matches the same three. They are also shared verbatim with `flowlio-core`
+  and `Flowlio`, so changing them here would fail the guard in three repositories at once. Only the
+  **descriptions in the cells** follow the repository's language, which is English.
+- One table row per top-level declaration (func, `Type.Method` method, type).
+- The "Ligne" column is the **final** line number — after the block has been inserted, so shifted.
+- The description is one short sentence, written from understanding the code, not mechanically
+  extracted from the function's name.
 
-## Maintenance obligatoire (non négociable)
+## Mandatory maintenance (not negotiable)
 
-À chaque création, modification ou suppression de déclaration top-level dans un fichier `.go` :
+On every creation, change or removal of a top-level declaration in a `.go` file:
 
-1. Mettre à jour le sommaire dans la même session (ajout/suppression de ligne, recalcul des
-   numéros de ligne décalés).
-2. Si le fichier passe sous 2 déclarations, retirer le bloc sommaire.
-3. Si un nouveau fichier atteint 2 déclarations, créer le bloc.
+1. Update the summary in the same session (add or remove a row, recompute the shifted line numbers).
+2. If the file drops below 2 declarations, remove the summary block.
+3. If a new file reaches 2 declarations, create the block.
 
-## Garde-fou automatique (recommandé)
+`make sommaire` (`scripts/sync-sommaire-lines.sh`) recomputes the line numbers on its own. It never
+adds nor removes a row: writing the description of a new declaration is a judgement call and stays
+with the author.
 
-Un hook `PostToolUse` (après édition d'un `.go`) qui :
+## The automatic guard
 
-- compte les déclarations top-level (`grep -cE '^(func |type )'`),
-- si ≥ 2 : vérifie présence du marqueur + nombre de lignes du tableau == nombre de déclarations,
-- échec → bloque (exit 2).
+A `PostToolUse` hook (after a `.go` edit) that:
 
-Ce garde-fou vérifie la présence et la synchronisation structurelle, pas la *qualité* des
-descriptions — celle-ci reste sous la responsabilité de Claude lors de l'édition.
+- counts the top-level declarations (`grep -cE '^(func |type )'`),
+- if ≥ 2: checks the marker is present and that the number of table rows equals the number of
+  declarations,
+- on failure: blocks (exit 2).
+
+This guard checks presence and structural synchronisation, not the *quality* of the descriptions —
+that stays the responsibility of whoever edits the file.
