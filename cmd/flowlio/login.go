@@ -6,9 +6,9 @@ package main
 // |------------------|---------------------------------------------------------------|-------|
 // | hostedConfig     | The filed hosted link: the prod address and an account token    | 46    |
 // | runLogin         | Links this machine to a hosted account, so `flowlio` runs hosted | 56    |
-// | hostedConfigPath | Path of the hosted link file, beside the credentials             | 98    |
-// | hostedLoggedIn   | Whether a hosted link is on file                                | 108   |
-// | loadHosted       | Reads the hosted link, if any                                   | 118   |
+// | hostedConfigPath | Path of the hosted link file, beside the credentials             | 111   |
+// | hostedLoggedIn   | Whether a hosted link is on file                                | 121   |
+// | loadHosted       | Reads the hosted link, if any                                   | 131   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -99,7 +99,10 @@ func runLogin(_ context.Context, args []string) error {
 	}
 
 	fmt.Printf("logged in to %s — `flowlio` now runs the waker in hosted mode\n", u.Host)
-	fmt.Println("connect each repo against prod with `flowlio connect <REPO>`, then run `flowlio`.")
+	fmt.Println("From each repository's directory, link it with its flowlio.me id:")
+	fmt.Println("  flowlio connect <REPO> --id <id>")
+	fmt.Println("The id is the `?repo=…` value in that repo's MCP configuration on flowlio.me.")
+	fmt.Println("Then run `flowlio` to start the waker.")
 	return nil
 }
 
