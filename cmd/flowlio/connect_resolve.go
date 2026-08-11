@@ -4,10 +4,10 @@ package main
 //
 // | Élément            | Résumé                                                       | Ligne |
 // |--------------------|--------------------------------------------------------------|-------|
-// | repoCredentials    | The token this repository works under, minting one if needed  | 47    |
-// | storedRepo         | Finds an already-issued credential from the repo key alone    | 86    |
-// | mintRepoToken      | Issues a project token and files it under the project's slug  | 120   |
-// | resolveProjectSlug | Which project holds this repo key, asked of the instance      | 148   |
+// | repoCredentials    | The token this repository works under, minting one if needed  | 48    |
+// | storedRepo         | Finds an already-issued credential from the repo key alone    | 87    |
+// | mintRepoToken      | Issues a project token and files it under the project's slug  | 121   |
+// | resolveProjectSlug | Which project holds this repo key, asked of the instance      | 156   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace/service"
@@ -135,6 +136,13 @@ func mintRepoToken(ctx context.Context, project, repo string) (credentials.RepoF
 		Project: project,
 		Repo:    repo,
 		Token:   created.Secret,
+	}
+	// `connect` is run from the repository's root, so its working directory IS the launch path the
+	// waker needs (DESIGN-WAKE §7). Captured with zero guessing and stored host-local. A failure to
+	// read it is not fatal: the waker falls back to a fresh launch that cannot pick a directory, and
+	// `flowlio doctor` will say the path is missing.
+	if wd, wdErr := os.Getwd(); wdErr == nil {
+		f.Path = wd
 	}
 	if _, err := credentials.SaveRepo(f); err != nil {
 		return credentials.RepoFile{}, err

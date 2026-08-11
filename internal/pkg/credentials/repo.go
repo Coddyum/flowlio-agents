@@ -4,16 +4,16 @@ package credentials
 //
 // | Élément     | Résumé                                                            | Ligne |
 // |-------------|-------------------------------------------------------------------|-------|
-// | RepoFile    | What one repository needs in order to reach its own board           | 52    |
-// | reposDir    | Directory holding every repository credential of this host          | 60    |
-// | safeSegment | Refuses a name that would compose a path out of that directory      | 74    |
-// | RepoPath    | Path of one repository's credential file, names normalised          | 89    |
-// | LoadRepo    | Reads one repository's credential file                              | 107   |
-// | SaveRepo    | Writes it in 0600, with its names normalised                        | 134   |
-// | DeleteRepo  | Removes one, for a repository that no longer exists server-side     | 165   |
-// | ListRepos   | Every repository credential on this host, project then repo         | 188   |
-// | normaliseProject | Lower-cases a project slug, the one spelling that is stored    | 236   |
-// | normaliseRepo    | Upper-cases a repo key, the one spelling that is stored        | 238   |
+// | RepoFile    | What one repository needs in order to reach its own board           | 58    |
+// | reposDir    | Directory holding every repository credential of this host          | 69    |
+// | safeSegment | Refuses a name that would compose a path out of that directory      | 83    |
+// | RepoPath    | Path of one repository's credential file, names normalised          | 98    |
+// | LoadRepo    | Reads one repository's credential file                              | 116   |
+// | SaveRepo    | Writes it in 0600, with its names normalised                        | 143   |
+// | DeleteRepo  | Removes one, for a repository that no longer exists server-side     | 174   |
+// | ListRepos   | Every repository credential on this host, project then repo         | 197   |
+// | normaliseProject | Lower-cases a project slug, the one spelling that is stored    | 245   |
+// | normaliseRepo    | Upper-cases a repo key, the one spelling that is stored        | 247   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -49,11 +49,25 @@ const reposDirName = "repos"
 
 // RepoFile is what one repository needs in order to reach its own board: where the API is, who it
 // is, and the secret that proves it.
+//
+// The last three fields serve the waker (DESIGN-WAKE §5, §7) and are host-local by nature — a
+// filesystem path is not product data and never goes into a database. Path is the directory the
+// agent is launched in, captured by `flowlio connect` from its working directory. Agent names the
+// launch recipe (claude / codex / opencode); AgentCommand is the custom template for a tool no
+// preset covers. All three are optional: an empty Agent means the Claude default.
 type RepoFile struct {
-	APIURL  string `json:"api_url"`
-	Project string `json:"project"`
-	Repo    string `json:"repo"`
-	Token   string `json:"token"`
+	APIURL       string `json:"api_url"`
+	Project      string `json:"project"`
+	Repo         string `json:"repo"`
+	Token        string `json:"token"`
+	Path         string `json:"path,omitempty"`
+	Agent        string `json:"agent,omitempty"`
+	AgentCommand string `json:"agent_command,omitempty"`
+	// RepoID is the core repository id a HOSTED waker polls the relay with
+	// (`/api/v2/agents/wake?repo=<RepoID>`). It is empty in self-host, where the token and APIURL
+	// point straight at the engine; it is set in hosted, where the token lives in flowlio-core and
+	// this id is all the local machine holds to name the repository (DESIGN-WAKE §6).
+	RepoID string `json:"repo_id,omitempty"`
 }
 
 // reposDir yields the directory holding every repository credential of this host.
