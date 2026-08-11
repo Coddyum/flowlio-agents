@@ -3,6 +3,10 @@
 **A shared backlog for your AI coding agents.** One project per repo, tasks inside it, and issues
 *between* repos — so your Claude Code, Codex or OpenCode sessions stop using you as a message bus.
 
+And when a sibling repo answers a question, **the agent that asked wakes up and reads the answer on
+its own** — the session can die in between, and the loop still closes with no human in the middle.
+That is what v1.0.0 adds; see [Waking a dead session](#waking-a-dead-session).
+
 CLI and MCP only. No web UI. **No LLM inside**: every behaviour is deterministic and testable.
 
 [![release](https://img.shields.io/github/v/release/Coddyum/flowlio-agents?include_prereleases&sort=semver)](https://github.com/Coddyum/flowlio-agents/releases)
@@ -79,11 +83,30 @@ machine; nothing calls out to us, and there is no account anywhere.
 **There is no daemon of ours to babysit, and nothing to launch every morning.** See
 [Everyday use](#everyday-use) for the whole answer.
 
+> **One optional fourth part, and it is yours too:** the **waker**. It is what relaunches an agent
+> when a sibling answers it, and it is a mode of the same `flowlio` program — `flowlio waker`, or
+> just `flowlio`, which brings up everything at once. Nothing of ours runs off your machine. See
+> [Waking a dead session](#waking-a-dead-session).
+
 ---
 
 ## Setup
 
-Four steps, ten minutes, and the fourth one is the check that the first three worked.
+The fast path, once the Homebrew tap is published:
+
+```bash
+brew install flowlio
+flowlio                 # brings up Postgres (in a container it manages) + the engine + the waker
+```
+
+One program, one command. `flowlio` runs the whole self-host stack in one terminal; `flowlio help`
+prints the surface. Then connect a repository with `flowlio connect <REPO>` and pick its agent with
+`flowlio agent set claude|codex|opencode`.
+
+The rest of this section is the **explicit** path — `docker compose` for the instance and a release
+binary for the CLI — which is what `flowlio` automates and what you want when you are wiring it into
+an existing stack. Four steps, ten minutes, and the fourth one is the check that the first three
+worked.
 
 Requirement: **Docker**. That is the entire prerequisite list. (Prefer your own Postgres and a Go
 toolchain? See [Without Docker](#without-docker) — you get the same instance either way.)
@@ -235,9 +258,14 @@ The short version: **once it is set up, you run nothing.**
 | every morning | nothing |
 | after a reboot | nothing — as long as Docker itself starts (see below) |
 | starting an agent session | nothing; your client launches `flowlio mcp` from `.mcp.json` |
+| wanting answers to wake the agent back up | run `flowlio waker` (or `flowlio`, which includes it) |
 | adding a repo to an existing project | `flowlio project create <KEY> <name>` then `flowlio connect <KEY>` in it |
 | looking at the whole team | `flowlio watch` |
 | something feels off | `flowlio doctor` |
+
+The one thing you *may* choose to keep running is the **waker** — the process that relaunches an
+agent when a sibling answers it. It is opt-in, it is yours, and it runs nothing off your machine;
+[Waking a dead session](#waking-a-dead-session) is the whole of it.
 
 **Why nothing after a reboot.** Both containers carry `restart: unless-stopped`, so Docker brings
 them back by itself when the daemon starts. The only link in that chain that is yours is Docker:
@@ -261,6 +289,41 @@ docker compose logs -f api   # what the API is doing
 **You never run `flowlio mcp` yourself.** It is the MCP server, it speaks over stdin/stdout, and it
 is started by your agent client on demand from the `.mcp.json` entry. Typing it into a terminal
 gets you a process waiting for JSON-RPC that will never come.
+
+---
+
+## Waking a dead session
+
+An agent is an ephemeral process — it cannot sit and listen. So when repo B answers a question repo
+A asked, the session in A that asked is already gone, and nobody learns the answer until you relaunch
+it by hand. The **waker** removes that last human step.
+
+```bash
+flowlio agent set claude       # or codex, opencode, or set-custom "<your tool> {prompt}"
+flowlio waker                  # watches every connected repo; relaunches its agent when answered
+```
+
+`flowlio waker` (or just `flowlio`, which starts it alongside the engine) watches for answers and,
+when one lands for a repo, launches that repo's agent **in that repo's directory** to read it. For
+Claude it re-enters the exact session that asked (`claude -r`), carrying its context; for any other
+agent — or Claude with no live session — it starts a fresh one that rebuilds context from
+`check_inbox`. You pick per repo with `flowlio agent set`.
+
+**It is built not to cost you.** "Is there anything for me?" is an integer comparison held in memory —
+never a database query — so an idle repo is watched for free; only "what is it?" touches Postgres,
+and only when the first says yes. The server dictates how often the waker may ask, and a relaunch
+cap turns two repos answering each other into a bounded burst instead of a runaway loop. The cost
+follows real events, never time × agents.
+
+**Self-host** and it needs no configuration beyond `flowlio agent set`: the engine is on the same
+machine and pushes to the waker on `127.0.0.1` the instant an event drops, with a secret so no other
+process can trigger a relaunch. **Hosted** — the engine runs on our infra behind a NAT it cannot
+push through — the waker polls instead, after one `flowlio login`, and your agent's code and
+credentials never leave your machine.
+
+> Want to watch the loop close before trusting it? `scripts/demo-wake.sh` stands the whole thing up
+> on your machine — engine and waker as real processes — and proves an answer relaunches the agent
+> with no human in the middle.
 
 ---
 
@@ -373,6 +436,11 @@ flowlio project list               # the repos of the project
 flowlio trust list                 # who may raise issues at whom, one line per direction
 flowlio doctor                     # is this repository going to work
 flowlio version
+
+flowlio                            # run everything: engine + waker (self-host), waker only (hosted)
+flowlio waker                      # just the waker: relaunch agents when a sibling answers
+flowlio agent set claude|codex|opencode   # which agent the waker launches for this repo
+flowlio login <prod-url>           # hosted: link this machine to your flowlio.me account
 ```
 
 `flowlio help` prints the whole surface, including the `team` / `project` / `token` commands, which
@@ -673,23 +741,24 @@ imports, bounded file size, mandatory file summaries.
 
 ## Status
 
-**v0.4.0.** The API, the CLI, the MCP server, the trust graph, the inbox, the per-repository memory
-and the team debt queue are in and tested. Setting up a self-hosted instance is `docker compose up`
-then two commands, and no secret is ever printed or pasted: `flowlio setup` files one token per
-repository, `flowlio connect` makes a repository operational and checks itself, `flowlio doctor`
-replays those checks later, and `disconnect` / `remove` take it all back out.
+**v1.0.0.** The API, the CLI, the MCP server, the trust graph, the inbox, the per-repository memory,
+the team debt queue and now the **cross-repo wake-up** are in and tested. The loop closes on its own:
+a repo asks, its session dies, a sibling answers, and the waker relaunches the agent to read the
+answer — proven end to end by an integration test and by `scripts/demo-wake.sh`. Setting up a
+self-hosted instance is `brew install flowlio` and `flowlio`, or `docker compose up` then two
+commands, and no secret is ever printed or pasted.
 
-What has *not* happened yet is a long run against a real multi-repo team; that is the next
-milestone, and until it does, treat rough edges as expected rather than surprising.
+Not built yet: MCP over HTTP, a published Docker image, and the local web page the binary is meant to
+serve on its own origin. On the wake-up, two polish items remain — a browser device-flow for
+`flowlio login` (a pasted token works today) and an always-on `flowlio waker install` service.
 
-Not built yet: waking a session up when its issue gets answered, MCP over HTTP, a published Docker
-image, and the local web page the binary is meant to serve on its own origin.
 Hosted accounts are **not part of this repository at all** — this engine runs `MODE=hosted` for an
 operated deployment, and the accounts, billing and screens that go with it live in a separate
-codebase.
+codebase. The one hosted seam here is the waker polling that operator's relay after `flowlio login`.
 
-Release by release: [CHANGELOG.md](CHANGELOG.md). Scope and the reasoning behind each decision:
-[docs/DESIGN-V1.md](docs/DESIGN-V1.md) (French).
+The full v1.0.0 release notes: [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md). Scope and the
+reasoning behind each decision: [docs/DESIGN-V1.md](docs/DESIGN-V1.md), and the wake design in
+[docs/DESIGN-WAKE.md](docs/DESIGN-WAKE.md).
 
 ## License
 
