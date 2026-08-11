@@ -4,11 +4,11 @@ package waker
 //
 // | Élément        | Résumé                                                        | Ligne |
 // |----------------|---------------------------------------------------------------|-------|
-// | Agent          | How to launch one configured agent, fresh or by resume           | 37    |
-// | Preset         | The built-in launch recipe for a known agent                    | 45    |
-// | Custom         | An arbitrary command template for an unknown agent               | 65    |
-// | Agent.LaunchArgv | Builds the argv for one wake, resuming when it can             | 78    |
-// | substitute     | Fills {session} and {prompt} into a template                    | 88    |
+// | Agent          | How to launch one configured agent, fresh or by resume           | 43    |
+// | Preset         | The built-in launch recipe for a known agent                    | 51    |
+// | Custom         | An arbitrary command template for an unknown agent               | 75    |
+// | Agent.LaunchArgv | Builds the argv for one wake, resuming when it can             | 88    |
+// | substitute     | Fills {session} and {prompt} into a template                    | 98    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -28,6 +28,12 @@ import "strings"
 // not describe the work — check_inbox does that — it only tells the agent to look.
 const WakePrompt = "You have inbox items — run check_inbox and act on them, then stop."
 
+// claudeAllowedTools names the MCP server whose tools a woken Claude may call without a prompt. The
+// whole server is scoped in, so check_inbox and every answer/read tool it needs is granted, and
+// nothing else is — a wake never silently gains file writes or shell. The name matches the one the
+// `.mcp.json` (self-host) and flowlio.me (hosted) give the server: `flowlio-agents`.
+const claudeAllowedTools = "mcp__flowlio-agents"
+
 // Agent is how to launch one configured agent.
 //
 // Command is the FRESH template, run in the repo directory; {prompt} is where the wake sentence
@@ -45,10 +51,14 @@ type Agent struct {
 func Preset(name string) (Agent, bool) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "claude":
+		// --allowedTools pre-approves the Flowlio MCP tools: a `-p` session is non-interactive and
+		// cannot approve a tool at the prompt, so without this the woken agent is launched and then
+		// blocked on its very first call to check_inbox. Scoped to this one server, so the wake grants
+		// nothing beyond reading the inbox and answering — never file writes or shell.
 		return Agent{
 			Name:    "claude",
-			Command: []string{"claude", "-p", "{prompt}"},
-			Resume:  []string{"claude", "-r", "{session}", "-p", "{prompt}"},
+			Command: []string{"claude", "-p", "{prompt}", "--allowedTools", claudeAllowedTools},
+			Resume:  []string{"claude", "-r", "{session}", "-p", "{prompt}", "--allowedTools", claudeAllowedTools},
 		}, true
 	case "codex":
 		return Agent{Name: "codex", Command: []string{"codex", "exec", "{prompt}"}}, true
