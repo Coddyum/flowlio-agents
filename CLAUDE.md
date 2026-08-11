@@ -91,10 +91,13 @@ Scope of this repo: the whole product — API, CLI, MCP server.
 
 Milestones and design decisions: `docs/DESIGN-V1.md`. Original concept: `docs/concept.md`.
 
-**State on 2026-08-08: M1, M2 and M3 all run.** Tenancy, tokens and auth (M1); tasks and the MCP
-server (M2); issues and inbox (M3) — the differentiating core is in service, and two real agents
-asked each other a question through it on 2026-08-07. The trust graph has been **directed** since
-migration `000013`.
+**State on 2026-08-11: M1, M2, M3 and M5 all run, in production.** Tenancy, tokens and auth (M1);
+tasks and the MCP server (M2); issues and inbox (M3) — the differentiating core is in service, and
+two real agents asked each other a question through it on 2026-08-07. **Per-repository memory (M5,
+FLWL-7)** landed with migration `000012`: what a repository remembers about itself — `decision`,
+`learning`, `state` — scoped to the project token, never crossing repos, entries superseded and
+never edited, its title index injected into the MCP session before `check_inbox`. The trust graph
+has been **directed** since migration `000013`.
 
 What is left open is no longer a milestone but a list: D28's embedded SPA, flowlio-core's product
 canvas, and the debts recorded in `docs/`. The state of the **complete** product, all three
