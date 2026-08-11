@@ -83,9 +83,10 @@ func (q *Queries) AnswerIssue(ctx context.Context, arg AnswerIssueParams) (Answe
 	return i, err
 }
 
-const appendEvent = `-- name: AppendEvent :exec
+const appendEvent = `-- name: AppendEvent :one
 INSERT INTO events (team_id, project_id, actor_project_id, kind, subject_type, subject_id)
 VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id
 `
 
 type AppendEventParams struct {
@@ -97,8 +98,11 @@ type AppendEventParams struct {
 	SubjectID      uuid.UUID    `json:"subject_id"`
 }
 
-func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) error {
-	_, err := q.db.ExecContext(ctx, appendEvent,
+// AppendEvent returns the id it wrote: the caller uses it to bump the in-memory probe head (D55,
+// docs/DESIGN-WAKE.md §3), so a sleeping sibling can be woken without a query. The durable record
+// (the row) and the in-memory hint (the head) are the same fact.
+func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, appendEvent,
 		arg.TeamID,
 		arg.ProjectID,
 		arg.ActorProjectID,
@@ -106,7 +110,9 @@ func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) error 
 		arg.SubjectType,
 		arg.SubjectID,
 	)
-	return err
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const appendFirstMessage = `-- name: AppendFirstMessage :one

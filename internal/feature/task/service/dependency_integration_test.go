@@ -6,10 +6,12 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Coddyum/flowlio-agents/internal/database"
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/service"
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/cache"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -40,7 +42,7 @@ func newRealService(t *testing.T) (service.Service, *sql.DB) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	return service.New(store.New(database.New(db), db)), db
+	return service.New(store.New(database.New(db), db, cache.NewMemory(time.Hour, time.Hour))), db
 }
 
 // newRealProject creates a throwaway team and project through direct SQL. The fixtures borrow no

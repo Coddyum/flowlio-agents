@@ -4,12 +4,13 @@ package auth
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | contextKey         | Private context-key type, impossible to collide with         | 25    |
-// | FromContext        | Picks up the Principal left by the middleware                | 31    |
-// | service.Middleware | Requires a valid token and puts the Principal in the context | 43    |
-// | service.AdminOnly  | Additionally requires an admin scope                         | 109   |
-// | bearerToken        | Extracts the token from the Authorization header             | 122   |
-// | deny               | Answers an auth error without disclosing the cause           | 133   |
+// | contextKey         | Private context-key type, impossible to collide with         | 26    |
+// | FromContext        | Picks up the Principal left by the middleware                | 32    |
+// | service.Middleware | Requires a valid token and puts the Principal in the context | 44    |
+// | service.AdminOnly  | Additionally requires an admin scope                         | 126   |
+// | bearerToken        | Extracts the token from the Authorization header             | 134   |
+// | deny               | Answers an auth error without disclosing the cause           | 147   |
+// | boolDigit          | Renders a piggyback flag as the single header byte           | 158   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -100,9 +101,33 @@ func (s *service) Middleware(next http.Handler) http.Handler {
 		// noisy neighbour.
 		s.limiter.release(reserved, outcomeAuthenticated)
 
+		// Piggyback (D55, DESIGN-WAKE §3): stamp every authenticated project response with whether
+		// the token has anything past its cursor, read from memory. An agent already talking to the
+		// API therefore learns it was answered with NO extra request. Set BEFORE the handler writes,
+		// and only when the answer is known cheaply — a cold cache omits the header rather than
+		// guessing "no work" and hiding a real answer.
+		if s.wakeState != nil && principal.Scope == ScopeProject {
+			if hasWork, known := s.wakeState(principal); known {
+				w.Header().Set(WakeHeader, boolDigit(hasWork))
+			}
+		}
+
 		ctx := context.WithValue(r.Context(), principalKey, principal)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// WakeHeader names the piggyback response header: "1" when the token has something past its cursor,
+// "0" when it does not, absent when the answer was not warm in memory. The MCP server reads it to
+// remind an active agent to call check_inbox.
+const WakeHeader = "X-Flowlio-Has-Work"
+
+// boolDigit renders a piggyback flag as the single byte the header carries.
+func boolDigit(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
 }
 
 // AdminOnly wraps Middleware and rejects any non-administrator principal.

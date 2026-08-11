@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 
+	"github.com/Coddyum/flowlio-agents/internal/core/probe"
 	"github.com/Coddyum/flowlio-agents/internal/database"
 )
 
@@ -15,7 +16,7 @@ import (
 // but that property is what allows NOT paying for exactly-once delivery. Do not lean on it for
 // anything else without re-reading docs/DESIGN-M3.md.
 func (s *store) AppendEvent(ctx context.Context, event Event) error {
-	err := s.q.AppendEvent(ctx, database.AppendEventParams{
+	id, err := s.q.AppendEvent(ctx, database.AppendEventParams{
 		TeamID:         event.TeamID,
 		ProjectID:      event.ProjectID,
 		ActorProjectID: event.ActorProjectID,
@@ -23,5 +24,14 @@ func (s *store) AppendEvent(ctx context.Context, event Event) error {
 		SubjectType:    database.EventSubjectIssue,
 		SubjectID:      event.SubjectID,
 	})
-	return translate(err, "append event")
+	if err != nil {
+		return translate(err, "append event")
+	}
+
+	// Bump the in-memory probe head so a sleeping sibling learns there is something to answer
+	// without a query (D55). Kept inside the transaction on purpose: the id we hand the probe is
+	// the durable one. A rollback would leave the head one wake too high — a wasted wake, never a
+	// wrong state (see internal/core/probe).
+	probe.RecordEvent(s.cache, event.TeamID, id)
+	return nil
 }

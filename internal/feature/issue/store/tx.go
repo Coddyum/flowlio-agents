@@ -24,7 +24,7 @@ func (s *store) WithTx(ctx context.Context, fn func(Store) error) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := fn(&store{q: s.q.WithTx(tx), db: s.db, inTx: true}); err != nil {
+	if err := fn(&store{q: s.q.WithTx(tx), db: s.db, cache: s.cache, inTx: true}); err != nil {
 		return err
 	}
 

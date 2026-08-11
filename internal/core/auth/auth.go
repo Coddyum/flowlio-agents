@@ -9,7 +9,7 @@ package auth
 // | Principal.IsAdmin  | True if the principal may administer the team                | 57    |
 // | Service            | Authentication contract exposed through CoreServices         | 62    |
 // | service            | Implementation, depending on the Store interface             | 72    |
-// | New                | Creates the authentication service                           | 82    |
+// | New                | Creates the authentication service                           | 88    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -76,13 +76,20 @@ type service struct {
 	touchInterval time.Duration
 	// limiter slows prefix sweeping down. Detail and trade-offs: rate_limit.go.
 	limiter *attemptLimiter
+	// wakeState answers "does this project principal have anything past its cursor?" from memory, so
+	// the middleware can piggyback that answer onto every response (D55, DESIGN-WAKE §3). The second
+	// bool is false when the answer is not known cheaply (cold cache) — the header is then omitted
+	// rather than guessed. Nil disables the piggyback entirely, which is what every test double
+	// wants: it keeps auth decoupled from the probe and the cache.
+	wakeState func(Principal) (bool, bool)
 }
 
-// New creates the authentication service.
-func New(store Store) Service {
+// New creates the authentication service. wakeState may be nil to disable the wake piggyback.
+func New(store Store, wakeState func(Principal) (bool, bool)) Service {
 	return &service{
 		store:         store,
 		touchInterval: time.Minute,
 		limiter:       newAttemptLimiter(maxAttemptsPerIP, attemptWindow),
+		wakeState:     wakeState,
 	}
 }

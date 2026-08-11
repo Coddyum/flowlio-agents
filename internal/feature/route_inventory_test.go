@@ -48,6 +48,7 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/overview"
 	"github.com/Coddyum/flowlio-agents/internal/feature/ref"
 	"github.com/Coddyum/flowlio-agents/internal/feature/task"
+	"github.com/Coddyum/flowlio-agents/internal/feature/wake"
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace"
 	"github.com/google/uuid"
 )
@@ -110,6 +111,11 @@ var inventory = []route{
 
 	{inbox.Key, http.MethodGet, "GET /{$}", "/", projectOnly},
 
+	// wake — M6. The probe an idle waker repeats on a dead agent's behalf: project-scoped like the
+	// inbox, since the cursor it reads is the token's.
+	{wake.Key, http.MethodGet, "GET /probe", "/probe", projectOnly},
+	{wake.Key, http.MethodPost, "POST /register", "/register", projectOnly},
+
 	{overview.Key, http.MethodGet, "GET /{$}", "/?team=x", adminOnly},
 	{overview.Key, http.MethodGet, "GET /refs/{project}/{number}", "/refs/CORE/1?team=x", adminOnly},
 
@@ -147,6 +153,7 @@ func mount(t *testing.T, tok authtest.Token) map[string]http.Handler {
 		task.NewModule(cfg),
 		issue.NewModule(cfg),
 		inbox.NewModule(cfg),
+		wake.NewModule(cfg),
 		overview.NewModule(cfg),
 		memory.NewModule(cfg),
 		ref.NewModule(cfg),

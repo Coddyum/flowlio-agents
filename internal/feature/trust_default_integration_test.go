@@ -29,10 +29,12 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Coddyum/flowlio-agents/internal/database"
 	issuestore "github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 	workspacestore "github.com/Coddyum/flowlio-agents/internal/feature/workspace/store"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/cache"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -197,7 +199,7 @@ func TestAThirdRepoArrivesLinkedToBothExistingOnes(t *testing.T) {
 	// failure observed on screen on 2026-08-07 — create_issue from a fresh repo answered
 	// `not found`, and nothing said why. Under the directed model it takes TWO rows to keep that
 	// true, which is why both calls below matter and neither implies the other.
-	issues := issuestore.New(database.New(db), db)
+	issues := issuestore.New(database.New(db), db, cache.NewMemory(time.Hour, time.Hour))
 
 	core, err := ws.ProjectByKey(ctx, team.ID, "CORE")
 	if err != nil {

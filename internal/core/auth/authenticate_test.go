@@ -84,7 +84,7 @@ func TestAuthenticate(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &fakeStore{record: tc.record, found: tc.found}
-			svc := New(store)
+			svc := New(store, nil)
 
 			principal, err := svc.Authenticate(context.Background(), tc.raw)
 
@@ -118,10 +118,10 @@ func TestAuthenticateFailuresAreIndistinguishable(t *testing.T) {
 		t.Fatalf("NewToken: %v", err)
 	}
 
-	unknown := New(&fakeStore{found: false})
+	unknown := New(&fakeStore{found: false}, nil)
 	wrongSecret := New(&fakeStore{found: true, record: TokenRecord{
 		ID: uuid.New(), Scope: ScopeAdmin, SecretHash: crypto.HashSecret("autre"),
-	}})
+	}}, nil)
 
 	_, errUnknown := unknown.Authenticate(context.Background(), token.Plain)
 	_, errWrong := wrongSecret.Authenticate(context.Background(), token.Plain)
@@ -142,7 +142,7 @@ func TestTouchIsThrottled(t *testing.T) {
 			ID: uuid.New(), Scope: ScopeAdmin, SecretHash: token.Hash,
 			LastUsedAt: time.Now(),
 		}}
-		if _, err := New(store).Authenticate(context.Background(), token.Plain); err != nil {
+		if _, err := New(store, nil).Authenticate(context.Background(), token.Plain); err != nil {
 			t.Fatalf("Authenticate: %v", err)
 		}
 		if store.touched != 0 {
@@ -155,7 +155,7 @@ func TestTouchIsThrottled(t *testing.T) {
 			ID: uuid.New(), Scope: ScopeAdmin, SecretHash: token.Hash,
 			LastUsedAt: time.Now().Add(-time.Hour),
 		}}
-		if _, err := New(store).Authenticate(context.Background(), token.Plain); err != nil {
+		if _, err := New(store, nil).Authenticate(context.Background(), token.Plain); err != nil {
 			t.Fatalf("Authenticate: %v", err)
 		}
 		if store.touched != 1 {
