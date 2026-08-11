@@ -116,3 +116,34 @@ release:
     What changed: [CHANGELOG](https://github.com/Coddyum/flowlio-agents/blob/main/CHANGELOG.md).
 
     Licensed under AGPL-3.0. The code of this release is the tag `{{ .Tag }}`.
+
+# The Homebrew formula, generated and pushed to the tap on every release — with the PREBUILT
+# binaries, so an installer needs no Go toolchain (the hand-written v1.0.0 formula built from source;
+# this replaces it from the next tag on). It needs a token with write access to the tap repository,
+# which GITHUB_TOKEN is not: that one is scoped to THIS repository. HOMEBREW_TAP_TOKEN is a PAT with
+# `contents:write` on Coddyum/homebrew-flowlio, passed by the release workflow.
+#
+# Both binaries ship in the archive, so the formula installs both — `flowlio` (CLI/MCP/waker) and
+# `flowlio-api` (the engine self-host starts).
+brews:
+  - name: flowlio
+    repository:
+      owner: Coddyum
+      name: homebrew-flowlio
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/Coddyum/flowlio-agents"
+    description: "Project manager for AI agents: cross-repo issues, and a waker that closes the loop"
+    license: "AGPL-3.0-only"
+    commit_author:
+      name: flowlio-release
+      email: release@flowlio.me
+    install: |
+      bin.install "flowlio"
+      bin.install "flowlio-api"
+    caveats: |
+      Self-host runs Postgres 18 in a container flowlio manages — install Docker first, then run:
+        flowlio
+    test: |
+      assert_match "flowlio", shell_output("#{bin}/flowlio version")

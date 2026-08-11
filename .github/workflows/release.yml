@@ -72,6 +72,11 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Write access to the Homebrew tap (Coddyum/homebrew-flowlio), which GITHUB_TOKEN — scoped
+          # to THIS repository — does not have. A PAT with contents:write on the tap. If the secret
+          # is absent the brews step is what fails, and only that step: the binaries and the release
+          # are already produced.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       # GitHub REFUSES to persist an attestation for a private repository owned by a personal
       # account ("Feature not available for user-owned private repositories"). That is not a
