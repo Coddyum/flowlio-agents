@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Coddyum/flowlio-agents/internal/core/wakepush"
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 )
 
@@ -76,6 +77,11 @@ func (s *service) CreateIssue(ctx context.Context, in CreateIssueInput) (Issue, 
 	if err != nil {
 		return Issue{}, err
 	}
+
+	// A question just landed for the recipient: push a wake to its local waker, so a dead session
+	// there learns it has something to answer without waiting for a human (D55). Best effort — the
+	// escalation ladder and the piggyback are the backstop.
+	wakepush.Signal(s.cache, in.TeamID, created.ProjectID)
 
 	return toIssue(created), nil
 }

@@ -189,6 +189,10 @@ appended AS (
 )
 SELECT t.id, t.number, t.state FROM target t;
 
--- name: AppendEvent :exec
+-- AppendEvent returns the id it wrote: the caller uses it to bump the in-memory probe head (D55,
+-- docs/DESIGN-WAKE.md §3), so a sleeping sibling can be woken without a query. The durable record
+-- (the row) and the in-memory hint (the head) are the same fact.
+-- name: AppendEvent :one
 INSERT INTO events (team_id, project_id, actor_project_id, kind, subject_type, subject_id)
-VALUES (@team_id, @project_id, @actor_project_id, @kind, @subject_type, @subject_id);
+VALUES (@team_id, @project_id, @actor_project_id, @kind, @subject_type, @subject_id)
+RETURNING id;

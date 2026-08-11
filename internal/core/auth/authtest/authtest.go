@@ -103,7 +103,7 @@ func New(t *testing.T, record auth.TokenRecord) Token {
 
 	return Token{
 		Plain:  tok.Plain,
-		Auth:   auth.New(&Store{prefix: tok.Prefix, record: record}),
+		Auth:   auth.New(&Store{prefix: tok.Prefix, record: record}, nil),
 		Record: record,
 	}
 }

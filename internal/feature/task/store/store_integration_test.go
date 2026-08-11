@@ -12,6 +12,7 @@ import (
 
 	"github.com/Coddyum/flowlio-agents/internal/database"
 	"github.com/Coddyum/flowlio-agents/internal/feature/task/store"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/cache"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -41,7 +42,7 @@ func newStore(t *testing.T) (store.Store, *sql.DB) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	return store.New(database.New(db), db), db
+	return store.New(database.New(db), db, cache.NewMemory(time.Hour, time.Hour)), db
 }
 
 // newProject creates a throwaway team and project through direct SQL.

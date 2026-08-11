@@ -1,14 +1,14 @@
-package inbox
+package wake
 
 // SOMMAIRE (lire en premier, sauter directement au bon passage)
 //
 // | Élément             | Résumé                                                   | Ligne |
 // |---------------------|----------------------------------------------------------|-------|
-// | NewModule           | Wires store → service → handler and returns the module     | 33    |
-// | mod                 | Inbox module, carrying the handler and the auth middleware | 44    |
-// | mod.Key             | Returns the module key                                     | 50    |
-// | mod.Routes          | Declares the single route, middleware bound once           | 58    |
-// | requireProjectScope | Rejects any token that is not scoped to a project          | 67    |
+// | NewModule           | Wires store → service → handler and returns the module     | 34    |
+// | mod                 | The wake module, holding the handler and the auth middleware| 45    |
+// | mod.Key             | Returns the module key                                     | 51    |
+// | mod.Routes          | Declares the probe route, middleware bound exactly once     | 59    |
+// | requireProjectScope | Rejects any token that is not scoped to a project          | 73    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -18,18 +18,19 @@ import (
 
 	"github.com/Coddyum/flowlio-agents/internal/core/auth"
 	"github.com/Coddyum/flowlio-agents/internal/core/module"
-	"github.com/Coddyum/flowlio-agents/internal/feature/inbox/handler"
-	"github.com/Coddyum/flowlio-agents/internal/feature/inbox/service"
-	"github.com/Coddyum/flowlio-agents/internal/feature/inbox/store"
+	"github.com/Coddyum/flowlio-agents/internal/feature/wake/handler"
+	"github.com/Coddyum/flowlio-agents/internal/feature/wake/service"
+	"github.com/Coddyum/flowlio-agents/internal/feature/wake/store"
 )
 
 // Key identifies the module in the FeatureRegistry and prefixes its routes.
-const Key = "inbox"
+const Key = "wake"
 
 // NewModule wires the feature: store → service → handler.
 //
-// The store does NOT receive RawDB: the inbox reads a state, it never opens a transaction. Its
-// correctness rests on no atomicity at all — see docs/DESIGN-M3.md.
+// The store gets the queries but no RawDB: the probe only ever reads, and in steady state not even
+// that — it answers from the shared cache. The service is the one that holds the cache, because the
+// steady-state compare is coordination, not persistence.
 func NewModule(cfg module.ModuleConfig) module.Module {
 	st := store.New(cfg.DB)
 	svc := service.New(st, cfg.Cache)
@@ -53,12 +54,17 @@ func (m *mod) Key() string {
 
 // Routes declares the feature's single route. The middleware is bound HERE, once.
 //
-// One route, with no parameter at all: "what is waiting for me". The scope comes entirely from
-// the token, including the read cursor, which is per token and not per project.
+// One route, no parameter: the scope is the token's, cursor included. It mirrors the inbox exactly,
+// because it answers the same question in the cheap form.
 func (m *mod) Routes() http.Handler {
 	r := http.NewServeMux()
 
-	r.Handle("GET /{$}", m.auth.Middleware(requireProjectScope(http.HandlerFunc(m.h.Check))))
+	project := func(h http.HandlerFunc) http.Handler {
+		return m.auth.Middleware(requireProjectScope(h))
+	}
+
+	r.Handle("GET /probe", project(m.h.Probe))
+	r.Handle("POST /register", project(m.h.Register))
 
 	return r
 }

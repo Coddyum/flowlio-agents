@@ -4,8 +4,8 @@ package service
 //
 // | Élément         | Résumé                                                       | Ligne |
 // |-----------------|--------------------------------------------------------------|-------|
-// | service.Answer  | Appends a message to the thread and applies the transition     | 29    |
-// | kindFor         | Names the event after the state reached                        | 73    |
+// | service.Answer  | Appends a message to the thread and applies the transition     | 30    |
+// | kindFor         | Names the event after the state reached                        | 84    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -14,6 +14,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/Coddyum/flowlio-agents/internal/core/wakepush"
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
 )
 
@@ -64,6 +65,16 @@ func (s *service) Answer(ctx context.Context, in AnswerInput) (Issue, error) {
 	if err != nil {
 		return Issue{}, err
 	}
+
+	// Wake the OTHER party — the one who did not just speak. The recipient answering wakes the
+	// author (its question is answered); the author following up wakes the recipient (a new message
+	// awaits it). Signalling the caller's own repo would only wake the session that is already live
+	// (D55). Best effort — the ladder and the piggyback are the backstop.
+	other := answered.ProjectID
+	if in.Ref.CallerProjectID == answered.ProjectID {
+		other = answered.AuthorProjectID
+	}
+	wakepush.Signal(s.cache, in.Ref.TeamID, other)
 
 	return toIssue(answered), nil
 }
