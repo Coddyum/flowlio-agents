@@ -4,15 +4,15 @@ package service
 //
 // | Élément    | Résumé                                                             | Ligne |
 // |------------|--------------------------------------------------------------------|-------|
-// | Service    | Contract consumed by the inbox handler                               | 53    |
-// | service    | Implementation, depending on the store interface                     | 62    |
-// | New        | Creates the inbox service                                            | 67    |
-// | CheckInput | Scope of the call, entirely taken from the token                     | 73    |
-// | IssueLine  | One actionable issue as it is exposed                                | 81    |
-// | TaskLine   | One task in progress as it is exposed                                | 92    |
-// | UnblockedLine | One task no internal dependency blocks any more                   | 103   |
-// | More       | What did not fit in the buckets                                      | 113   |
-// | Inbox      | The actionable state of the project, in four buckets                 | 129   |
+// | Service    | Contract consumed by the inbox handler                               | 54    |
+// | service    | Implementation, depending on the store interface                     | 63    |
+// | New        | Creates the inbox service                                            | 72    |
+// | CheckInput | Scope of the call, entirely taken from the token                     | 78    |
+// | IssueLine  | One actionable issue as it is exposed                                | 86    |
+// | TaskLine   | One task in progress as it is exposed                                | 97    |
+// | UnblockedLine | One task no internal dependency blocks any more                   | 108   |
+// | More       | What did not fit in the buckets                                      | 118   |
+// | Inbox      | The actionable state of the project, in four buckets                 | 134   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/Coddyum/flowlio-agents/internal/feature/inbox/store"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/cache"
 	"github.com/google/uuid"
 )
 
@@ -61,11 +62,15 @@ type Service interface {
 // service depends on the store interface, never on sqlc.
 type service struct {
 	store store.Store
+	// cache carries the probe signal: Check warms the token cursor and the team head in it, so the
+	// wake probe answers "is there anything?" in memory (D55, docs/DESIGN-WAKE.md §3). check_inbox
+	// is the cursor's writer, so it is also where the cached cursor is kept in step.
+	cache cache.Cache
 }
 
 // New creates the inbox service.
-func New(st store.Store) Service {
-	return &service{store: st}
+func New(st store.Store, c cache.Cache) Service {
+	return &service{store: st, cache: c}
 }
 
 // CheckInput carries the scope of the call. Every field comes from the token: this call literally

@@ -4,16 +4,16 @@ package service
 //
 // | Élément          | Résumé                                                      | Ligne |
 // |------------------|-------------------------------------------------------------|-------|
-// | Service          | The contract consumed by the issue handler                    | 47    |
-// | service          | Implementation, depending on the store interface              | 60    |
-// | New              | Creates the issue service                                     | 65    |
-// | Issue            | An issue as exposed by the API                                | 74    |
-// | Message          | A message of the thread, attributed to the project that wrote it | 85 |
-// | IssueDetail      | An issue together with its message thread                     | 95    |
-// | Ref              | Names CORE-34 for the caller, scope included                  | 105   |
-// | CreateIssueInput | Input for opening an issue towards a sibling project          | 114   |
-// | ListIssuesInput  | Criteria for reading the visible issues                       | 128   |
-// | AnswerInput      | A message to append to the thread, and an optional closing    | 142   |
+// | Service          | The contract consumed by the issue handler                    | 48    |
+// | service          | Implementation, depending on the store interface              | 61    |
+// | New              | Creates the issue service                                     | 71    |
+// | Issue            | An issue as exposed by the API                                | 80    |
+// | Message          | A message of the thread, attributed to the project that wrote it | 91 |
+// | IssueDetail      | An issue together with its message thread                     | 101   |
+// | Ref              | Names CORE-34 for the caller, scope included                  | 111   |
+// | CreateIssueInput | Input for opening an issue towards a sibling project          | 120   |
+// | ListIssuesInput  | Criteria for reading the visible issues                       | 134   |
+// | AnswerInput      | A message to append to the thread, and an optional closing    | 148   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/cache"
 	"github.com/google/uuid"
 )
 
@@ -59,11 +60,16 @@ type Service interface {
 // service depends on the store interface, never on sqlc.
 type service struct {
 	store store.Store
+	// cache carries the wake registrations: on a committed answer the service pushes a wake to the
+	// OTHER party's local waker (D55, docs/DESIGN-WAKE.md §5). It is the service and not the store
+	// that signals, because which repo to wake depends on the DIRECTION of the exchange — author or
+	// recipient — which the store's Event does not carry.
+	cache cache.Cache
 }
 
 // New creates the issue service.
-func New(st store.Store) Service {
-	return &service{store: st}
+func New(st store.Store, c cache.Cache) Service {
+	return &service{store: st, cache: c}
 }
 
 // Issue is the API view. Ref is the full readable key (CORE-34), composed here and nowhere else. It

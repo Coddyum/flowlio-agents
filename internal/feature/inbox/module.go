@@ -32,7 +32,7 @@ const Key = "inbox"
 // correctness rests on no atomicity at all — see docs/DESIGN-M3.md.
 func NewModule(cfg module.ModuleConfig) module.Module {
 	st := store.New(cfg.DB)
-	svc := service.New(st)
+	svc := service.New(st, cfg.Cache)
 
 	return &mod{
 		h:    handler.New(svc),

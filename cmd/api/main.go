@@ -4,11 +4,11 @@ package main
 //
 // | Élément        | Résumé                                                         | Ligne |
 // |----------------|----------------------------------------------------------------|-------|
-// | main           | Loads config, wires infra, mounts the modules, serves the API    | 54    |
-// | buildModules   | Instantiates the feature modules — the single place to add one   | 149   |
-// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 173   |
-// | bootstrapLocal | Issues the admin token on the very first local start             | 205   |
-// | apiURL         | Composes the URL a client dials from the listen address          | 238   |
+// | main           | Loads config, wires infra, mounts the modules, serves the API    | 55    |
+// | buildModules   | Instantiates the feature modules — the single place to add one   | 155   |
+// | ensureSchema   | Applies the embedded migrations locally, checks them elsewhere   | 180   |
+// | bootstrapLocal | Issues the admin token on the very first local start             | 212   |
+// | apiURL         | Composes the URL a client dials from the listen address          | 245   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -38,6 +38,7 @@ import (
 	"github.com/Coddyum/flowlio-agents/internal/feature/overview"
 	"github.com/Coddyum/flowlio-agents/internal/feature/ref"
 	"github.com/Coddyum/flowlio-agents/internal/feature/task"
+	"github.com/Coddyum/flowlio-agents/internal/feature/wake"
 	"github.com/Coddyum/flowlio-agents/internal/feature/workspace"
 	"github.com/Coddyum/flowlio-agents/internal/pkg/cache"
 	"github.com/Coddyum/flowlio-agents/internal/pkg/config"
@@ -113,13 +114,18 @@ func main() {
 
 	registry := core.NewRegistry()
 
+	// One cache for the whole process, shared by the features and by the auth piggyback: the
+	// features write their probe signals into it, and NewServices reads them back to stamp every
+	// authenticated response (D55, DESIGN-WAKE §3). Built here, before both, so they share the one.
+	memCache := cache.NewMemory(cacheDefaultTTL, cacheCleanupInterval)
+
 	base := module.ModuleConfig{
 		DB:       queries,
 		RawDB:    rawDB,
 		Config:   cfg,
 		Ctx:      ctx,
-		Cache:    cache.NewMemory(cacheDefaultTTL, cacheCleanupInterval),
-		Core:     core.NewServices(queries),
+		Cache:    memCache,
+		Core:     core.NewServices(queries, memCache),
 		Registry: registry,
 	}
 
@@ -152,6 +158,7 @@ func buildModules(cfg module.ModuleConfig) []module.Module {
 		task.NewModule(cfg),
 		issue.NewModule(cfg),
 		inbox.NewModule(cfg),
+		wake.NewModule(cfg),
 		overview.NewModule(cfg),
 		memory.NewModule(cfg),
 		// `ref` consumes task and issue through the registry, so it must be able to find them —

@@ -32,7 +32,7 @@ const Key = "task"
 // in a single transaction. *sql.DB stops at that layer — the service only ever sees the store
 // interface, which exposes WithTx.
 func NewModule(cfg module.ModuleConfig) module.Module {
-	st := store.New(cfg.DB, cfg.RawDB)
+	st := store.New(cfg.DB, cfg.RawDB, cfg.Cache)
 	svc := service.New(st)
 
 	return &mod{

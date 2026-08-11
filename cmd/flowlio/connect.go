@@ -64,6 +64,7 @@ type connectPlan struct {
 func runConnect(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
 	project := fs.String("project", "", "project slug, when the repo key alone does not name one")
+	id := fs.String("id", "", "hosted: the core repository id from flowlio.me — links this dir for the waker")
 	yes := fs.Bool("yes", false, "write into this repository's own files without asking")
 
 	positional, err := splitFlags(fs, args)
@@ -71,9 +72,15 @@ func runConnect(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(positional) != 1 {
-		return errors.New("usage: flowlio connect <REPO> [--project <slug>] [--yes]")
+		return errors.New("usage: flowlio connect <REPO> [--project <slug>] [--yes]  (hosted: --id <core-id>)")
 	}
 	repo := strings.ToUpper(strings.TrimSpace(positional[0]))
+
+	// Hosted: no engine to mint against — record the core id and this directory for the waker, and
+	// stop. The account credential is `flowlio login`'s, never minted here.
+	if strings.TrimSpace(*id) != "" {
+		return connectHosted(repo, strings.TrimSpace(*id))
+	}
 
 	plan, err := planConnect(ctx, *project, repo)
 	if err != nil {
@@ -260,6 +267,14 @@ func writeTheirs(out io.Writer, plan connectPlan, allowed bool) error {
 			return err
 		}
 		_, _ = fmt.Fprintf(out, "  %s %s — inbox reminder.\n", hookSettingsPath, action)
+
+		// The SessionStart hook files this session's id so the waker can RESUME it (DESIGN-WAKE §7).
+		// Same condition as the inbox hook: only where a `.claude/` already says the agent is Claude.
+		_, sessionAction, err := writeSessionHook(plan.dir)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(out, "  %s %s — session capture (for wake resume).\n", hookSettingsPath, sessionAction)
 	}
 	return nil
 }

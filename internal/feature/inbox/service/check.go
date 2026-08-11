@@ -4,11 +4,11 @@ package service
 //
 // | Élément       | Résumé                                                         | Ligne |
 // |---------------|----------------------------------------------------------------|-------|
-// | service.Check | Returns the actionable state and moves the cursor forward        | 39    |
-// | toIssueLines  | Projects store issues into inbox lines                           | 110   |
-// | toTaskLines   | Projects store tasks into inbox lines                            | 131   |
-// | toUnblockedLines | Projects unblocked tasks into inbox lines                     | 144   |
-// | overflow      | Counts what did not fit in a bucket                              | 160   |
+// | service.Check | Returns the actionable state and moves the cursor forward        | 40    |
+// | toIssueLines  | Projects store issues into inbox lines                           | 117   |
+// | toTaskLines   | Projects store tasks into inbox lines                            | 138   |
+// | toUnblockedLines | Projects unblocked tasks into inbox lines                     | 151   |
+// | overflow      | Counts what did not fit in a bucket                              | 167   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Coddyum/flowlio-agents/internal/core/probe"
 	"github.com/Coddyum/flowlio-agents/internal/feature/inbox/store"
 	"github.com/google/uuid"
 )
@@ -95,6 +96,12 @@ func (s *service) Check(ctx context.Context, in CheckInput) (Inbox, error) {
 	}); more != (More{}) {
 		inbox.More = &more
 	}
+
+	// Warm the probe signal (D55): the head just read is the team's, and the cursor is about to
+	// reach it. Keeping the cached cursor in step here is not optional — check_inbox is what moves
+	// the durable cursor, so a stale cached cursor would leave the probe reporting phantom work and
+	// waking the agent for nothing until the next reseed.
+	probe.Seed(s.cache, in.TeamID, in.TokenID, cursor.HeadEventID, cursor.HeadEventID)
 
 	if err := s.store.Advance(ctx, in.TokenID, cursor.HeadEventID); err != nil {
 		// Best effort: the response is right, only the comfort of the next call is degraded.

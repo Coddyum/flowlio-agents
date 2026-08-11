@@ -4,13 +4,14 @@ package main
 //
 // | Élément            | Résumé                                                     | Ligne |
 // |--------------------|------------------------------------------------------------|-------|
-// | callParams         | Body of a tools/call call                                    | 35    |
-// | mcpServer.callTool | Runs a tool and wraps its result                             | 45    |
-// | mcpServer.invoke   | Routes to the implementation of the requested tool           | 68    |
-// | writeResult        | Wraps a write return in the {ref, object} shape              | 105   |
-// | textResult         | Wraps a tool result for the MCP client                       | 120   |
-// | errText            | Wraps a tool error so the agent can read it                  | 136   |
-// | parseDeadline      | Reads an RFC 3339 deadline, absent when the string is empty  | 157   |
+// | callParams         | Body of a tools/call call                                    | 37    |
+// | mcpServer.callTool | Runs a tool and wraps its result                             | 47    |
+// | mcpServer.piggyback | Appends the wake reminder when the engine flagged one       | 79    |
+// | mcpServer.invoke   | Routes to the implementation of the requested tool           | 95    |
+// | writeResult        | Wraps a write return in the {ref, object} shape              | 132   |
+// | textResult         | Wraps a tool result for the MCP client                       | 147   |
+// | errText            | Wraps a tool error so the agent can read it                  | 163   |
+// | parseDeadline      | Reads an RFC 3339 deadline, absent when the string is empty  | 184   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -28,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Coddyum/flowlio-agents/internal/core/auth"
 	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 )
 
@@ -61,7 +63,32 @@ func (s *mcpServer) callTool(ctx context.Context, raw json.RawMessage) (map[stri
 	if err != nil {
 		return errText(err), nil
 	}
-	return textResult(value), nil
+
+	result := textResult(value)
+	s.piggyback(params.Name, result)
+	return result, nil
+}
+
+// piggyback appends a reminder to a tool result when the engine's last response said this repository
+// has something past its cursor (D55, DESIGN-WAKE §3).
+//
+// The signal rode back on the call that just happened, in a header — no extra request. It is how an
+// AGENT ALREADY WORKING learns a sibling answered it, without waiting for the every-prompt hook. It
+// is NOT added to check_inbox's own result: that call already returns the whole inbox, and repeating
+// "you have inbox items" under it would be noise.
+func (s *mcpServer) piggyback(tool string, result map[string]any) {
+	if tool == "check_inbox" || s.api.LastResponseHeader(auth.WakeHeader) != "1" {
+		return
+	}
+	content, ok := result["content"].([]map[string]any)
+	if !ok {
+		return
+	}
+	result["content"] = append(content, map[string]any{
+		"type": "text",
+		"text": "A sibling repository has written to " + s.projectKey +
+			" since your last check_inbox — call check_inbox to see what, before you finish.",
+	})
 }
 
 // invoke routes to the implementation of the requested tool.

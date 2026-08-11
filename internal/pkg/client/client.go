@@ -4,16 +4,17 @@ package client
 //
 // | Élément     | Résumé                                                            | Ligne |
 // |-------------|-------------------------------------------------------------------|-------|
-// | APIError    | Error yielded by the API, with its HTTP code                        | 46    |
-// | APIError.Error | Readable message of the API error                                | 52    |
-// | TransportError | An address left unanswered, with the provenance of that address  | 64    |
-// | TransportError.Error | Names the dead address and where it was read from           | 77    |
-// | TransportError.Unwrap | Exposes the underlying network error                       | 87    |
-// | Client      | HTTP client of the flowlio API, shared by the CLI and the MCP server| 90    |
-// | New         | Creates a client towards a given API and token                      | 99    |
-// | Client.BaseURL | Address of the API, without a trailing slash                     | 109   |
-// | FromCredentials | Creates a client from the local credentials                     | 125   |
-// | Client.Do   | Runs a JSON request and decodes the response                        | 162   |
+// | APIError    | Error yielded by the API, with its HTTP code                        | 48    |
+// | APIError.Error | Readable message of the API error                                | 54    |
+// | TransportError | An address left unanswered, with the provenance of that address  | 66    |
+// | TransportError.Error | Names the dead address and where it was read from           | 79    |
+// | TransportError.Unwrap | Exposes the underlying network error                       | 89    |
+// | Client      | HTTP client of the flowlio API, shared by the CLI and the MCP server| 92    |
+// | New         | Creates a client towards a given API and token                      | 105   |
+// | Client.BaseURL | Address of the API, without a trailing slash                     | 115   |
+// | FromCredentials | Creates a client from the local credentials                     | 131   |
+// | Client.Do   | Runs a JSON request and decodes the response                        | 168   |
+// | Client.LastResponseHeader | A header of the most recent answered request              | 218   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -30,6 +31,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Coddyum/flowlio-agents/internal/pkg/credentials"
@@ -93,6 +95,10 @@ type Client struct {
 	// urlOrigin records where baseURL was read from, for the day it stops answering.
 	urlOrigin string
 	http      *http.Client
+	// mu guards lastHeader. The MCP server reads it right after each call to surface the wake
+	// piggyback; it processes one request at a time, but the mutex keeps the accessor honest.
+	mu         sync.Mutex
+	lastHeader http.Header
 }
 
 // New creates a client towards baseURL, authenticated by token.
@@ -184,6 +190,12 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// Keep the response headers for the caller to read straight after — the MCP server surfaces the
+	// wake piggyback from them. Recorded on every answered request, success or API error alike.
+	c.mu.Lock()
+	c.lastHeader = resp.Header
+	c.mu.Unlock()
+
 	if resp.StatusCode >= http.StatusBadRequest {
 		var body struct {
 			Error string `json:"error"`
@@ -199,4 +211,15 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 		return fmt.Errorf("client: unreadable response from %s %s: %w", method, path, err)
 	}
 	return nil
+}
+
+// LastResponseHeader yields a header of the most recent answered request, or "" if none was set.
+// The MCP server reads the wake piggyback (auth.WakeHeader) here right after each tool call.
+func (c *Client) LastResponseHeader(key string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lastHeader == nil {
+		return ""
+	}
+	return c.lastHeader.Get(key)
 }

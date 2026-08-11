@@ -4,11 +4,15 @@ package main
 //
 // | Élément          | Résumé                                                         | Ligne |
 // |------------------|----------------------------------------------------------------|-------|
-// | inboxHookCommand | The throttled shell one-liner a session runs on every prompt     | 65    |
-// | writeInboxHook   | Merges that hook into the repository's Claude Code settings      | 79    |
-// | removeInboxHook  | Takes it back out, leaving the rest of the settings alone        | 129   |
-// | readHookEvent    | Decodes the hooks object and the matcher list of our event       | 168   |
-// | writeHookEvent   | Puts that list back and writes the file, other keys preserved    | 185   |
+// | inboxHookCommand | The throttled shell one-liner a session runs on every prompt     | 76    |
+// | writeInboxHook   | Wires the inbox reminder onto UserPromptSubmit                   | 86    |
+// | removeInboxHook  | Takes the inbox reminder back out                               | 91    |
+// | writeSessionHook | Wires session-start onto SessionStart, for Claude resume         | 98    |
+// | removeSessionHook| Takes the SessionStart hook back out                            | 103   |
+// | writeHook        | Merges one command hook, on one event, preserving the rest       | 112   |
+// | removeHook       | Removes one command hook by its marker                          | 163   |
+// | readHookEvent    | Decodes the hooks object and the matcher list of one event       | 202   |
+// | writeHookEvent   | Puts that list back and writes the file, other keys preserved    | 219   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -45,6 +49,13 @@ const (
 	// not own. Rewriting or removing the hook means finding it again, and a settings file has no
 	// other place to put a marker.
 	hookStampPrefix = "flowlio-inbox-"
+
+	// sessionHookEvent is where Claude Code hands over a new session's id. sessionHookCommand is what
+	// runs on it — it files the id so the waker can RESUME that session (DESIGN-WAKE §4.2, §7) — and
+	// doubles as the marker that finds our hook again in a settings file we do not own.
+	sessionHookEvent   = "SessionStart"
+	sessionHookCommand = "flowlio session-start"
+	sessionHookMarker  = "flowlio session-start"
 )
 
 // inboxHookCommand is the shell one-liner, written on one line because that is what a settings file
@@ -71,12 +82,34 @@ func inboxHookCommand(repo string) string {
 		`to %s since you last looked."; fi`, stamp, hookIntervalSeconds, repo)
 }
 
-// writeInboxHook merges the hook into the repository's Claude Code settings.
+// writeInboxHook merges the throttled inbox reminder into the repository's Claude Code settings.
+func writeInboxHook(dir, repo string) (string, writeAction, error) {
+	return writeHook(dir, hookEvent, hookStampPrefix, inboxHookCommand(repo))
+}
+
+// removeInboxHook takes the inbox reminder back out, leaving the rest of the settings alone.
+func removeInboxHook(dir string) (string, writeAction, error) {
+	return removeHook(dir, hookEvent, hookStampPrefix)
+}
+
+// writeSessionHook wires SessionStart to `flowlio session-start`, so the waker learns the id it needs
+// to RESUME a dead session (DESIGN-WAKE §4.2, §7). Like the inbox hook it presumes no client on no
+// evidence — `connect` offers it only where a `.claude/` directory is already there.
+func writeSessionHook(dir string) (string, writeAction, error) {
+	return writeHook(dir, sessionHookEvent, sessionHookMarker, sessionHookCommand)
+}
+
+// removeSessionHook takes the SessionStart hook back out.
+func removeSessionHook(dir string) (string, writeAction, error) {
+	return removeHook(dir, sessionHookEvent, sessionHookMarker)
+}
+
+// writeHook merges one command hook, on one event, into the repository's Claude Code settings.
 //
 // MERGED, NEVER REPLACED: a settings file is the user's, and it commonly holds permissions and
-// other hooks that took them a while to get right. Ours is found again by the stamp prefix, so a
-// second `connect` replaces it instead of adding a twin that would fire twice.
-func writeInboxHook(dir, repo string) (path string, action writeAction, err error) {
+// other hooks that took them a while to get right. Ours is found again by its marker, so a second
+// `connect` replaces it instead of adding a twin that would fire twice.
+func writeHook(dir, event, marker, command string) (path string, action writeAction, err error) {
 	path = filepath.Join(dir, hookSettingsPath)
 
 	top := map[string]json.RawMessage{}
@@ -90,13 +123,13 @@ func writeInboxHook(dir, repo string) (path string, action writeAction, err erro
 		return path, "", fmt.Errorf("reading %s: %w", path, err)
 	}
 
-	hooks, matchers, err := readHookEvent(top, path)
+	hooks, matchers, err := readHookEvent(top, path, event)
 	if err != nil {
 		return path, "", err
 	}
 
 	ours, err := json.Marshal(map[string]any{
-		"hooks": []map[string]string{{"type": "command", "command": inboxHookCommand(repo)}},
+		"hooks": []map[string]string{{"type": "command", "command": command}},
 	})
 	if err != nil {
 		return path, "", fmt.Errorf("encoding the hook: %w", err)
@@ -105,7 +138,7 @@ func writeInboxHook(dir, repo string) (path string, action writeAction, err erro
 	kept := make([]json.RawMessage, 0, len(matchers)+1)
 	replaced := false
 	for _, matcher := range matchers {
-		if strings.Contains(string(matcher), hookStampPrefix) {
+		if strings.Contains(string(matcher), marker) {
 			replaced = true
 			continue
 		}
@@ -116,7 +149,7 @@ func writeInboxHook(dir, repo string) (path string, action writeAction, err erro
 	}
 	kept = append(kept, ours)
 
-	if err := writeHookEvent(path, top, hooks, kept); err != nil {
+	if err := writeHookEvent(path, top, hooks, kept, event); err != nil {
 		return path, "", err
 	}
 	if replaced {
@@ -125,8 +158,9 @@ func writeInboxHook(dir, repo string) (path string, action writeAction, err erro
 	return path, actionWritten, nil
 }
 
-// removeInboxHook takes our hook out of the settings file and leaves everything else where it was.
-func removeInboxHook(dir string) (path string, action writeAction, err error) {
+// removeHook takes our hook for one event out of the settings file and leaves everything else where
+// it was.
+func removeHook(dir, event, marker string) (path string, action writeAction, err error) {
 	path = filepath.Join(dir, hookSettingsPath)
 
 	raw, err := os.ReadFile(path)
@@ -142,14 +176,14 @@ func removeInboxHook(dir string) (path string, action writeAction, err error) {
 		return path, "", fmt.Errorf("%s is not readable JSON: %w", path, err)
 	}
 
-	hooks, matchers, err := readHookEvent(top, path)
+	hooks, matchers, err := readHookEvent(top, path, event)
 	if err != nil {
 		return path, "", err
 	}
 
 	kept := make([]json.RawMessage, 0, len(matchers))
 	for _, matcher := range matchers {
-		if strings.Contains(string(matcher), hookStampPrefix) {
+		if strings.Contains(string(matcher), marker) {
 			continue
 		}
 		kept = append(kept, matcher)
@@ -158,23 +192,23 @@ func removeInboxHook(dir string) (path string, action writeAction, err error) {
 		return path, actionAbsent, nil
 	}
 
-	if err := writeHookEvent(path, top, hooks, kept); err != nil {
+	if err := writeHookEvent(path, top, hooks, kept, event); err != nil {
 		return path, "", err
 	}
 	return path, actionRemoved, nil
 }
 
-// readHookEvent decodes the hooks object and the matcher list of our event, both empty when absent.
-func readHookEvent(top map[string]json.RawMessage, path string) (hooks map[string]json.RawMessage, matchers []json.RawMessage, err error) {
+// readHookEvent decodes the hooks object and the matcher list of one event, both empty when absent.
+func readHookEvent(top map[string]json.RawMessage, path, event string) (hooks map[string]json.RawMessage, matchers []json.RawMessage, err error) {
 	hooks = map[string]json.RawMessage{}
 	if existing, found := top["hooks"]; found {
 		if err := json.Unmarshal(existing, &hooks); err != nil {
 			return nil, nil, fmt.Errorf("%s: unreadable hooks: %w", path, err)
 		}
 	}
-	if existing, found := hooks[hookEvent]; found {
+	if existing, found := hooks[event]; found {
 		if err := json.Unmarshal(existing, &matchers); err != nil {
-			return nil, nil, fmt.Errorf("%s: unreadable %s hooks: %w", path, hookEvent, err)
+			return nil, nil, fmt.Errorf("%s: unreadable %s hooks: %w", path, event, err)
 		}
 	}
 	return hooks, matchers, nil
@@ -182,15 +216,15 @@ func readHookEvent(top map[string]json.RawMessage, path string) (hooks map[strin
 
 // writeHookEvent puts the matcher list back and writes the whole file, preserving every key it does
 // not own.
-func writeHookEvent(path string, top, hooks map[string]json.RawMessage, matchers []json.RawMessage) error {
+func writeHookEvent(path string, top, hooks map[string]json.RawMessage, matchers []json.RawMessage, event string) error {
 	if len(matchers) == 0 {
-		delete(hooks, hookEvent)
+		delete(hooks, event)
 	} else {
 		encoded, err := json.Marshal(matchers)
 		if err != nil {
-			return fmt.Errorf("encoding the %s hooks: %w", hookEvent, err)
+			return fmt.Errorf("encoding the %s hooks: %w", event, err)
 		}
-		hooks[hookEvent] = encoded
+		hooks[event] = encoded
 	}
 
 	if len(hooks) == 0 {

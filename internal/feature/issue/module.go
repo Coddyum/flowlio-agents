@@ -31,8 +31,8 @@ const Key = "issue"
 // The store gets RawDB: the issue, its first message and its event are written in a single
 // transaction. *sql.DB stops at that layer.
 func NewModule(cfg module.ModuleConfig) module.Module {
-	st := store.New(cfg.DB, cfg.RawDB)
-	svc := service.New(st)
+	st := store.New(cfg.DB, cfg.RawDB, cfg.Cache)
+	svc := service.New(st, cfg.Cache)
 
 	return &mod{
 		h:    handler.New(svc),
