@@ -5,9 +5,9 @@ package main
 // | Élément   | Résumé                                                              | Ligne |
 // |-----------|---------------------------------------------------------------------|-------|
 // | main      | Entry point of the CLI: dispatch and exit code                        | 34    |
-// | run       | Routes the requested command to its implementation                    | 47    |
-// | usage     | Prints the help                                                       | 100   |
-// | newClient | Builds the API client from the local credentials or from the env      | 163   |
+// | run       | Routes the requested command to its implementation                    | 51    |
+// | usage     | Prints the help                                                       | 115   |
+// | newClient | Builds the API client from the local credentials or from the env      | 186   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -44,10 +44,13 @@ func main() {
 }
 
 // run routes the command to its implementation. Every command lives in its own file.
+//
+// BARE `flowlio` RUNS EVERYTHING (DESIGN-WAKE §4.1): self-host brings up the database, the engine and
+// the waker; hosted brings up the waker alone. The help is one word away — `flowlio help` — because
+// the common gesture after `brew install flowlio` is to run it, not to read it.
 func run(args []string) error {
 	if len(args) == 0 {
-		usage()
-		return nil
+		return runUp(context.Background(), nil)
 	}
 
 	ctx := context.Background()
@@ -85,6 +88,18 @@ func run(args []string) error {
 		return runDoctor(ctx, args[1:])
 	case "mcp":
 		return runMCP(ctx, args[1:])
+	case "waker":
+		mode, err := detectMode()
+		if err != nil {
+			return err
+		}
+		return runWaker(ctx, mode)
+	case "agent":
+		return runAgent(ctx, args[1:])
+	case "session-start":
+		return runSessionStart(ctx, args[1:])
+	case "login":
+		return runLogin(ctx, args[1:])
 	case "version", "--version", "-v":
 		return runVersion(args[1:])
 	case "help", "-h", "--help":
@@ -100,9 +115,16 @@ func run(args []string) error {
 func usage() {
 	fmt.Print(`flowlio — project management for AI agents
 
+Running everything (after brew install flowlio):
+  flowlio                              Runs everything: self-host = DB container + engine + waker;
+                                       hosted = the waker only
+  flowlio login <prod-url> [token]     Link this machine to a hosted account; flowlio then runs hosted
+  flowlio agent set <name>             Which agent the waker launches: claude | codex | opencode
+
 Setting up:
   flowlio setup                        Creates a project, its repos and one token each
-  flowlio connect <REPO>               Makes the current repository operational
+  flowlio connect <REPO>               Makes the current repository operational (self-host)
+  flowlio connect <REPO> --id <id>     Hosted: links this dir to a flowlio.me repository for the waker
   flowlio doctor                       Checks that it really is, and says what is not
   flowlio disconnect                   Takes the configuration back out of this repository
   flowlio remove <REPO>                Deletes a repo on the instance
@@ -141,6 +163,7 @@ both and prints one connect line per repo; run each from that repository's root.
   flowlio show <REF>                   Detail of one row of the queue (e.g. CORE-41)
 
   flowlio mcp                          MCP server over stdio, for an agent
+  flowlio waker                        Watches for cross-repo answers and relaunches the agent
   flowlio version                      Which release this binary is, for a bug report
 
   flowlio init                         Gone — see setup and connect above

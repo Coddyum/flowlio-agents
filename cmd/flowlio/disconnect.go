@@ -6,7 +6,7 @@ package main
 // |-------------------|---------------------------------------------------------------|-------|
 // | runDisconnect     | Takes the Flowlio configuration back out of this repository     | 50    |
 // | disconnectRepo    | The same work on a named directory, so a test can play it       | 64    |
-// | removeWorkflowFile| Removes .flowlio/workflow.md, and the directory when it empties | 109   |
+// | removeWorkflowFile| Removes .flowlio/workflow.md, and the directory when it empties | 115   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -94,6 +94,12 @@ func disconnectRepo(dir string, out io.Writer) error {
 		return err
 	}
 	_, _ = fmt.Fprintf(out, "  %s %s.\n", hookSettingsPath, action)
+
+	if _, sessionAction, err := removeSessionHook(dir); err != nil {
+		return err
+	} else if sessionAction != actionAbsent {
+		_, _ = fmt.Fprintf(out, "  %s %s (session capture).\n", hookSettingsPath, sessionAction)
+	}
 
 	_, _ = fmt.Fprintln(out, "\nThis repository is disconnected. Its token is still filed on this host, so\n"+
 		"`flowlio connect` puts everything back without issuing a new one.")
