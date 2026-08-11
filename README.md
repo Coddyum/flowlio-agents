@@ -95,9 +95,12 @@ machine; nothing calls out to us, and there is no account anywhere.
 The fast path, once the Homebrew tap is published:
 
 ```bash
-brew install flowlio
+brew install coddyum/flowlio/flowlio
 flowlio                 # brings up Postgres (in a container it manages) + the engine + the waker
 ```
+
+(The formula lives in [a tap](https://github.com/Coddyum/homebrew-flowlio), so the install command
+is namespaced; the program you run afterwards is just `flowlio`.)
 
 One program, one command. `flowlio` runs the whole self-host stack in one terminal; `flowlio help`
 prints the surface. Then connect a repository with `flowlio connect <REPO>` and pick its agent with
@@ -745,7 +748,7 @@ imports, bounded file size, mandatory file summaries.
 the team debt queue and now the **cross-repo wake-up** are in and tested. The loop closes on its own:
 a repo asks, its session dies, a sibling answers, and the waker relaunches the agent to read the
 answer — proven end to end by an integration test and by `scripts/demo-wake.sh`. Setting up a
-self-hosted instance is `brew install flowlio` and `flowlio`, or `docker compose up` then two
+self-hosted instance is `brew install coddyum/flowlio/flowlio` and `flowlio`, or `docker compose up` then two
 commands, and no secret is ever printed or pasted.
 
 Not built yet: MCP over HTTP, a published Docker image, and the local web page the binary is meant to

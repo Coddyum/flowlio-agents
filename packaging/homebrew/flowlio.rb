@@ -1,6 +1,6 @@
 # Homebrew formula for flowlio (DESIGN-WAKE §4.1, §12 — the packaging decision).
 #
-# `brew install flowlio` installs ONE program the user drives with a single command:
+# `brew install coddyum/flowlio/flowlio` installs ONE program the user drives with a single command:
 #
 #   flowlio up        self-host: a managed Postgres 18 container + the engine + the waker
 #   flowlio up        hosted (FLOWLIO_MODE=hosted): the waker only, engine on our infra
