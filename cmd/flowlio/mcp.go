@@ -46,7 +46,7 @@ const (
 	// agent that reads one name in its configuration and another in serverInfo has no way to tell it
 	// is the same server.
 	serverName    = "flowlio-agents"
-	serverVersion = "0.1.0"
+	serverVersion = "1.0.0"
 
 	// maxMessageBytes bounds an incoming message line. An agent never sends a message that large;
 	// the bound keeps a malformed stream from growing the buffer without limit.
