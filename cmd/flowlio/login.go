@@ -68,9 +68,19 @@ func runLogin(_ context.Context, args []string) error {
 	if len(args) >= 2 {
 		token = strings.TrimSpace(args[1])
 	} else {
-		fmt.Fprint(os.Stderr, "account token (leave empty to skip): ")
+		// Say plainly WHAT token before asking for it: this is the one step of the hosted setup
+		// nobody guesses, and the token is shown once so a vague prompt costs a second trip to the
+		// account page.
+		fmt.Fprintln(os.Stderr, "This needs a flowlio.me access token — the credential the waker presents")
+		fmt.Fprintln(os.Stderr, "to poll your account's repositories. Create one in your flowlio.me account")
+		fmt.Fprintln(os.Stderr, "(the same token as FLOWLIO_PAT in the MCP config). It is shown ONCE: copy it")
+		fmt.Fprintln(os.Stderr, "before you leave the page.")
+		fmt.Fprint(os.Stderr, "\nPaste the token (empty = store the address only, no waker yet): ")
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		token = strings.TrimSpace(line)
+		if token == "" {
+			fmt.Fprintln(os.Stderr, "No token stored — the waker cannot poll until you run `flowlio login` again with one.")
+		}
 	}
 
 	path, err := hostedConfigPath()
