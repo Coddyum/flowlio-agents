@@ -6,11 +6,11 @@ package main
 // |---------------|-----------------------------------------------------------------|-------|
 // | runWaker      | Runs the waker in the mode's transport: push (self-host) or poll   | 60    |
 // | launchFor     | Builds one repo's launch closure, shared by both transports        | 119   |
-// | serveRepo     | Starts one repo's loopback listener and registers it              | 151   |
-// | registerLoop  | Registers with the engine and refreshes before the lease lapses   | 178   |
-// | resolveAgent  | Turns a repo's stored config into a launch recipe                 | 204   |
-// | execLauncher  | Runs the agent argv in the repo directory                         | 224   |
-// | plural        | The one-letter tail that keeps a count line grammatical           | 236   |
+// | serveRepo     | Starts one repo's loopback listener and registers it              | 164   |
+// | registerLoop  | Registers with the engine and refreshes before the lease lapses   | 193   |
+// | resolveAgent  | Turns a repo's stored config into a launch recipe                 | 219   |
+// | execLauncher  | Runs the agent argv in the repo directory                         | 239   |
+// | plural        | The one-letter tail that keeps a count line grammatical           | 251   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -116,7 +116,7 @@ func runWaker(ctx context.Context, mode upMode) error {
 // Claude session (for resume), and returns a function that runs the agent under the shared cap. It
 // is the one place the two transports — push and poll — share, so a wake means the same thing on
 // both.
-func launchFor(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap) (func(), error) {
+func launchFor(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap, hosted hostedConfig) (func(), error) {
 	agent, err := resolveAgent(rf)
 	if err != nil {
 		return nil, err
@@ -127,6 +127,19 @@ func launchFor(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap) (fu
 		Path:    rf.Path,
 		Agent:   agent,
 	}
+
+	// Hosted Claude authenticates the engine's MCP with the account token, not an OAuth flow a
+	// `claude -p` cannot run: write the launch-time config and point Claude at it with
+	// `--strict-mcp-config`. Only Claude has a resume/MCP recipe here; codex/opencode and self-host
+	// keep the repo's own resolution.
+	if rf.RepoID != "" && agent.Name == "claude" {
+		cfg, err := writeHostedMCPConfig(rf, hosted.APIURL, hosted.AccountToken)
+		if err != nil {
+			return nil, fmt.Errorf("preparing %s launch config: %w", rf.Repo, err)
+		}
+		repo.ExtraArgs = []string{"--mcp-config", cfg, "--strict-mcp-config"}
+	}
+
 	return func() {
 		// Read the session id AT LAUNCH, not once at startup: a resume points at a specific Claude
 		// session, and between two wakes that session can be replaced by a newer one (the SessionStart
@@ -149,7 +162,9 @@ func launchFor(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap) (fu
 // so two repos never fight over one number. The launch runs the configured agent in the repo's
 // directory, under the shared cap.
 func serveRepo(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap) error {
-	launch, err := launchFor(ctx, rf, cap)
+	// Self-host: no account link, and the repo's own `.mcp.json` resolves to a local token, so there
+	// is no launch-time MCP config to write. An empty hostedConfig says exactly that.
+	launch, err := launchFor(ctx, rf, cap, hostedConfig{})
 	if err != nil {
 		return err
 	}

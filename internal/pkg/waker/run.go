@@ -4,10 +4,11 @@ package waker
 //
 // | Élément   | Résumé                                                             | Ligne |
 // |-----------|--------------------------------------------------------------------|-------|
-// | Launcher  | Runs the agent argv in a directory and waits for it to exit          | 27    |
-// | Repo      | One repository the waker drives: where, how, and which session       | 34    |
-// | Launch    | Builds the argv and runs it, under the relaunch cap                  | 47    |
-// | ProbeDelay | Turns a server-dictated next_probe_after into a sleep               | 67    |
+// | Launcher  | Runs the agent argv in a directory and waits for it to exit          | 28    |
+// | Repo      | One repository the waker drives: where, how, and which session       | 35    |
+// | Launch    | Builds the argv and runs it, under the relaunch cap                  | 53    |
+// | Repo.argv | The agent argv for a session id, with ExtraArgs appended             | 74    |
+// | ProbeDelay | Turns a server-dictated next_probe_after into a sleep               | 81    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -37,6 +38,11 @@ type Repo struct {
 	Path      string
 	Agent     Agent
 	SessionID string
+	// ExtraArgs are appended to the agent's argv on every launch, resume or fresh. In hosted they
+	// carry `--mcp-config <file> --strict-mcp-config` so a woken Claude authenticates the engine's MCP
+	// with the account token instead of an OAuth flow it cannot run headless (DESIGN-WAKE §6). Empty
+	// in self-host, where the repo's own `.mcp.json` already resolves to a local token.
+	ExtraArgs []string
 }
 
 // Launch builds the argv for a wake and runs it in the repo's directory, under the relaunch cap.
@@ -49,16 +55,24 @@ func Launch(ctx context.Context, cap *Cap, run Launcher, repo Repo, now time.Tim
 		return false, nil
 	}
 
-	err = run(ctx, repo.Path, repo.Agent.LaunchArgv(repo.SessionID, WakePrompt))
+	err = run(ctx, repo.Path, repo.argv(repo.SessionID))
 
 	// A resume that failed is most often a session Claude no longer has — deleted, or aged out of its
 	// local store — and `claude -r <dead>` exits non-zero. A fresh launch still reads the inbox and
 	// answers, so fall back to one rather than drop the wake. Bounded: the fallback passes an empty
 	// session id, so it can never itself resume, and this runs at most once.
 	if err != nil && repo.Agent.Resumes(repo.SessionID) {
-		err = run(ctx, repo.Path, repo.Agent.LaunchArgv("", WakePrompt))
+		err = run(ctx, repo.Path, repo.argv(""))
 	}
 	return true, err
+}
+
+// argv is the agent's launch argv for a session id, with the repo's ExtraArgs appended. It is one
+// place so the resume attempt and its fresh fallback carry the same extra flags — the hosted
+// `--mcp-config` among them, which a fallback that dropped it would launch an agent unable to reach
+// its inbox.
+func (r Repo) argv(sessionID string) []string {
+	return append(r.Agent.LaunchArgv(sessionID, WakePrompt), r.ExtraArgs...)
 }
 
 // ProbeDelay turns the server's next_probe_after into a sleep, with a floor so a misread or missing
