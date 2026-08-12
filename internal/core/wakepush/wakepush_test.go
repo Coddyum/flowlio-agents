@@ -83,19 +83,20 @@ func TestSignalPostsToRegisteredWakerWithItsSecret(t *testing.T) {
 	type received struct {
 		auth    string
 		project string
+		effort  string
 	}
 	got := make(chan received, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var payload map[string]string
 		_ = json.Unmarshal(body, &payload)
-		got <- received{auth: r.Header.Get("Authorization"), project: payload["project"]}
+		got <- received{auth: r.Header.Get("Authorization"), project: payload["project"], effort: payload["effort"]}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
 	wakepush.Register(c, team, proj, wakepush.Registration{Callback: srv.URL, Secret: "handshake"}, time.Hour)
-	wakepush.Signal(c, team, proj)
+	wakepush.Signal(c, team, proj, "high")
 
 	select {
 	case r := <-got:
@@ -105,6 +106,38 @@ func TestSignalPostsToRegisteredWakerWithItsSecret(t *testing.T) {
 		if r.project != proj.String() {
 			t.Errorf("project in body = %q, want %q", r.project, proj.String())
 		}
+		if r.effort != "high" {
+			t.Errorf("effort in body = %q, want %q", r.effort, "high")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the waker was never called")
+	}
+}
+
+// An empty tier is omitted from the body entirely: a wake with no declared rigour keeps the shape it
+// always had, and the listener reads its absence as "unspecified".
+func TestSignalOmitsEmptyEffort(t *testing.T) {
+	c := newCache()
+	team, proj := uuid.New(), uuid.New()
+
+	got := make(chan map[string]string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]string
+		_ = json.Unmarshal(body, &payload)
+		got <- payload
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	wakepush.Register(c, team, proj, wakepush.Registration{Callback: srv.URL, Secret: "s"}, time.Hour)
+	wakepush.Signal(c, team, proj, "")
+
+	select {
+	case payload := <-got:
+		if _, present := payload["effort"]; present {
+			t.Errorf("effort key present for an empty tier: %v", payload)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("the waker was never called")
 	}
@@ -113,7 +146,7 @@ func TestSignalPostsToRegisteredWakerWithItsSecret(t *testing.T) {
 // No registration: Signal is a silent no-op, never a panic and never a call.
 func TestSignalWithoutRegistrationIsNoop(t *testing.T) {
 	c := newCache()
-	wakepush.Signal(c, uuid.New(), uuid.New())
+	wakepush.Signal(c, uuid.New(), uuid.New(), "")
 	// Nothing to assert beyond "did not panic"; give any stray goroutine a moment to misbehave.
 	time.Sleep(20 * time.Millisecond)
 }

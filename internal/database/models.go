@@ -284,16 +284,17 @@ type Event struct {
 }
 
 type Issue struct {
-	ID              uuid.UUID    `json:"id"`
-	TeamID          uuid.UUID    `json:"team_id"`
-	ProjectID       uuid.UUID    `json:"project_id"`
-	AuthorProjectID uuid.UUID    `json:"author_project_id"`
-	Number          int64        `json:"number"`
-	Title           string       `json:"title"`
-	State           IssueState   `json:"state"`
-	CreatedAt       time.Time    `json:"created_at"`
-	UpdatedAt       time.Time    `json:"updated_at"`
-	ClosedAt        sql.NullTime `json:"closed_at"`
+	ID              uuid.UUID      `json:"id"`
+	TeamID          uuid.UUID      `json:"team_id"`
+	ProjectID       uuid.UUID      `json:"project_id"`
+	AuthorProjectID uuid.UUID      `json:"author_project_id"`
+	Number          int64          `json:"number"`
+	Title           string         `json:"title"`
+	State           IssueState     `json:"state"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	ClosedAt        sql.NullTime   `json:"closed_at"`
+	Effort          sql.NullString `json:"effort"`
 }
 
 type IssueMessage struct {

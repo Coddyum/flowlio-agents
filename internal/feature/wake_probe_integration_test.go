@@ -118,16 +118,32 @@ func TestWakeProbeIsFreeInSteadyStateThenSeesARealEvent(t *testing.T) {
 		t.Fatalf("100 empty probes issued %d queries, want 0 — the steady-state probe is hitting Postgres", got)
 	}
 
-	// A sibling answers, addressing the event to THIS project: the issue feature appends it, and that
-	// write bumps this project's relevance head.
+	// A sibling answers a REAL question this project asked: the issue exists, is now `answered`, and
+	// the event names it. The event bumps this project's head; the issue is what makes the movement
+	// actionable — a probe launches for a real answer, not for a bare event (FLWL-85).
+	var siblingID uuid.UUID
+	if err := db.QueryRow(
+		"INSERT INTO projects (team_id, key, name) VALUES ($1, 'SIBL', 'Project SIBL') RETURNING id",
+		f.teamID,
+	).Scan(&siblingID); err != nil {
+		t.Fatalf("creating the sibling project: %v", err)
+	}
+	var answeredIssue uuid.UUID
+	if err := db.QueryRow(
+		`INSERT INTO issues (team_id, project_id, author_project_id, number, title, state)
+		 VALUES ($1, $2, $3, 1, 'a question I asked', 'answered') RETURNING id`,
+		f.teamID, siblingID, f.projectID,
+	).Scan(&answeredIssue); err != nil {
+		t.Fatalf("inserting the answered issue: %v", err)
+	}
 	if err := issues.WithTx(ctx, func(tx issuestore.Store) error {
 		return tx.AppendEvent(ctx, issuestore.Event{
 			TeamID:          f.teamID,
-			ProjectID:       f.projectID,
-			ActorProjectID:  f.projectID,
+			ProjectID:       siblingID,
+			ActorProjectID:  siblingID,
 			NotifyProjectID: f.projectID,
 			Kind:            issuestore.KindIssueAnswered,
-			SubjectID:       uuid.New(),
+			SubjectID:       answeredIssue,
 		})
 	}); err != nil {
 		t.Fatalf("appending the event: %v", err)
@@ -310,6 +326,156 @@ func TestEventWithNullNotifyWakesEveryone(t *testing.T) {
 	}
 	if pos.Head <= pos.Cursor {
 		t.Fatal("a NULL-notify event was invisible to the probe — an old engine's write would never wake anyone")
+	}
+}
+
+// TestProbeSuggestsThePendingEffort is the acceptance of FLWL-84's server half: when a probe finds
+// work, it reports the highest rigour tier among that work, so the waker launches a matching model.
+//
+// It drives the real chain — an open issue carrying a tier, an event that makes the probe say "yes",
+// then the probe reading the tier back — and checks both a declared tier and the unspecified default.
+// The clamp to the receiver's ceiling is a pure function proved in internal/pkg/effort; here the
+// concern is only that the tier travels from the issue row to ProbeResult.SuggestedEffort.
+func TestProbeSuggestsThePendingEffort(t *testing.T) {
+	cases := []struct {
+		name   string
+		stored any    // the effort column value: a tier string, or nil for "unspecified"
+		expect string // the tier the probe should suggest
+	}{
+		{"a declared max tier is suggested verbatim", "max", "max"},
+		{"a declared low tier is suggested verbatim", "low", "low"},
+		{"an unspecified tier falls to standard", nil, "standard"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, f := newFixture(t)
+			ctx := context.Background()
+
+			// A sibling author, AGNT, opens a question to CORE (f.projectID): the issue is CORE's to
+			// answer, so it is CORE's pending work.
+			var agntID uuid.UUID
+			if err := db.QueryRow(
+				"INSERT INTO projects (team_id, key, name) VALUES ($1, 'AGNT', 'Project AGNT') RETURNING id",
+				f.teamID,
+			).Scan(&agntID); err != nil {
+				t.Fatalf("creating project AGNT: %v", err)
+			}
+			coreID := f.projectID
+
+			var issueID uuid.UUID
+			if err := db.QueryRow(
+				`INSERT INTO issues (team_id, project_id, author_project_id, number, title, state, effort)
+				 VALUES ($1, $2, $3, 1, 'a question', 'open', $4) RETURNING id`,
+				f.teamID, coreID, agntID, tc.stored,
+			).Scan(&issueID); err != nil {
+				t.Fatalf("inserting the open issue: %v", err)
+			}
+			// The event NAMES the issue: the confirming read joins the two, so the subject must be the
+			// issue's id — a bare event with no backing issue is exactly what must NOT wake (FLWL-85).
+			if _, err := db.Exec(
+				`INSERT INTO events (team_id, project_id, actor_project_id, notify_project_id, kind, subject_type, subject_id)
+				 VALUES ($1, $2, $3, $2, 'issue.opened', 'issue', $4)`,
+				f.teamID, coreID, agntID, issueID,
+			); err != nil {
+				t.Fatalf("inserting the opening event: %v", err)
+			}
+
+			c := cache.NewMemory(time.Hour, time.Hour)
+			wsvc := wakeservice.New(wakestore.New(database.New(db)), c)
+			token := insertProjectToken(t, db, f.teamID, coreID, "core")
+
+			r, err := wsvc.Probe(ctx, wakeservice.ProbeInput{TeamID: f.teamID, ProjectID: coreID, TokenID: token})
+			if err != nil {
+				t.Fatalf("probe: %v", err)
+			}
+			if !r.HasWork {
+				t.Fatal("the probe found no work for an open issue addressed to CORE")
+			}
+			if r.SuggestedEffort != tc.expect {
+				t.Errorf("SuggestedEffort = %q, want %q", r.SuggestedEffort, tc.expect)
+			}
+		})
+	}
+}
+
+// TestProbeDoesNotWakeOnNonActionableMovement is the regression for the grave fault of FLWL-85: the
+// waker booted full sessions into the void because head > cursor fired on events that were not work.
+//
+// Each case moves the journal past a fresh token's cursor (so the cheap gate passes) with an event
+// that is NOT actionable, and asserts the probe still says HasWork=false — no launch. Before the
+// confirming read existed, every one of these woke a full Opus session to find nothing.
+func TestProbeDoesNotWakeOnNonActionableMovement(t *testing.T) {
+	t.Run("an event with no backing issue (a sibling's traffic on a team-wide head)", func(t *testing.T) {
+		db, f := newFixture(t)
+		ctx := context.Background()
+
+		// A raw event addressed to this project whose subject issue does not exist for it — the shape a
+		// team-wide head produced when a SIBLING wrote, waking everyone.
+		if _, err := db.Exec(
+			`INSERT INTO events (team_id, project_id, actor_project_id, notify_project_id, kind, subject_type, subject_id)
+			 VALUES ($1, $2, $2, $2, 'issue.opened', 'issue', $3)`,
+			f.teamID, f.projectID, uuid.New(),
+		); err != nil {
+			t.Fatalf("inserting the orphan event: %v", err)
+		}
+		assertNoWakeButMoved(t, ctx, db, f.teamID, f.projectID)
+	})
+
+	t.Run("a closed issue's event", func(t *testing.T) {
+		db, f := newFixture(t)
+		ctx := context.Background()
+
+		var siblingID uuid.UUID
+		if err := db.QueryRow(
+			"INSERT INTO projects (team_id, key, name) VALUES ($1, 'SIBL', 'Project SIBL') RETURNING id",
+			f.teamID,
+		).Scan(&siblingID); err != nil {
+			t.Fatalf("creating the sibling project: %v", err)
+		}
+		// A CLOSED issue this project authored, and the closing event addressed to it. There is nothing
+		// to do on a closed issue: the movement is real, the work is not.
+		var closedIssue uuid.UUID
+		if err := db.QueryRow(
+			`INSERT INTO issues (team_id, project_id, author_project_id, number, title, state, closed_at)
+			 VALUES ($1, $2, $3, 1, 'a settled question', 'closed', now()) RETURNING id`,
+			f.teamID, siblingID, f.projectID,
+		).Scan(&closedIssue); err != nil {
+			t.Fatalf("inserting the closed issue: %v", err)
+		}
+		if _, err := db.Exec(
+			`INSERT INTO events (team_id, project_id, actor_project_id, notify_project_id, kind, subject_type, subject_id)
+			 VALUES ($1, $2, $3, $4, 'issue.closed', 'issue', $5)`,
+			f.teamID, siblingID, siblingID, f.projectID, closedIssue,
+		); err != nil {
+			t.Fatalf("inserting the closing event: %v", err)
+		}
+		assertNoWakeButMoved(t, ctx, db, f.teamID, f.projectID)
+	})
+}
+
+// assertNoWakeButMoved checks the two halves of the FLWL-85 guarantee at once: the journal HAS moved
+// past a fresh token's cursor (the cheap gate would fire), yet the probe reports no work because the
+// movement is not actionable. A fresh token sidesteps the escalation ladder's throttle.
+func assertNoWakeButMoved(t *testing.T, ctx context.Context, db *sql.DB, teamID, projectID uuid.UUID) {
+	t.Helper()
+	positions := wakestore.New(database.New(db))
+	token := insertProjectToken(t, db, teamID, projectID, "core")
+
+	pos, err := positions.Position(ctx, teamID, projectID, token)
+	if err != nil {
+		t.Fatalf("position: %v", err)
+	}
+	if pos.Head <= pos.Cursor {
+		t.Fatal("the journal did not move — the test is not exercising the gate it means to")
+	}
+
+	wsvc := wakeservice.New(positions, cache.NewMemory(time.Hour, time.Hour))
+	r, err := wsvc.Probe(ctx, wakeservice.ProbeInput{TeamID: teamID, ProjectID: projectID, TokenID: token})
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if r.HasWork {
+		t.Fatal("the probe reported work for a non-actionable event — a session would boot into the void")
 	}
 }
 

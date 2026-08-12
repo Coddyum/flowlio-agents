@@ -27,6 +27,65 @@ SELECT
                 AND (e.notify_project_id = @project_id::uuid OR e.notify_project_id IS NULL)), 0)::bigint
         AS head_event_id;
 
+-- WakeActionable answers the only two things a probe needs once head > cursor: is there NEW work
+-- worth launching a full session for, and — if so — at what rigour tier.
+--
+-- WHY THIS EXISTS AT ALL (FLWL-85). `head > cursor` means "an event I have not accounted for exists",
+-- NOT "a question is open awaiting an answer". Events include issue.closed and, on a team-wide head,
+-- a sibling's entire traffic — none of which is work for me. A wake is a FULL session boot, so a
+-- probe that says "yes" on a non-actionable event burns real tokens in the void. This query is what
+-- makes HasWork mean actionable work: the probe launches nothing when it returns actionable=false.
+--
+-- Read ONLY on the has-work path (head > cursor), never on the idle poll, so the zero-SQL steady
+-- state holds. After a noise bump the escalation ladder climbs to 6h, so this runs a handful of times
+-- then rarely — an occasional indexed read, never a session.
+--
+-- "Actionable NEW" is the buckets check_inbox flags with is_new, and only those: a new incoming
+-- question still open, a new answer to a question I asked, or a task freshly unblocked. NOT
+-- in_progress (my own parked work, no new-flag — it would wake me forever), NOT closed issues.
+-- effort_rank is the max tier among the actionable ISSUES (tasks carry none), over a CASE that
+-- mirrors internal/pkg/effort.Rank exactly (low 0 … max 3); a NULL tier counts as standard.
+-- name: WakeActionable :one
+WITH actionable_issues AS (
+    SELECT i.id, i.effort
+    FROM issues i
+    WHERE i.team_id = @team_id
+      AND (
+          (i.project_id        = @project_id AND i.state = 'open')
+          OR (i.author_project_id = @project_id AND i.state = 'answered')
+      )
+      AND EXISTS (
+          SELECT 1 FROM events e
+          WHERE e.subject_type = 'issue' AND e.subject_id = i.id AND e.id > @cursor
+      )
+),
+unblocked AS (
+    SELECT 1
+    FROM (
+        SELECT dep.task_id
+        FROM task_dependencies dep
+        WHERE dep.project_id = @project_id AND dep.released_at IS NOT NULL
+        GROUP BY dep.task_id
+    ) d
+    JOIN tasks t ON t.id = d.task_id AND t.team_id = @team_id AND t.project_id = @project_id
+    WHERE t.archived_at IS NULL
+      AND t.status IN ('todo', 'blocked')
+      AND NOT EXISTS (
+          SELECT 1 FROM task_dependencies pending
+          WHERE pending.task_id = t.id AND pending.released_at IS NULL
+      )
+      AND EXISTS (
+          SELECT 1 FROM events e
+          WHERE e.subject_type = 'task' AND e.subject_id = t.id AND e.id > @cursor
+      )
+)
+SELECT
+    (EXISTS (SELECT 1 FROM actionable_issues) OR EXISTS (SELECT 1 FROM unblocked))::boolean AS actionable,
+    coalesce(max(CASE ai.effort
+        WHEN 'low' THEN 0 WHEN 'standard' THEN 1 WHEN 'high' THEN 2 WHEN 'max' THEN 3
+        ELSE 1 END), 1)::int AS effort_rank
+FROM actionable_issues ai;
+
 -- Seau 1 — needs_answer : quelqu'un est bloqué sur moi.
 -- Dans ce seau, le dernier message est toujours celui de l'auteur : ma propre réponse ferait
 -- passer l'issue en `answered` et la sortirait du seau.

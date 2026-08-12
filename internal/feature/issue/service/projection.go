@@ -5,8 +5,8 @@ package service
 // | Élément  | Résumé                                                             | Ligne |
 // |----------|--------------------------------------------------------------------|-------|
 // | toIssue  | Projects a store issue onto the API view, from the caller's side     | 28    |
-// | toIssues | Projects a list of issues                                            | 46    |
-// | toMessage| Projects a store message onto the API view                           | 55    |
+// | toIssues | Projects a list of issues                                            | 47    |
+// | toMessage| Projects a store message onto the API view                           | 56    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -39,6 +39,7 @@ func toIssue(i store.Issue) Issue {
 		Peer:      peer,
 		UpdatedAt: i.UpdatedAt,
 		ClosedAt:  i.ClosedAt,
+		Effort:    i.Effort,
 	}
 }
 

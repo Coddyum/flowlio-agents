@@ -72,6 +72,9 @@ func (s *store) AppendEvent(ctx context.Context, event Event) error {
 	// concerns the SAME project as the event (a dependency never crosses a repo, D42), so the store
 	// knows exactly whom to wake — event.ProjectID — and can signal here. Fire-and-forget; the
 	// ladder and the piggyback are the backstop (see internal/core/wakepush).
-	wakepush.Signal(s.cache, event.TeamID, event.ProjectID)
+	//
+	// No effort tier: a tier is an issue's, declared by a sibling. A task unblock is this repo's own
+	// work, so it wakes at the standard tier ("" folds to standard in the daemon).
+	wakepush.Signal(s.cache, event.TeamID, event.ProjectID, "")
 	return nil
 }

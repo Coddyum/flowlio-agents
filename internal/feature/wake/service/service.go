@@ -9,8 +9,8 @@ package service
 // | New          | Creates the wake service                                        | 63    |
 // | ProbeInput   | Scope of one probe, entirely taken from the token                | 70    |
 // | ProbeResult  | The probe's answer: work or not                                   | 83    |
-// | RegisterInput | A waker's registration: scope from the token, callback + secret | 91    |
-// | RegisterResult | The lease window handed back to the waker                       | 99    |
+// | RegisterInput | A waker's registration: scope from the token, callback + secret | 97    |
+// | RegisterResult | The lease window handed back to the waker                       | 105   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -81,9 +81,15 @@ type ProbeInput struct {
 // to the base on any event (D55, DESIGN-WAKE §3). Throttled marks a probe that came back too soon —
 // the client ignored a previous NextProbeAfter — and the handler turns it into a 429.
 type ProbeResult struct {
-	HasWork       bool `json:"has_work"`
+	HasWork        bool `json:"has_work"`
 	NextProbeAfter int  `json:"next_probe_after"`
-	Throttled     bool `json:"-"`
+	Throttled      bool `json:"-"`
+	// SuggestedEffort is the rigour tier the waker should launch at — the highest among the work this
+	// probe just found (internal/pkg/effort). It is set ONLY when HasWork, computed from one read on
+	// that path alone, so the idle poll stays zero-SQL. Empty when there is no work, or when the read
+	// failed: a hint, never a promise, and the daemon clamps it to its own ceiling. The relay in
+	// flowlio-core forwards this JSON verbatim, so the field reaches a hosted waker unchanged.
+	SuggestedEffort string `json:"suggested_effort,omitempty"`
 }
 
 // RegisterInput carries a waker's registration. TeamID and ProjectID come from the token; Callback

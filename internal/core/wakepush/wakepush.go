@@ -7,10 +7,10 @@ package wakepush
 // | Registration | A local waker's callback and the secret that authenticates us     | 61    |
 // | Register     | Records a waker's registration under a lease                      | 68    |
 // | Lookup       | Reads the registration of a project's waker, if the lease holds    | 76    |
-// | Signal       | Pushes a wake to the registered waker, off the request path        | 94    |
-// | deliver      | Performs the loopback POST, errors swallowed on purpose            | 103   |
-// | LoopbackOnly | Refuses a callback that is not on this machine                    | 128   |
-// | regKey       | Composes the cache key of a registration                          | 143   |
+// | Signal       | Pushes a wake to the registered waker, off the request path        | 99    |
+// | deliver      | Performs the loopback POST, errors swallowed on purpose            | 108   |
+// | LoopbackOnly | Refuses a callback that is not on this machine                    | 139   |
+// | regKey       | Composes the cache key of a registration                          | 154   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -87,24 +87,35 @@ func Lookup(c cache.Cache, teamID, projectID uuid.UUID) (Registration, bool) {
 
 // Signal pushes a wake to the registered waker of a project, off the request path.
 //
+// effort is the rigour tier of the issue that triggered the wake (internal/pkg/effort), or "" when
+// unspecified: it rides in the push body so the daemon launches its agent at the tier the author
+// declared, exactly as the poll transport carries suggested_effort. It is a hint the daemon clamps,
+// never an instruction — a peer cannot lift a wake above the receiver's own ceiling.
+//
 // The whole call returns immediately: the push runs in its own goroutine on a background context,
 // because the write that triggered it must not wait on — nor fail for — a slow loopback peer. No
 // registration, or a peer that refuses, is a silent no-op: the agent is still reached by the ladder
 // or the piggyback.
-func Signal(c cache.Cache, teamID, projectID uuid.UUID) {
+func Signal(c cache.Cache, teamID, projectID uuid.UUID, effort string) {
 	reg, ok := Lookup(c, teamID, projectID)
 	if !ok {
 		return
 	}
-	go deliver(reg, projectID)
+	go deliver(reg, projectID, effort)
 }
 
 // deliver performs the loopback POST. Errors are swallowed on purpose: see Signal.
-func deliver(reg Registration, projectID uuid.UUID) {
+func deliver(reg Registration, projectID uuid.UUID, effort string) {
 	ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
 	defer cancel()
 
-	body, err := json.Marshal(map[string]string{"project": projectID.String()})
+	// effort is omitted from the body when empty: a wake with no declared tier carries the same shape
+	// it always did, and the listener reads its absence as "unspecified".
+	payload := map[string]string{"project": projectID.String()}
+	if effort != "" {
+		payload["effort"] = effort
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}

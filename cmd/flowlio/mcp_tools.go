@@ -4,12 +4,12 @@ package main
 //
 // | Élément         | Résumé                                                       | Ligne |
 // |-----------------|--------------------------------------------------------------|-------|
-// | toolDef         | An MCP tool as announced to the client                         | 50    |
-// | object          | Builds a JSON object schema                                    | 57    |
-// | prop            | Builds a JSON schema property                                  | 69    |
-// | enumProp        | Builds a property constrained to a set of values                | 78    |
-// | tools           | The twelve exposed tools, and nothing more                      | 88    |
-// | toolsListResult | The tools/list response                                        | 285   |
+// | toolDef         | An MCP tool as announced to the client                         | 51    |
+// | object          | Builds a JSON object schema                                    | 58    |
+// | prop            | Builds a JSON schema property                                  | 70    |
+// | enumProp        | Builds a property constrained to a set of values                | 79    |
+// | tools           | The twelve exposed tools, and nothing more                      | 89    |
+// | toolsListResult | The tools/list response                                        | 290   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -44,6 +44,7 @@ var (
 	taskStatuses   = []string{"todo", "in_progress", "blocked", "done"}
 	taskPriorities = []string{"low", "normal", "high", "urgent"}
 	issueStates    = []string{"open", "answered", "closed"}
+	issueEfforts   = []string{"low", "standard", "high", "max"}
 )
 
 // toolDef is a tool's definition as announced in tools/list.
@@ -191,6 +192,10 @@ func tools() []toolDef {
 					"The question in one line, 200 characters at most."),
 				"body": prop("string",
 					"The full context: what is expected, and what has already been tried."),
+				"effort": enumProp(issueEfforts,
+					"How much rigour answering warrants, so the other repo runs a matching model: "+
+						"low for a lookup, up to max for careful work. Omit for the standard default. "+
+						"It names no model — the receiving repo maps the tier to its own agent."),
 			}, "to_project", "title", "body"),
 		},
 		{

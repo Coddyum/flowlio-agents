@@ -11,11 +11,21 @@ import (
 )
 
 // fakeStore stands in for the cold read. Every test below keeps the probe cache warm, so Position is
-// never reached — but the service needs a store to build.
-type fakeStore struct{ pos store.Position }
+// never reached — but the service needs a store to build. actionable is what the confirming read
+// returns once the journal has moved; the pacing tests drive movement through the cache and keep it
+// true, so the ladder sees real work exactly as before.
+type fakeStore struct {
+	pos        store.Position
+	actionable bool
+	effort     string
+}
 
 func (f fakeStore) Position(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (store.Position, error) {
 	return f.pos, nil
+}
+
+func (f fakeStore) Actionable(context.Context, uuid.UUID, uuid.UUID, int64) (bool, string, error) {
+	return f.actionable, f.effort, nil
 }
 
 // The ladder climbs one rung every five empty probes and never past the cap; any event snaps it back

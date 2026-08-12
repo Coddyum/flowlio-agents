@@ -14,18 +14,19 @@ import (
 // cadence the server dictates — including a 429's Retry-After. This is the hosted transport of
 // DESIGN-WAKE §6, without a live core.
 func TestHostedProbeOnce(t *testing.T) {
-	t.Run("work launches and honours next_probe_after", func(t *testing.T) {
+	t.Run("work launches at the suggested effort and honours next_probe_after", func(t *testing.T) {
 		var gotAuth, gotPath string
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotAuth = r.Header.Get("Authorization")
 			gotPath = r.URL.RequestURI()
-			_, _ = w.Write([]byte(`{"has_work":true,"next_probe_after":120}`))
+			_, _ = w.Write([]byte(`{"has_work":true,"next_probe_after":120,"suggested_effort":"high"}`))
 		}))
 		defer srv.Close()
 
 		launched := 0
+		gotEffort := ""
 		delay := probeOnce(context.Background(), client.New(srv.URL, "acct-pat"), "CORE",
-			"/api/v2/agents/wake?repo=abc", func() { launched++ })
+			"/api/v2/agents/wake?repo=abc", func(effort string) { launched++; gotEffort = effort })
 
 		if gotAuth != "Bearer acct-pat" {
 			t.Errorf("Authorization = %q, want the account bearer", gotAuth)
@@ -35,6 +36,9 @@ func TestHostedProbeOnce(t *testing.T) {
 		}
 		if launched != 1 {
 			t.Errorf("launched %d times, want 1 (has_work was true)", launched)
+		}
+		if gotEffort != "high" {
+			t.Errorf("launched at effort %q, want %q from suggested_effort", gotEffort, "high")
 		}
 		if delay != 2*time.Minute {
 			t.Errorf("delay = %s, want 2m (next_probe_after=120)", delay)
@@ -48,7 +52,7 @@ func TestHostedProbeOnce(t *testing.T) {
 		defer srv.Close()
 
 		launched := 0
-		delay := probeOnce(context.Background(), client.New(srv.URL, "x"), "CORE", "/api/v2/agents/wake?repo=abc", func() { launched++ })
+		delay := probeOnce(context.Background(), client.New(srv.URL, "x"), "CORE", "/api/v2/agents/wake?repo=abc", func(string) { launched++ })
 		if launched != 0 {
 			t.Errorf("launched %d times on an empty probe, want 0", launched)
 		}
@@ -66,7 +70,7 @@ func TestHostedProbeOnce(t *testing.T) {
 		defer srv.Close()
 
 		launched := 0
-		delay := probeOnce(context.Background(), client.New(srv.URL, "x"), "CORE", "/api/v2/agents/wake?repo=abc", func() { launched++ })
+		delay := probeOnce(context.Background(), client.New(srv.URL, "x"), "CORE", "/api/v2/agents/wake?repo=abc", func(string) { launched++ })
 		if launched != 0 {
 			t.Errorf("a throttled probe launched %d times, want 0", launched)
 		}

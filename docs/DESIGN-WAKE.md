@@ -239,6 +239,8 @@ issue lands for repo X
 | **Server-dictated cadence** | `next_probe_after` + `429`. A daemon misconfigured to 1 s cannot cost the day. |
 | **Lease** | An unrefreshed session registration expires; a crashed agent stops costing on its own. |
 | **Zero-SQL probe, tested** | Integration test counts queries, stays at zero across 100 empty probes; removing the cache turns it red. |
+| **Actionable gate on the probe** (FLWL-85) | `head > cursor` means "the journal moved", not "there is work". A wake is a full session boot, so the probe confirms **new actionable work** before it says yes — never a launch for a closed issue or a sibling's traffic. §15. |
+| **Failure circuit-breaker** (FLWL-85) | The window bounds a burst, not a wall: a repo whose launches keep failing was retried every cadence for an hour into the account session limit. Consecutive failures now earn an exponential backoff; a recognised session limit blocks the repo outright. §15. |
 
 ---
 
@@ -310,3 +312,59 @@ memory register (`remember`, with `supersedes` where they touch an existing one)
 - The per-repository token/address config files and marker-bounded writes — DECISION-setup.md.
 - The embedded self-host UI is frozen until ~2026-08-19 (FLWL-62) — this plan is CLI/daemon only and
   does not touch it.
+
+---
+
+## 14. The effort tier — the sender declares rigour, the receiver picks the model (FLWL-84)
+
+A wake is a full session boot, and it need not be an Opus one. Answering "which front framework?"
+warrants a lookup; a careful architecture question warrants the strongest model. So the issue's author
+declares **how much rigour** answering warrants, and the receiver turns that into a model for **its**
+agent.
+
+- The tier is `create_issue`'s optional `effort`: `low | standard | high | max`, default `standard`.
+  It is an **abstract intent, never a model name** — the author does not know whether Claude, codex or
+  opencode answers on the other side, so naming `opus` would couple the repos. Vocabulary lives in
+  `internal/pkg/effort`; the DB stores it nullable (migration `000016`, NULL = unspecified = standard).
+- The tier travels **both transports**: the probe returns `suggested_effort` (poll, forwarded verbatim
+  by flowlio-core's relay), and the local push carries it in the body (self-host). It is computed
+  where the actionable read already runs (§15) — the max tier among the work a wake will act on — so it
+  costs nothing extra.
+- The **receiver maps and clamps**. `internal/pkg/waker` maps a tier to a model — for Claude,
+  `low→haiku, standard→sonnet, high/max→opus`; codex/opencode carry no ladder yet (FLWL-85 follow-up)
+  and launch at their default. The daemon clamps every tier to `FLOWLIO_WAKE_MAX_EFFORT` (default
+  `max`, no cap): **sender proposes, receiver disposes.**
+- **Security** (`docs/MODELE-DE-CONFIANCE.md`): the tier is consumed by the daemon as a launch
+  parameter, never reaches the agent as an instruction, so it does not cross the untrusted seal. But a
+  hostile sender pinning `max` on every issue is a **cost-amplification** vector — hence the clamp is
+  not optional.
+
+## 15. The probe tells the truth, and the breaker catches a wall (FLWL-85)
+
+2026-08-12: the hosted waker relaunched a repo every 60s for 90 minutes with an **empty inbox**,
+burning ~11% of a quota on empty Opus boots, then hammered the account session limit for another hour.
+Two faults, both here now.
+
+**The probe tested the wrong thing.** `HasWork = head > cursor` answers "an event I have not accounted
+for exists" — not "a question awaits an answer". Events include `issue.closed` and, on a team-wide
+head, a sibling's entire traffic. The old comment "a wasted wake is cheap" was false: a wake is a full
+session. The fix is a **two-step probe**:
+
+1. cheap gate — `head > cursor`? Zero SQL when idle (unchanged; D55's 100-empty-probes test stays
+   green).
+2. only when the gate passes — one indexed read: is there **new actionable work** (a new incoming open
+   issue, a new answer to mine, a newly unblocked task; **not** `in_progress`, **not** `closed`)? No ⇒
+   `HasWork=false`, **no launch**. The read runs only on the has-work path, and the ladder climbs on a
+   non-actionable bump, so it fires a handful of times then rarely — an occasional query, never a
+   session. This is the one change to D55's "a probe is pure memory": a *has-work* probe now costs one
+   query; the idle poll never does.
+
+**The window did not notice a wall.** The relaunch cap bounds a burst but happily allows N launches per
+window, every window, even when every one fails. The cap is now also a **circuit-breaker**: consecutive
+failures earn an exponential backoff (`internal/pkg/waker`, `RecordOutcome`), and a recognised account
+session limit (`sessionLimited` reads the agent-log tail) blocks the repo for a fixed pause
+(`Block`). A wall is hit a handful of times, not once a minute for an hour.
+
+**Delivery caveat.** Both fixes live in the engine and the daemon binary. The hosted engine is pinned
+per image and lags (D29, FLWL-83): until an image can fetch the current binary, prod keeps the
+team-wide head, and the hosted waker stays down.
