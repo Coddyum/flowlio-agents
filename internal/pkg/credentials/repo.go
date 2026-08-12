@@ -2,18 +2,13 @@ package credentials
 
 // SOMMAIRE (lire en premier, sauter directement au bon passage)
 //
-// | Élément     | Résumé                                                            | Ligne |
-// |-------------|-------------------------------------------------------------------|-------|
-// | RepoFile    | What one repository needs in order to reach its own board           | 58    |
-// | reposDir    | Directory holding every repository credential of this host          | 69    |
-// | safeSegment | Refuses a name that would compose a path out of that directory      | 83    |
-// | RepoPath    | Path of one repository's credential file, names normalised          | 98    |
-// | LoadRepo    | Reads one repository's credential file                              | 116   |
-// | SaveRepo    | Writes it in 0600, with its names normalised                        | 143   |
-// | DeleteRepo  | Removes one, for a repository that no longer exists server-side     | 174   |
-// | ListRepos   | Every repository credential on this host, project then repo         | 197   |
-// | normaliseProject | Lower-cases a project slug, the one spelling that is stored    | 245   |
-// | normaliseRepo    | Upper-cases a repo key, the one spelling that is stored        | 247   |
+// | Élément    | Résumé                                                             | Ligne |
+// |------------|--------------------------------------------------------------------|-------|
+// | RepoFile   | What one repository needs in order to reach its own board            | 51    |
+// | LoadRepo   | Reads one repository's credential file                              | 68    |
+// | SaveRepo   | Writes it in 0600, with its names normalised                        | 95    |
+// | DeleteRepo | Removes one, for a repository that no longer exists server-side      | 133   |
+// | ListRepos  | Every repository credential on this host, project then repo          | 156   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -33,6 +28,8 @@ package credentials
 // which froze the address a repository was initialised against: a repo set up against the Docker
 // stack kept calling :42058 forever, even when the API had moved. Here it is host-local state,
 // rewritten by `flowlio connect`, and no longer something a teammate inherits by cloning.
+//
+// Where a record's file lives — and why a hosted one is keyed by its core id — is repo_path.go.
 
 import (
 	"encoding/json"
@@ -41,11 +38,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
-
-// reposDirName is the sub-directory holding one file per repository.
-const reposDirName = "repos"
 
 // RepoFile is what one repository needs in order to reach its own board: where the API is, who it
 // is, and the secret that proves it.
@@ -68,52 +61,6 @@ type RepoFile struct {
 	// point straight at the engine; it is set in hosted, where the token lives in flowlio-core and
 	// this id is all the local machine holds to name the repository (DESIGN-WAKE §6).
 	RepoID string `json:"repo_id,omitempty"`
-}
-
-// reposDir yields the directory holding every repository credential of this host.
-func reposDir() (string, error) {
-	base, err := dir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, reposDirName), nil
-}
-
-// safeSegment refuses a name that would compose a path outside reposDir.
-//
-// The names come from a command line, and a repo key of `../../..` would otherwise have RepoPath
-// hand a caller a path to somewhere else entirely — then have SaveRepo write a token there. The
-// check is cheap and it is the only thing standing between a typo and a file written outside the
-// configuration directory.
-func safeSegment(kind, name string) error {
-	if name == "" {
-		return fmt.Errorf("credentials: %s is empty", kind)
-	}
-	if name != filepath.Base(name) || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
-		return fmt.Errorf("credentials: %s %q is not a plain name", kind, name)
-	}
-	return nil
-}
-
-// RepoPath yields $XDG_CONFIG_HOME/flowlio/repos/<project>/<REPO>.json.
-//
-// The repo key is upper-cased and the project slug lower-cased BEFORE the path is composed.
-// Without it, `API.json` and `api.json` coexist on a case-sensitive filesystem while being the same
-// repository everywhere else, and the second one written is the only one anything ever finds.
-func RepoPath(project, repo string) (string, error) {
-	project, repo = normaliseProject(project), normaliseRepo(repo)
-	if err := safeSegment("project", project); err != nil {
-		return "", err
-	}
-	if err := safeSegment("repo", repo); err != nil {
-		return "", err
-	}
-
-	base, err := reposDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, project, repo+".json"), nil
 }
 
 // LoadRepo reads one repository's credentials. Yields ErrNotFound when that repository has never
@@ -148,7 +95,7 @@ func LoadRepo(project, repo string) (RepoFile, error) {
 func SaveRepo(f RepoFile) (string, error) {
 	f.Project, f.Repo = normaliseProject(f.Project), normaliseRepo(f.Repo)
 
-	path, err := RepoPath(f.Project, f.Repo)
+	path, err := RepoRecordPath(f)
 	if err != nil {
 		return "", err
 	}
@@ -233,9 +180,16 @@ func ListRepos() ([]RepoFile, error) {
 			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 				continue
 			}
-			repo := strings.TrimSuffix(entry.Name(), ".json")
-			f, err := LoadRepo(project.Name(), repo)
+			// Read the file by its own bytes rather than re-derive a key from its name and hand it back
+			// to LoadRepo: a hosted record is filed under its id, and LoadRepo would upper-case that id
+			// into a name no file carries. The record's Project/Repo fields are the authority here, not
+			// the filename — which is exactly why a hosted id in the filename changes nothing downstream.
+			raw, err := os.ReadFile(filepath.Join(base, project.Name(), entry.Name()))
 			if err != nil {
+				continue
+			}
+			var f RepoFile
+			if err := json.Unmarshal(raw, &f); err != nil {
 				continue
 			}
 			out = append(out, f)
@@ -250,10 +204,3 @@ func ListRepos() ([]RepoFile, error) {
 	})
 	return out, nil
 }
-
-// normaliseProject and normaliseRepo carry the one spelling rule of this package: a project slug is
-// lower-case, a repo key is upper-case. Everything that composes a path or writes a file goes
-// through them, so a caller never has to remember which is which.
-func normaliseProject(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
-
-func normaliseRepo(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }

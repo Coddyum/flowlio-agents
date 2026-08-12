@@ -11,21 +11,46 @@ import (
 func TestSessionRoundTrip(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	if got := loadSession("flowlio", "CORE"); got != "" {
+	rf := credentials.RepoFile{Project: "flowlio", Repo: "CORE"}
+	if got := loadSession(rf); got != "" {
 		t.Errorf("loadSession before any save = %q, want empty", got)
 	}
-	if err := saveSession("flowlio", "CORE", "sess-abc-123"); err != nil {
+	if err := saveSession(rf, "sess-abc-123"); err != nil {
 		t.Fatalf("saveSession: %v", err)
 	}
-	if got := loadSession("flowlio", "CORE"); got != "sess-abc-123" {
+	if got := loadSession(rf); got != "sess-abc-123" {
 		t.Errorf("loadSession = %q, want sess-abc-123", got)
 	}
 	// The newest wins: a second session overwrites the first.
-	if err := saveSession("flowlio", "CORE", "sess-def-456"); err != nil {
+	if err := saveSession(rf, "sess-def-456"); err != nil {
 		t.Fatalf("saveSession again: %v", err)
 	}
-	if got := loadSession("flowlio", "CORE"); got != "sess-def-456" {
+	if got := loadSession(rf); got != "sess-def-456" {
 		t.Errorf("loadSession after overwrite = %q, want sess-def-456", got)
+	}
+}
+
+// Two hosted repositories that share a key (CORE) but not an id keep separate sessions: the session
+// file follows the credential, which is keyed by id in hosted. This is the regression guarding the
+// 2026-08-12 collision, where a second `flowlio connect --id` buried the first repo's state.
+func TestHostedSessionsDoNotCollideOnKey(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	omiros := credentials.RepoFile{Project: "hosted", Repo: "CORE", RepoID: "id-omiros"}
+	flowlio := credentials.RepoFile{Project: "hosted", Repo: "CORE", RepoID: "id-flowlio"}
+
+	if err := saveSession(omiros, "sess-omiros"); err != nil {
+		t.Fatalf("saveSession omiros: %v", err)
+	}
+	if err := saveSession(flowlio, "sess-flowlio"); err != nil {
+		t.Fatalf("saveSession flowlio: %v", err)
+	}
+
+	if got := loadSession(omiros); got != "sess-omiros" {
+		t.Errorf("omiros session = %q, want sess-omiros — flowlio overwrote it", got)
+	}
+	if got := loadSession(flowlio); got != "sess-flowlio" {
+		t.Errorf("flowlio session = %q, want sess-flowlio", got)
 	}
 }
 

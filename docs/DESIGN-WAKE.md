@@ -188,6 +188,15 @@ directory**, nowhere else. Two sources, matching the two launch styles:
   (`$XDG_CONFIG_HOME/flowlio/repos/<project>/<REPO>.json`). No local path ever goes into a database,
   self-host or hosted — a filesystem path is machine-local, not product data.
 
+  **Hosted records key by the core id, not by the repo key.** A hosted machine holds no project slug,
+  so every hosted repo sits under the one `repos/hosted/` directory. Keyed by key alone, two accounts
+  that each named a repo `CORE` would write the same `hosted/CORE.json`, and the second
+  `flowlio connect --id` would silently bury the first (seen on 2026-08-12). So a hosted record — the
+  only kind carrying a `repo_id` — is filed under `repos/hosted/<repo-id>.json`, the one name a hosted
+  machine has that is unique per repository. Its `.session` file follows the same path. Self-host
+  keeps `<project>/<REPO>.json`: there the slug is real, so the key never collides. The rule lives in
+  `credentials.RepoRecordPath`.
+
 ---
 
 ## 8. The wake → run sequence, end to end

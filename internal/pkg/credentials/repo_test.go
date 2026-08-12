@@ -156,3 +156,41 @@ func TestListReposSkipsAnUnreadableFile(t *testing.T) {
 		t.Errorf("ListRepos = %+v, expected the API repository alone", repos)
 	}
 }
+
+// Two hosted repositories sharing a key (CORE) but not an id must not share a file. A hosted machine
+// files every repo under the one "hosted" directory, so keying by key alone let the second
+// `flowlio connect --id` bury the first (2026-08-12). Keying by id, both survive and both are listed.
+func TestHostedRecordsDoNotCollideOnKey(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	omiros := RepoFile{Project: "hosted", Repo: "CORE", RepoID: "id-omiros", Path: "/tmp/omiros-core"}
+	flowlio := RepoFile{Project: "hosted", Repo: "CORE", RepoID: "id-flowlio", Path: "/tmp/flowlio-core"}
+
+	omirosPath, err := SaveRepo(omiros)
+	if err != nil {
+		t.Fatalf("SaveRepo omiros: %v", err)
+	}
+	flowlioPath, err := SaveRepo(flowlio)
+	if err != nil {
+		t.Fatalf("SaveRepo flowlio: %v", err)
+	}
+	if omirosPath == flowlioPath {
+		t.Fatalf("both records landed on the same path %s — the key still collides", omirosPath)
+	}
+
+	repos, err := ListRepos()
+	if err != nil {
+		t.Fatalf("ListRepos: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("ListRepos = %+v, expected both hosted CORE records", repos)
+	}
+
+	byID := map[string]string{}
+	for _, r := range repos {
+		byID[r.RepoID] = r.Path
+	}
+	if byID["id-omiros"] != "/tmp/omiros-core" || byID["id-flowlio"] != "/tmp/flowlio-core" {
+		t.Errorf("records mixed up: %+v", byID)
+	}
+}

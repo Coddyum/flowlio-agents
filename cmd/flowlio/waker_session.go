@@ -5,10 +5,10 @@ package main
 // | Élément         | Résumé                                                         | Ligne |
 // |-----------------|----------------------------------------------------------------|-------|
 // | runSessionStart | Records the Claude session id a SessionStart hook hands over      | 45    |
-// | sessionPath     | Path of a repo's session file, next to its credential file        | 70    |
-// | saveSession     | Writes the latest session id for a repo, host-local               | 80    |
-// | loadSession     | Reads the last known session id, empty when none                  | 93    |
-// | repoForDir      | Finds the connected repo whose filed path is a directory          | 107   |
+// | sessionPath     | Path of a repo's session file, next to its credential file        | 72    |
+// | saveSession     | Writes the latest session id for a repo, host-local               | 82    |
+// | loadSession     | Reads the last known session id, empty when none                  | 95    |
+// | repoForDir      | Finds the connected repo whose filed path is a directory          | 109   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -61,14 +61,16 @@ func runSessionStart(_ context.Context, _ []string) error {
 	if err != nil {
 		return nil
 	}
-	_ = saveSession(rf.Project, rf.Repo, in.SessionID)
+	_ = saveSession(rf, in.SessionID)
 	return nil
 }
 
 // sessionPath is the repo's session file, next to its credential file so the two share a lifetime:
-// removing the repo removes both.
-func sessionPath(project, repo string) (string, error) {
-	credPath, err := credentials.RepoPath(project, repo)
+// removing the repo removes both. It takes the whole record, not a (project, repo) pair, because a
+// hosted record is filed under its id — two projects' CORE share no path only if the session follows
+// the same rule the credential does, through RepoRecordPath.
+func sessionPath(rf credentials.RepoFile) (string, error) {
+	credPath, err := credentials.RepoRecordPath(rf)
 	if err != nil {
 		return "", err
 	}
@@ -77,8 +79,8 @@ func sessionPath(project, repo string) (string, error) {
 
 // saveSession writes the latest session id for a repo. The newest wins: a session id is only useful
 // while its session is the live one, so overwriting is the whole storage policy.
-func saveSession(project, repo, sessionID string) error {
-	path, err := sessionPath(project, repo)
+func saveSession(rf credentials.RepoFile, sessionID string) error {
+	path, err := sessionPath(rf)
 	if err != nil {
 		return err
 	}
@@ -90,8 +92,8 @@ func saveSession(project, repo, sessionID string) error {
 
 // loadSession reads the last known session id for a repo, or "" when none is on file — which the
 // waker reads as "launch fresh".
-func loadSession(project, repo string) string {
-	path, err := sessionPath(project, repo)
+func loadSession(rf credentials.RepoFile) string {
+	path, err := sessionPath(rf)
 	if err != nil {
 		return ""
 	}

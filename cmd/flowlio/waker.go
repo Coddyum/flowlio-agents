@@ -5,12 +5,12 @@ package main
 // | Élément       | Résumé                                                          | Ligne |
 // |---------------|-----------------------------------------------------------------|-------|
 // | runWaker      | Runs the waker in the mode's transport: push (self-host) or poll   | 60    |
-// | launchFor     | Builds one repo's launch closure, shared by both transports        | 107   |
-// | serveRepo     | Starts one repo's loopback listener and registers it              | 135   |
-// | registerLoop  | Registers with the engine and refreshes before the lease lapses   | 162   |
-// | resolveAgent  | Turns a repo's stored config into a launch recipe                 | 188   |
-// | execLauncher  | Runs the agent argv in the repo directory                         | 208   |
-// | plural        | The one-letter tail that keeps a count line grammatical           | 220   |
+// | launchFor     | Builds one repo's launch closure, shared by both transports        | 119   |
+// | serveRepo     | Starts one repo's loopback listener and registers it              | 147   |
+// | registerLoop  | Registers with the engine and refreshes before the lease lapses   | 174   |
+// | resolveAgent  | Turns a repo's stored config into a launch recipe                 | 200   |
+// | execLauncher  | Runs the agent argv in the repo directory                         | 220   |
+// | plural        | The one-letter tail that keeps a count line grammatical           | 232   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -126,7 +126,7 @@ func launchFor(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap) (fu
 		Key:       rf.Repo,
 		Path:      rf.Path,
 		Agent:     agent,
-		SessionID: loadSession(rf.Project, rf.Repo),
+		SessionID: loadSession(rf),
 	}
 	return func() {
 		launched, err := waker.Launch(ctx, cap, execLauncher, repo, time.Now())
