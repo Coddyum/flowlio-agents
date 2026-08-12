@@ -118,7 +118,8 @@ func usage() {
 Running everything (after brew install flowlio):
   flowlio                              Runs everything: self-host = DB container + engine + waker;
                                        hosted = the waker only
-  flowlio login <prod-url> [token]     Link this machine to a hosted account; flowlio then runs hosted
+  flowlio login <prod-url> [token]     Hosted: link this machine. The token is a flowlio.me access
+                                       token (shown once); flowlio then runs the waker in hosted mode
   flowlio agent set <name>             Which agent the waker launches: claude | codex | opencode
 
 Setting up:

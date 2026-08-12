@@ -6,12 +6,12 @@ package main
 // |-----------------|-----------------------------------------------------------------|-------|
 // | connectPlan     | What this run is about to do, decided before anything is written  | 49    |
 // | runConnect      | Makes the current repository operational, then checks that it is  | 64    |
-// | planConnect     | Reads the repository and works out what there is to write         | 109   |
-// | announcePlan    | Prints the plan, and asks the one question there is to ask        | 139   |
-// | printPlan       | Describes the run in the order the writes happen                  | 148   |
-// | writeOurs       | Writes the two files that are ours, without asking                | 180   |
-// | writeTheirs     | Writes into the user's files, or prints what it would have        | 211   |
-// | indent          | Prefixes every line, so a quoted block is not read as output      | 237   |
+// | planConnect     | Reads the repository and works out what there is to write         | 123   |
+// | announcePlan    | Prints the plan, and asks the one question there is to ask        | 153   |
+// | printPlan       | Describes the run in the order the writes happen                  | 162   |
+// | writeOurs       | Writes the two files that are ours, without asking                | 194   |
+// | writeTheirs     | Writes into the user's files, or prints what it would have        | 225   |
+// | indent          | Prefixes every line, so a quoted block is not read as output      | 251   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -80,6 +80,13 @@ func runConnect(ctx context.Context, args []string) error {
 	// stop. The account credential is `flowlio login`'s, never minted here.
 	if strings.TrimSpace(*id) != "" {
 		return connectHosted(repo, strings.TrimSpace(*id))
+	}
+
+	// Logged in to a hosted account but no id given: the self-host path below would dial a local
+	// engine that is not there and fail with a confusing refusal. Say the one thing missing instead.
+	if mode, _ := detectMode(); mode == modeHosted {
+		return fmt.Errorf("hosted mode: run `flowlio connect %s --id <id>` — the id is the "+
+			"`?repo=…` value in this repository's MCP configuration on flowlio.me", repo)
 	}
 
 	plan, err := planConnect(ctx, *project, repo)

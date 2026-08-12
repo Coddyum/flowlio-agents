@@ -152,7 +152,14 @@ func SaveRepo(f RepoFile) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if f.APIURL == "" || f.Token == "" {
+	// A hosted record (it carries the core repo id) holds neither address nor token: both live in
+	// hosted.json, and the waker reads them from there. What it needs here is the id and the path.
+	// A self-host record is the opposite — it dials the engine directly, so both are required.
+	if f.RepoID != "" {
+		if f.Path == "" {
+			return "", fmt.Errorf("credentials: repo %s/%s: a hosted record needs a path", f.Project, f.Repo)
+		}
+	} else if f.APIURL == "" || f.Token == "" {
 		return "", fmt.Errorf("credentials: repo %s/%s: address and token are both required", f.Project, f.Repo)
 	}
 
