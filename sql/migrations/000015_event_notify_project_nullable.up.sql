@@ -1,0 +1,13 @@
+-- Expand/contract, the step 000014 skipped. 000014 added events.notify_project_id as NOT NULL, which
+-- an engine that predates it cannot satisfy: its AppendEvent writes no such column, so every event
+-- write took a NOT NULL violation the moment the migration ran ahead of the deployed binary. The
+-- hosted engine is pinned per image (D29) and lagged four releases behind, so the migration broke
+-- issue creation in production.
+--
+-- Relaxing the column to nullable makes the schema tolerate BOTH engines: the old one inserts NULL
+-- (it wakes through the legacy team-wide head, unaware of this column), the new one always sets the
+-- notify target. A NULL therefore only ever means "written by an engine that predates per-project
+-- wake", and the probe query treats it as addressed-to-everyone so it is never a missed wake.
+--
+-- The column stays; only its NOT NULL guard is dropped. No data is touched.
+ALTER TABLE events ALTER COLUMN notify_project_id DROP NOT NULL;

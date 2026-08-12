@@ -281,6 +281,38 @@ func TestAnsweringAnIssueDoesNotWakeTheAnswerer(t *testing.T) {
 	}
 }
 
+// TestEventWithNullNotifyWakesEveryone covers the expand/contract seam (000015).
+//
+// The hosted engine is pinned per image and can lag the schema (D29): an engine that predates
+// notify_project_id writes the column NULL. Such an event carries no target, so the probe must treat
+// it as addressed to everyone rather than drop it — a missed wake leaves a real answer unseen, far
+// worse than one empty probe. This inserts the row the way an old engine would (raw, no notify) and
+// checks a fresh token still sees it.
+func TestEventWithNullNotifyWakesEveryone(t *testing.T) {
+	db, f := newFixture(t)
+	ctx := context.Background()
+
+	positions := wakestore.New(database.New(db))
+	token := insertProjectToken(t, db, f.teamID, f.projectID, "core")
+
+	// An engine that predates the column: it inserts an event with no notify_project_id.
+	if _, err := db.Exec(
+		`INSERT INTO events (team_id, project_id, actor_project_id, kind, subject_type, subject_id)
+		 VALUES ($1, $2, $2, 'issue.opened', 'issue', $3)`,
+		f.teamID, f.projectID, uuid.New(),
+	); err != nil {
+		t.Fatalf("inserting a pre-column event: %v", err)
+	}
+
+	pos, err := positions.Position(ctx, f.teamID, f.projectID, token)
+	if err != nil {
+		t.Fatalf("position: %v", err)
+	}
+	if pos.Head <= pos.Cursor {
+		t.Fatal("a NULL-notify event was invisible to the probe — an old engine's write would never wake anyone")
+	}
+}
+
 // insertProjectToken creates a project-scoped token and returns its id. The prefix is unique per call
 // so two tokens in one test never collide on the prefix unique index.
 func insertProjectToken(t *testing.T, db *sql.DB, teamID, projectID uuid.UUID, name string) uuid.UUID {

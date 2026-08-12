@@ -101,7 +101,7 @@ CREATE TABLE public.events (
     subject_type public.event_subject NOT NULL,
     subject_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    notify_project_id uuid NOT NULL,
+    notify_project_id uuid,
     CONSTRAINT events_kind_format CHECK ((kind ~ '^[a-z_]+\.[a-z_]+$'::text))
 );
 
