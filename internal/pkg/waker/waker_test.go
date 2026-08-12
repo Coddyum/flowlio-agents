@@ -2,8 +2,10 @@ package waker_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -175,6 +177,56 @@ func TestLaunchHonoursTheCap(t *testing.T) {
 	}
 	if runs != 1 {
 		t.Errorf("the launcher ran %d times, want 1", runs)
+	}
+}
+
+// A resume that fails falls back to a fresh launch: `claude -r` on a session Claude no longer has
+// exits non-zero, and the waker must still start a fresh session that reads the inbox rather than
+// drop the wake. This is the regression for the 2026-08-12 "CORE launch failed" loop.
+func TestLaunchFallsBackToFreshWhenResumeFails(t *testing.T) {
+	base := time.Unix(3_000_000, 0)
+	cap := waker.NewCap(5, time.Minute)
+	var argvs [][]string
+	run := func(_ context.Context, _ string, argv []string) error {
+		argvs = append(argvs, argv)
+		if len(argvs) == 1 {
+			return errors.New("No conversation found with session ID") // the resume fails
+		}
+		return nil
+	}
+	repo := waker.Repo{Key: "CORE", Path: "/tmp/core", SessionID: "dead-sess"}
+	repo.Agent, _ = waker.Preset("claude")
+
+	launched, err := waker.Launch(context.Background(), cap, run, repo, base)
+	if err != nil || !launched {
+		t.Fatalf("launched=%v err=%v — the fresh fallback should succeed", launched, err)
+	}
+	if len(argvs) != 2 {
+		t.Fatalf("ran %d times, want 2 (resume then fresh)", len(argvs))
+	}
+	if !slices.Contains(argvs[0], "-r") {
+		t.Errorf("first attempt was not a resume: %v", argvs[0])
+	}
+	if slices.Contains(argvs[1], "-r") {
+		t.Errorf("the fallback still resumed instead of launching fresh: %v", argvs[1])
+	}
+}
+
+// A fresh launch that fails is NOT retried: there is no session to fall back from, so one failure is
+// the whole story and the error travels up. Only a resume has a fresh path behind it.
+func TestLaunchDoesNotRetryAFreshFailure(t *testing.T) {
+	base := time.Unix(3_000_000, 0)
+	cap := waker.NewCap(5, time.Minute)
+	var runs int
+	run := func(context.Context, string, []string) error { runs++; return errors.New("boom") }
+	repo := waker.Repo{Key: "CORE", Path: "/tmp/core"} // no SessionID → fresh from the start
+	repo.Agent, _ = waker.Preset("codex")
+
+	if _, err := waker.Launch(context.Background(), cap, run, repo, base); err == nil {
+		t.Fatal("a failed fresh launch should return its error")
+	}
+	if runs != 1 {
+		t.Errorf("fresh launch ran %d times, want 1 — no fallback exists for it", runs)
 	}
 }
 

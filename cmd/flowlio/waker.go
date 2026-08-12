@@ -6,11 +6,11 @@ package main
 // |---------------|-----------------------------------------------------------------|-------|
 // | runWaker      | Runs the waker in the mode's transport: push (self-host) or poll   | 60    |
 // | launchFor     | Builds one repo's launch closure, shared by both transports        | 119   |
-// | serveRepo     | Starts one repo's loopback listener and registers it              | 147   |
-// | registerLoop  | Registers with the engine and refreshes before the lease lapses   | 174   |
-// | resolveAgent  | Turns a repo's stored config into a launch recipe                 | 200   |
-// | execLauncher  | Runs the agent argv in the repo directory                         | 220   |
-// | plural        | The one-letter tail that keeps a count line grammatical           | 232   |
+// | serveRepo     | Starts one repo's loopback listener and registers it              | 151   |
+// | registerLoop  | Registers with the engine and refreshes before the lease lapses   | 178   |
+// | resolveAgent  | Turns a repo's stored config into a launch recipe                 | 204   |
+// | execLauncher  | Runs the agent argv in the repo directory                         | 224   |
+// | plural        | The one-letter tail that keeps a count line grammatical           | 236   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -122,13 +122,17 @@ func launchFor(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap) (fu
 		return nil, err
 	}
 	repo := waker.Repo{
-		Project:   rf.Project,
-		Key:       rf.Repo,
-		Path:      rf.Path,
-		Agent:     agent,
-		SessionID: loadSession(rf),
+		Project: rf.Project,
+		Key:     rf.Repo,
+		Path:    rf.Path,
+		Agent:   agent,
 	}
 	return func() {
+		// Read the session id AT LAUNCH, not once at startup: a resume points at a specific Claude
+		// session, and between two wakes that session can be replaced by a newer one (the SessionStart
+		// hook refiled it) or cleared entirely. A stale id baked in at startup meant the waker retried a
+		// dead session on every wake until it was restarted.
+		repo.SessionID = loadSession(rf)
 		launched, err := waker.Launch(ctx, cap, execLauncher, repo, time.Now())
 		switch {
 		case err != nil:

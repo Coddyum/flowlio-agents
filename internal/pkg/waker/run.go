@@ -7,7 +7,7 @@ package waker
 // | Launcher  | Runs the agent argv in a directory and waits for it to exit          | 27    |
 // | Repo      | One repository the waker drives: where, how, and which session       | 34    |
 // | Launch    | Builds the argv and runs it, under the relaunch cap                  | 47    |
-// | ProbeDelay | Turns a server-dictated next_probe_after into a sleep               | 58    |
+// | ProbeDelay | Turns a server-dictated next_probe_after into a sleep               | 67    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -48,8 +48,17 @@ func Launch(ctx context.Context, cap *Cap, run Launcher, repo Repo, now time.Tim
 	if !cap.Allow(repo.Key, now) {
 		return false, nil
 	}
-	argv := repo.Agent.LaunchArgv(repo.SessionID, WakePrompt)
-	return true, run(ctx, repo.Path, argv)
+
+	err = run(ctx, repo.Path, repo.Agent.LaunchArgv(repo.SessionID, WakePrompt))
+
+	// A resume that failed is most often a session Claude no longer has — deleted, or aged out of its
+	// local store — and `claude -r <dead>` exits non-zero. A fresh launch still reads the inbox and
+	// answers, so fall back to one rather than drop the wake. Bounded: the fallback passes an empty
+	// session id, so it can never itself resume, and this runs at most once.
+	if err != nil && repo.Agent.Resumes(repo.SessionID) {
+		err = run(ctx, repo.Path, repo.Agent.LaunchArgv("", WakePrompt))
+	}
+	return true, err
 }
 
 // ProbeDelay turns the server's next_probe_after into a sleep, with a floor so a misread or missing
