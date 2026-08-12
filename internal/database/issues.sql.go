@@ -85,7 +85,7 @@ func (q *Queries) AnswerIssue(ctx context.Context, arg AnswerIssueParams) (Answe
 
 const appendEvent = `-- name: AppendEvent :one
 INSERT INTO events (team_id, project_id, actor_project_id, notify_project_id, kind, subject_type, subject_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+VALUES ($1, $2, $3, $4::uuid, $5, $6, $7)
 RETURNING id
 `
 
@@ -102,6 +102,9 @@ type AppendEventParams struct {
 // AppendEvent returns the id it wrote: the caller uses it to bump the in-memory probe head (D55,
 // docs/DESIGN-WAKE.md §3), so a sleeping sibling can be woken without a query. The durable record
 // (the row) and the in-memory hint (the head) are the same fact.
+// notify_project_id is cast so sqlc keeps the Go parameter a plain uuid.UUID even though the column is
+// nullable: this query always supplies a target. A NULL only ever comes from an engine that predates
+// the column, through its own INSERT, never through here.
 func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, appendEvent,
 		arg.TeamID,

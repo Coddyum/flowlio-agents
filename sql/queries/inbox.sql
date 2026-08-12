@@ -13,12 +13,18 @@
 -- notify_project_id is this project — the ones that should actually wake it. A repo answering an issue
 -- writes an event addressed to the OTHER party, so its own answer never lifts its own head, and the
 -- probe stops waking it for its own writes.
+--
+-- A NULL notify_project_id was written by an engine that predates this column (the hosted image lags,
+-- D29): it carries no target, so it is treated as addressed to everyone rather than dropped. Erring
+-- towards a wake is the safe side — a missed wake leaves a real answer unseen, a spurious one costs a
+-- cheap empty probe.
 -- name: InboxCursor :one
 SELECT
     coalesce((SELECT c.last_event_id FROM token_cursors c WHERE c.token_id = @token_id), 0)::bigint
         AS last_event_id,
     coalesce((SELECT max(e.id) FROM events e
-              WHERE e.team_id = @team_id AND e.notify_project_id = @project_id), 0)::bigint
+              WHERE e.team_id = @team_id
+                AND (e.notify_project_id = @project_id::uuid OR e.notify_project_id IS NULL)), 0)::bigint
         AS head_event_id;
 
 -- Seau 1 — needs_answer : quelqu'un est bloqué sur moi.
