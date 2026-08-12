@@ -127,11 +127,16 @@ release:
 # `flowlio-api` (the engine self-host starts).
 brews:
   - name: flowlio
+    # Push to the tap ONLY when the token is present. `.Env.KEY` fails goreleaser outright when the
+    # variable is unset — it turned the whole release red on v1.0.1, after the binaries were already
+    # published. `index .Env "KEY"` returns "" instead, and skip_upload then generates the formula
+    # without pushing it, so a release never fails just because the tap auto-publish is not wired yet.
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
     repository:
       owner: Coddyum
       name: homebrew-flowlio
       branch: main
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      token: '{{ index .Env "HOMEBREW_TAP_TOKEN" }}'
     directory: Formula
     homepage: "https://github.com/Coddyum/flowlio-agents"
     description: "Project manager for AI agents: cross-repo issues, and a waker that closes the loop"
