@@ -157,6 +157,31 @@ func TestListReposSkipsAnUnreadableFile(t *testing.T) {
 	}
 }
 
+// A sidecar that shares the directory and the .json extension — the launch-time MCP config
+// <id>.mcp.json most of all — is not a record and must not be listed: it decodes into an empty
+// RepoFile, and the waker would otherwise skip a phantom `/` with no filed path (2026-08-12).
+func TestListReposSkipsTheMCPConfigSidecar(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+
+	if _, err := SaveRepo(RepoFile{Project: "hosted", Repo: "CORE", RepoID: "id-1", Path: "/tmp/core"}); err != nil {
+		t.Fatalf("SaveRepo: %v", err)
+	}
+	sidecar := filepath.Join(home, "flowlio", "repos", "hosted", "id-1.mcp.json")
+	body := `{"mcpServers":{"flowlio-agents":{"type":"http","url":"https://x/mcp?repo=id-1"}}}`
+	if err := os.WriteFile(sidecar, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing the sidecar: %v", err)
+	}
+
+	repos, err := ListRepos()
+	if err != nil {
+		t.Fatalf("ListRepos: %v", err)
+	}
+	if len(repos) != 1 || repos[0].Repo != "CORE" {
+		t.Errorf("ListRepos = %+v, expected the CORE record alone (the .mcp.json is not a record)", repos)
+	}
+}
+
 // Two hosted repositories sharing a key (CORE) but not an id must not share a file. A hosted machine
 // files every repo under the one "hosted" directory, so keying by key alone let the second
 // `flowlio connect --id` bury the first (2026-08-12). Keying by id, both survive and both are listed.
