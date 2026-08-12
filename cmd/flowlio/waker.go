@@ -4,13 +4,12 @@ package main
 //
 // | Élément       | Résumé                                                          | Ligne |
 // |---------------|-----------------------------------------------------------------|-------|
-// | runWaker      | Runs the waker in the mode's transport: push (self-host) or poll   | 60    |
-// | launchFor     | Builds one repo's launch closure, shared by both transports        | 119   |
-// | serveRepo     | Starts one repo's loopback listener and registers it              | 164   |
-// | registerLoop  | Registers with the engine and refreshes before the lease lapses   | 193   |
-// | resolveAgent  | Turns a repo's stored config into a launch recipe                 | 219   |
-// | execLauncher  | Runs the agent argv in the repo directory                         | 239   |
-// | plural        | The one-letter tail that keeps a count line grammatical           | 251   |
+// | runWaker      | Runs the waker in the mode's transport: push (self-host) or poll   | 58    |
+// | launchFor     | Builds one repo's launch closure, shared by both transports        | 117   |
+// | serveRepo     | Starts one repo's loopback listener and registers it              | 172   |
+// | registerLoop  | Registers with the engine and refreshes before the lease lapses   | 201   |
+// | resolveAgent  | Turns a repo's stored config into a launch recipe                 | 227   |
+// | plural        | The one-letter tail that keeps a count line grammatical           | 245   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -32,7 +31,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"time"
 
@@ -140,18 +138,28 @@ func launchFor(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap, hos
 		repo.ExtraArgs = []string{"--mcp-config", cfg, "--strict-mcp-config"}
 	}
 
+	logPath, err := agentLogPath(rf)
+	if err != nil {
+		return nil, err
+	}
+	launcher := newAgentLauncher(logPath)
+
 	return func() {
 		// Read the session id AT LAUNCH, not once at startup: a resume points at a specific Claude
 		// session, and between two wakes that session can be replaced by a newer one (the SessionStart
 		// hook refiled it) or cleared entirely. A stale id baked in at startup meant the waker retried a
 		// dead session on every wake until it was restarted.
 		repo.SessionID = loadSession(rf)
-		launched, err := waker.Launch(ctx, cap, execLauncher, repo, time.Now())
+		wakeLog(rf.Repo, "wake — launching %s", agent.Name)
+		start := time.Now()
+		launched, err := waker.Launch(ctx, cap, launcher, repo, start)
 		switch {
 		case err != nil:
-			fmt.Fprintf(os.Stderr, "flowlio waker: %s launch failed: %v\n", rf.Repo, err)
+			wakeLog(rf.Repo, "failed — %v (log: %s)", err, logPath)
 		case !launched:
-			fmt.Fprintf(os.Stderr, "flowlio waker: %s wake dropped — relaunch cap reached\n", rf.Repo)
+			wakeLog(rf.Repo, "wake dropped — relaunch cap reached")
+		default:
+			wakeLog(rf.Repo, "done — %s", time.Since(start).Round(time.Second))
 		}
 	}, nil
 }
@@ -231,20 +239,6 @@ func resolveAgent(rf credentials.RepoFile) (waker.Agent, error) {
 		return agent, nil
 	}
 	return waker.Agent{}, fmt.Errorf("unknown agent %q (known: claude, codex, opencode, or a custom command)", name)
-}
-
-// execLauncher runs the agent argv in the repository directory and waits for it to exit. Its output
-// goes to stderr: stdout of `flowlio waker` carries nothing an agent reads, and the agent's own
-// stream is the operator's window into what a wake did.
-func execLauncher(ctx context.Context, dir string, argv []string) error {
-	if len(argv) == 0 {
-		return errors.New("empty launch command")
-	}
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Dir = dir
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 // plural is the one-letter tail that keeps a count line grammatical.
