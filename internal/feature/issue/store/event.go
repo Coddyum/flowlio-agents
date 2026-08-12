@@ -17,21 +17,23 @@ import (
 // anything else without re-reading docs/DESIGN-M3.md.
 func (s *store) AppendEvent(ctx context.Context, event Event) error {
 	id, err := s.q.AppendEvent(ctx, database.AppendEventParams{
-		TeamID:         event.TeamID,
-		ProjectID:      event.ProjectID,
-		ActorProjectID: event.ActorProjectID,
-		Kind:           event.Kind,
-		SubjectType:    database.EventSubjectIssue,
-		SubjectID:      event.SubjectID,
+		TeamID:          event.TeamID,
+		ProjectID:       event.ProjectID,
+		ActorProjectID:  event.ActorProjectID,
+		NotifyProjectID: event.NotifyProjectID,
+		Kind:            event.Kind,
+		SubjectType:     database.EventSubjectIssue,
+		SubjectID:       event.SubjectID,
 	})
 	if err != nil {
 		return translate(err, "append event")
 	}
 
-	// Bump the in-memory probe head so a sleeping sibling learns there is something to answer
-	// without a query (D55). Kept inside the transaction on purpose: the id we hand the probe is
-	// the durable one. A rollback would leave the head one wake too high — a wasted wake, never a
-	// wrong state (see internal/core/probe).
-	probe.RecordEvent(s.cache, event.TeamID, id)
+	// Bump the in-memory probe head of the project this event is addressed to, so a sleeping sibling
+	// learns there is something to answer without a query (D55). Keyed by the notify target, not the
+	// team: the author's own event never lifts the author's head. Kept inside the transaction on
+	// purpose: the id we hand the probe is the durable one. A rollback would leave the head one wake
+	// too high — a wasted wake, never a wrong state (see internal/core/probe).
+	probe.RecordEvent(s.cache, event.TeamID, event.NotifyProjectID, id)
 	return nil
 }

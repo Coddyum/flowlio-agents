@@ -101,6 +101,7 @@ CREATE TABLE public.events (
     subject_type public.event_subject NOT NULL,
     subject_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    notify_project_id uuid NOT NULL,
     CONSTRAINT events_kind_format CHECK ((kind ~ '^[a-z_]+\.[a-z_]+$'::text))
 );
 
@@ -512,6 +513,13 @@ CREATE INDEX events_actor_idx ON public.events USING btree (actor_project_id);
 
 
 --
+-- Name: events_notify_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX events_notify_idx ON public.events USING btree (team_id, notify_project_id, id);
+
+
+--
 -- Name: events_subject_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -659,6 +667,14 @@ ALTER TABLE ONLY public.tokens
 
 ALTER TABLE ONLY public.events
     ADD CONSTRAINT events_actor_fk FOREIGN KEY (actor_project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
+
+
+--
+-- Name: events events_notify_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.events
+    ADD CONSTRAINT events_notify_fk FOREIGN KEY (notify_project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
 
 
 --

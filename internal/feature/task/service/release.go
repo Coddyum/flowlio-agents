@@ -92,11 +92,12 @@ func (s *service) announceFreed(ctx context.Context, tx store.Store, teamID, pro
 		// The actor is the project itself: a dependency never crosses a repo (D42), so no case
 		// exists where a third party is the author of the unblocking.
 		if err := tx.AppendEvent(ctx, store.Event{
-			TeamID:         teamID,
-			ProjectID:      projectID,
-			ActorProjectID: projectID,
-			Kind:           eventTaskUnblocked,
-			SubjectID:      taskID,
+			TeamID:          teamID,
+			ProjectID:       projectID,
+			ActorProjectID:  projectID,
+			NotifyProjectID: projectID, // the unblocked task lives in this same repo (D42): wake it
+			Kind:            eventTaskUnblocked,
+			SubjectID:       taskID,
 		}); err != nil {
 			return translateStore(err, "append unblocked event")
 		}

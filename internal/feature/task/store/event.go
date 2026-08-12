@@ -5,7 +5,7 @@ package store
 // | Élément           | Résumé                                                    | Ligne |
 // |-------------------|-----------------------------------------------------------|-------|
 // | Event             | A journal entry the task feature writes                     | 27    |
-// | store.AppendEvent | Writes the entry and bumps the in-memory probe head         | 49    |
+// | store.AppendEvent | Writes the entry and bumps the in-memory probe head         | 50    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -25,11 +25,12 @@ import (
 // never imports another module. Both go through the same generated query, which keeps a single
 // definition of the table.
 type Event struct {
-	TeamID         uuid.UUID
-	ProjectID      uuid.UUID
-	ActorProjectID uuid.UUID
-	Kind           string
-	SubjectID      uuid.UUID
+	TeamID          uuid.UUID
+	ProjectID       uuid.UUID
+	ActorProjectID  uuid.UUID
+	NotifyProjectID uuid.UUID
+	Kind            string
+	SubjectID       uuid.UUID
 }
 
 // AppendEvent writes a journal entry, with `task` as the subject type.
@@ -48,21 +49,24 @@ type Event struct {
 // unblocked. Do not lean on it for anything else without re-reading docs/DESIGN-M3.md.
 func (s *store) AppendEvent(ctx context.Context, event Event) error {
 	id, err := s.q.AppendEvent(ctx, database.AppendEventParams{
-		TeamID:         event.TeamID,
-		ProjectID:      event.ProjectID,
-		ActorProjectID: event.ActorProjectID,
-		Kind:           event.Kind,
-		SubjectType:    database.EventSubjectTask,
-		SubjectID:      event.SubjectID,
+		TeamID:          event.TeamID,
+		ProjectID:       event.ProjectID,
+		ActorProjectID:  event.ActorProjectID,
+		NotifyProjectID: event.NotifyProjectID,
+		Kind:            event.Kind,
+		SubjectType:     database.EventSubjectTask,
+		SubjectID:       event.SubjectID,
 	})
 	if err != nil {
 		return translate(err, "append event")
 	}
 
-	// Bump the in-memory probe head so an unblocked task's project learns of it without a query
-	// (D55). Inside the transaction on purpose, like the issue feature: the id is the durable one,
-	// and a rollback costs at worst a wasted wake (see internal/core/probe).
-	probe.RecordEvent(s.cache, event.TeamID, id)
+	// Bump the in-memory probe head of the project the unblocking is addressed to, so its project
+	// learns of it without a query (D55). For a task unblock the notify target is the SAME repo (a
+	// dependency never crosses one, D42), so here the self-wake is legitimate and wanted. Inside the
+	// transaction on purpose, like the issue feature: the id is the durable one, and a rollback costs
+	// at worst a wasted wake (see internal/core/probe).
+	probe.RecordEvent(s.cache, event.TeamID, event.NotifyProjectID, id)
 
 	// Push a wake to that project's local waker. Unlike an issue answer, a task unblock always
 	// concerns the SAME project as the event (a dependency never crosses a repo, D42), so the store

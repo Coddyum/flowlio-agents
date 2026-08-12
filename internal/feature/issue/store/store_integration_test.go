@@ -125,11 +125,12 @@ func open(t *testing.T, st store.Store, from, to project, title string) store.Is
 			return err
 		}
 		return tx.AppendEvent(ctx, store.Event{
-			TeamID:         from.teamID,
-			ProjectID:      created.ProjectID,
-			ActorProjectID: from.id,
-			Kind:           store.KindIssueOpened,
-			SubjectID:      created.ID,
+			TeamID:          from.teamID,
+			ProjectID:       created.ProjectID,
+			ActorProjectID:  from.id,
+			NotifyProjectID: created.ProjectID,
+			Kind:            store.KindIssueOpened,
+			SubjectID:       created.ID,
 		})
 	})
 	if err != nil {

@@ -62,7 +62,7 @@ type Service interface {
 // service depends on the store interface, never on sqlc.
 type service struct {
 	store store.Store
-	// cache carries the probe signal: Check warms the token cursor and the team head in it, so the
+	// cache carries the probe signal: Check warms the token cursor and the project's relevance head in it, so the
 	// wake probe answers "is there anything?" in memory (D55, docs/DESIGN-WAKE.md §3). check_inbox
 	// is the cursor's writer, so it is also where the cached cursor is kept in step.
 	cache cache.Cache

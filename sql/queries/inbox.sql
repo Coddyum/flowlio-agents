@@ -5,14 +5,20 @@
 -- Le journal n'est jamais lu par un prédicat propre : il est atteint par EXISTS sur un sujet déjà
 -- scopé. Il n'existe donc aucune query capable de lire l'activité d'un projet tiers.
 
--- InboxCursor lit le curseur du token ET la tête du journal de la team en une fois. La tête est
--- capturée AVANT le calcul des seaux : tout événement créé pendant l'appel restera `new` au
--- prochain tour.
+-- InboxCursor reads the token cursor AND the head of what is addressed to this project, in one call.
+-- The head is captured BEFORE the buckets are computed: any event created during the call stays `new`
+-- on the next round.
+--
+-- The head is a PER-PROJECT relevance head, not the team's activity: max(id) among the events whose
+-- notify_project_id is this project — the ones that should actually wake it. A repo answering an issue
+-- writes an event addressed to the OTHER party, so its own answer never lifts its own head, and the
+-- probe stops waking it for its own writes.
 -- name: InboxCursor :one
 SELECT
     coalesce((SELECT c.last_event_id FROM token_cursors c WHERE c.token_id = @token_id), 0)::bigint
         AS last_event_id,
-    coalesce((SELECT max(e.id) FROM events e WHERE e.team_id = @team_id), 0)::bigint
+    coalesce((SELECT max(e.id) FROM events e
+              WHERE e.team_id = @team_id AND e.notify_project_id = @project_id), 0)::bigint
         AS head_event_id;
 
 -- Seau 1 — needs_answer : quelqu'un est bloqué sur moi.

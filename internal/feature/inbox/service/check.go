@@ -101,7 +101,7 @@ func (s *service) Check(ctx context.Context, in CheckInput) (Inbox, error) {
 	// reach it. Keeping the cached cursor in step here is not optional — check_inbox is what moves
 	// the durable cursor, so a stale cached cursor would leave the probe reporting phantom work and
 	// waking the agent for nothing until the next reseed.
-	probe.Seed(s.cache, in.TeamID, in.TokenID, cursor.HeadEventID, cursor.HeadEventID)
+	probe.Seed(s.cache, in.TeamID, in.ProjectID, in.TokenID, cursor.HeadEventID, cursor.HeadEventID)
 
 	if err := s.store.Advance(ctx, in.TokenID, cursor.HeadEventID); err != nil {
 		// Best effort: the response is right, only the comfort of the next call is degraded.

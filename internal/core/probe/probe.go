@@ -4,13 +4,13 @@ package probe
 //
 // | Élément      | Résumé                                                          | Ligne |
 // |--------------|-----------------------------------------------------------------|-------|
-// | RecordEvent  | Bumps the cached team head to at least a new event id             | 57    |
-// | Head         | Reads the cached head of a team's journal                         | 71    |
-// | RecordCursor | Stores the read position a token reached                          | 84    |
-// | Cursor       | Reads the cached read position of a token                         | 92    |
-// | Seed         | Stores head and cursor together from one cold read                | 105   |
-// | headKey      | Composes the cache key of a team head                             | 111   |
-// | cursorKey    | Composes the cache key of a token cursor                          | 114   |
+// | RecordEvent  | Bumps the cached head of the notified project to a new event id   | 65    |
+// | Head         | Reads the cached relevance head of a project                      | 80    |
+// | RecordCursor | Stores the read position a token reached                          | 93    |
+// | Cursor       | Reads the cached read position of a token                         | 101   |
+// | Seed         | Stores head and cursor together from one cold read                | 115   |
+// | headKey      | Composes the cache key of a project relevance head                | 121   |
+// | cursorKey    | Composes the cache key of a token cursor                          | 126   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -19,8 +19,14 @@ package probe
 // "is there anything for me?" must be an integer-vs-integer compare held in memory, NEVER a query.
 // Two scalars carry it, both scoped and both process-local:
 //
-//   - team head  : max(events.id) of the team, written by whoever writes an event;
-//   - token cursor: the read position, written by check_inbox when it advances.
+//   - relevance head : max(events.id) ADDRESSED to a project (its notify_project_id), written by
+//     whoever writes the event — never team-wide activity;
+//   - token cursor   : the read position, written by check_inbox when it advances.
+//
+// The head is per-project on purpose. A team-wide head woke a repo for events it authored itself: a
+// repo answering an issue bumped the shared head above its own cursor and the next probe woke it for
+// nothing. Keying the head by the project the event is meant to wake (the same party the push
+// transport signals) means a repo's own writes, addressed to the OTHER party, never lift its head.
 //
 // The probe (internal/feature/wake) compares head > cursor. Everything here is a thin, typed cover
 // over the shared cache.Cache already in ModuleConfig — no new field on a critical struct, one place
@@ -49,16 +55,18 @@ import (
 // expiry the probe reseeds from one cold read, so a long TTL only widens the zero-SQL window.
 const ttl = 24 * time.Hour
 
-// RecordEvent bumps the cached head of teamID to at least eventID. Called by whoever appends to the
-// journal, so that a probe learns a sibling answered without a query.
+// RecordEvent bumps the cached head of the project the event is addressed to (notifyProjectID) to at
+// least eventID. Called by whoever appends to the journal, so that a probe learns a sibling answered
+// without a query. The notify target is the party the write means to wake — never the actor — so a
+// repo's own writes leave its own head untouched.
 //
 // The max keeps the head monotonic: an out-of-order or rolled-back write can never drag it below a
 // position a token has already read.
-func RecordEvent(c cache.Cache, teamID uuid.UUID, eventID int64) {
+func RecordEvent(c cache.Cache, teamID, notifyProjectID uuid.UUID, eventID int64) {
 	if c == nil {
 		return
 	}
-	key := headKey(teamID)
+	key := headKey(teamID, notifyProjectID)
 	if cur, ok := c.Get(key); ok {
 		if h, isInt := cur.(int64); isInt && h >= eventID {
 			return
@@ -67,12 +75,13 @@ func RecordEvent(c cache.Cache, teamID uuid.UUID, eventID int64) {
 	c.Set(key, eventID, ttl)
 }
 
-// Head reads the cached head of a team's journal, and whether it was warm.
-func Head(c cache.Cache, teamID uuid.UUID) (int64, bool) {
+// Head reads the cached relevance head of a project — the id of the latest event addressed to it —
+// and whether it was warm.
+func Head(c cache.Cache, teamID, projectID uuid.UUID) (int64, bool) {
 	if c == nil {
 		return 0, false
 	}
-	v, ok := c.Get(headKey(teamID))
+	v, ok := c.Get(headKey(teamID, projectID))
 	if !ok {
 		return 0, false
 	}
@@ -101,14 +110,17 @@ func Cursor(c cache.Cache, tokenID uuid.UUID) (int64, bool) {
 	return cur, isInt
 }
 
-// Seed stores head and cursor together, the way a cold probe warms both from its single read.
-func Seed(c cache.Cache, teamID, tokenID uuid.UUID, head, cursor int64) {
-	RecordEvent(c, teamID, head)
+// Seed stores head and cursor together, the way a cold probe warms both from its single read. The
+// head belongs to the project the cursor's token speaks for: both come out of the one cold read.
+func Seed(c cache.Cache, teamID, projectID, tokenID uuid.UUID, head, cursor int64) {
+	RecordEvent(c, teamID, projectID, head)
 	RecordCursor(c, tokenID, cursor)
 }
 
-// headKey composes the cache key of a team head.
-func headKey(teamID uuid.UUID) string { return "probe:head:" + teamID.String() }
+// headKey composes the cache key of a project relevance head.
+func headKey(teamID, projectID uuid.UUID) string {
+	return "probe:head:" + teamID.String() + ":" + projectID.String()
+}
 
 // cursorKey composes the cache key of a token cursor.
 func cursorKey(tokenID uuid.UUID) string { return "probe:cursor:" + tokenID.String() }

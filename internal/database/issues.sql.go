@@ -84,18 +84,19 @@ func (q *Queries) AnswerIssue(ctx context.Context, arg AnswerIssueParams) (Answe
 }
 
 const appendEvent = `-- name: AppendEvent :one
-INSERT INTO events (team_id, project_id, actor_project_id, kind, subject_type, subject_id)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO events (team_id, project_id, actor_project_id, notify_project_id, kind, subject_type, subject_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id
 `
 
 type AppendEventParams struct {
-	TeamID         uuid.UUID    `json:"team_id"`
-	ProjectID      uuid.UUID    `json:"project_id"`
-	ActorProjectID uuid.UUID    `json:"actor_project_id"`
-	Kind           string       `json:"kind"`
-	SubjectType    EventSubject `json:"subject_type"`
-	SubjectID      uuid.UUID    `json:"subject_id"`
+	TeamID          uuid.UUID    `json:"team_id"`
+	ProjectID       uuid.UUID    `json:"project_id"`
+	ActorProjectID  uuid.UUID    `json:"actor_project_id"`
+	NotifyProjectID uuid.UUID    `json:"notify_project_id"`
+	Kind            string       `json:"kind"`
+	SubjectType     EventSubject `json:"subject_type"`
+	SubjectID       uuid.UUID    `json:"subject_id"`
 }
 
 // AppendEvent returns the id it wrote: the caller uses it to bump the in-memory probe head (D55,
@@ -106,6 +107,7 @@ func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) (int64
 		arg.TeamID,
 		arg.ProjectID,
 		arg.ActorProjectID,
+		arg.NotifyProjectID,
 		arg.Kind,
 		arg.SubjectType,
 		arg.SubjectID,

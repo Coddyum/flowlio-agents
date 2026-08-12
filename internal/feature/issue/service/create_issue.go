@@ -67,11 +67,12 @@ func (s *service) CreateIssue(ctx context.Context, in CreateIssueInput) (Issue, 
 		}
 
 		return translateStore(tx.AppendEvent(ctx, store.Event{
-			TeamID:         in.TeamID,
-			ProjectID:      created.ProjectID,
-			ActorProjectID: in.AuthorProjectID,
-			Kind:           store.KindIssueOpened,
-			SubjectID:      created.ID,
+			TeamID:          in.TeamID,
+			ProjectID:       created.ProjectID,
+			ActorProjectID:  in.AuthorProjectID,
+			NotifyProjectID: created.ProjectID, // the recipient must answer: wake it, not the author
+			Kind:            store.KindIssueOpened,
+			SubjectID:       created.ID,
 		}), "opening event")
 	})
 	if err != nil {

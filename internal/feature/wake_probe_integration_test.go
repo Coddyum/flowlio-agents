@@ -87,7 +87,7 @@ func TestWakeProbeIsFreeInSteadyStateThenSeesARealEvent(t *testing.T) {
 	wsvc := wakeservice.New(wakestore.New(counted), c)
 	issues := issuestore.New(database.New(db), db, c)
 
-	in := wakeservice.ProbeInput{TeamID: f.teamID, TokenID: tokenID}
+	in := wakeservice.ProbeInput{TeamID: f.teamID, ProjectID: f.projectID, TokenID: tokenID}
 
 	// The first probe finds a cold cache and seeds it from one read.
 	r, err := wsvc.Probe(ctx, in)
@@ -118,23 +118,25 @@ func TestWakeProbeIsFreeInSteadyStateThenSeesARealEvent(t *testing.T) {
 		t.Fatalf("100 empty probes issued %d queries, want 0 — the steady-state probe is hitting Postgres", got)
 	}
 
-	// A sibling answers: the issue feature appends the event, and that write bumps the shared head.
+	// A sibling answers, addressing the event to THIS project: the issue feature appends it, and that
+	// write bumps this project's relevance head.
 	if err := issues.WithTx(ctx, func(tx issuestore.Store) error {
 		return tx.AppendEvent(ctx, issuestore.Event{
-			TeamID:         f.teamID,
-			ProjectID:      f.projectID,
-			ActorProjectID: f.projectID,
-			Kind:           issuestore.KindIssueAnswered,
-			SubjectID:      uuid.New(),
+			TeamID:          f.teamID,
+			ProjectID:       f.projectID,
+			ActorProjectID:  f.projectID,
+			NotifyProjectID: f.projectID,
+			Kind:            issuestore.KindIssueAnswered,
+			SubjectID:       uuid.New(),
 		})
 	}); err != nil {
 		t.Fatalf("appending the event: %v", err)
 	}
 
-	// The head bump reached the SHARED cache: the team head is now strictly above this token's
+	// The head bump reached the SHARED cache: this project's head is now strictly above this token's
 	// cursor, entirely in memory, no query. This is the wiring the wake path rests on —
 	// AppendEvent → probe head → the compare a probe makes.
-	head, headWarm := probe.Head(c, f.teamID)
+	head, headWarm := probe.Head(c, f.teamID, f.projectID)
 	cursor, cursorWarm := probe.Cursor(c, tokenID)
 	if !headWarm || !cursorWarm {
 		t.Fatal("the shared probe signal went cold — the head bump did not reach the cache")
@@ -154,11 +156,143 @@ func TestWakeProbeIsFreeInSteadyStateThenSeesARealEvent(t *testing.T) {
 	).Scan(&fresh); err != nil {
 		t.Fatalf("creating the fresh token: %v", err)
 	}
-	r, err = wsvc.Probe(ctx, wakeservice.ProbeInput{TeamID: f.teamID, TokenID: fresh})
+	r, err = wsvc.Probe(ctx, wakeservice.ProbeInput{TeamID: f.teamID, ProjectID: f.projectID, TokenID: fresh})
 	if err != nil {
 		t.Fatalf("fresh-token probe: %v", err)
 	}
 	if !r.HasWork {
 		t.Fatal("a fresh token's probe did not see the event a sibling wrote")
 	}
+}
+
+// TestAnsweringAnIssueDoesNotWakeTheAnswerer is the regression for the empty second wake (FLWL-82).
+//
+// The waker log that opened the card: a repo answered an issue, then woke a SECOND time for nothing.
+// The cause was a team-wide probe head — a repo's own answer bumped it above the repo's own cursor,
+// so the next probe reported work that was the repo's own write. The head is now per-project, keyed
+// by the event's notify target, so an answer addressed to the OTHER party never lifts the answerer's
+// own head.
+//
+// It reads the head through wakestore.Position — the cold read the probe seeds from — because that
+// is where the per-project SQL lives, and because it is free of the escalation ladder that a
+// repeated same-token Probe would throttle. Position reports work when Head is strictly above Cursor.
+//
+// The scenario is the exact one from the log, driven through the real AppendEvent path:
+//   - AGNT opens a question to CORE  → event addressed to CORE (CORE has work, AGNT does not)
+//   - CORE reads its inbox           → its cursor catches its head
+//   - CORE answers                   → event addressed to AGNT (CORE's own write)
+//   - CORE's head                    → UNMOVED (the bug lifted it here → empty second wake)
+//   - AGNT's head                    → carries the answer
+func TestAnsweringAnIssueDoesNotWakeTheAnswerer(t *testing.T) {
+	db, f := newFixture(t)
+	ctx := context.Background()
+
+	// A second project in the same team: AGNT, the author. The fixture already made CORE (f.projectID),
+	// the recipient that will answer.
+	var agntID uuid.UUID
+	if err := db.QueryRow(
+		"INSERT INTO projects (team_id, key, name) VALUES ($1, 'AGNT', 'Project AGNT') RETURNING id",
+		f.teamID,
+	).Scan(&agntID); err != nil {
+		t.Fatalf("creating project AGNT: %v", err)
+	}
+	coreID := f.projectID
+
+	coreToken := insertProjectToken(t, db, f.teamID, coreID, "core")
+	agntToken := insertProjectToken(t, db, f.teamID, agntID, "agnt")
+
+	c := cache.NewMemory(time.Hour, time.Hour)
+	issues := issuestore.New(database.New(db), db, c)
+	positions := wakestore.New(database.New(db))
+
+	hasWork := func(who string, teamID, projectID, tokenID uuid.UUID) bool {
+		t.Helper()
+		pos, err := positions.Position(ctx, teamID, projectID, tokenID)
+		if err != nil {
+			t.Fatalf("position for %s: %v", who, err)
+		}
+		return pos.Head > pos.Cursor
+	}
+	subject := uuid.New()
+
+	// AGNT opens a question to CORE: the event is addressed to CORE, the party that must answer.
+	if err := issues.WithTx(ctx, func(tx issuestore.Store) error {
+		return tx.AppendEvent(ctx, issuestore.Event{
+			TeamID:          f.teamID,
+			ProjectID:       coreID,
+			ActorProjectID:  agntID,
+			NotifyProjectID: coreID,
+			Kind:            issuestore.KindIssueOpened,
+			SubjectID:       subject,
+		})
+	}); err != nil {
+		t.Fatalf("appending the opening event: %v", err)
+	}
+
+	// CORE has a question to answer; AGNT is only waiting, so a question addressed to CORE is no work
+	// for AGNT.
+	if !hasWork("CORE", f.teamID, coreID, coreToken) {
+		t.Fatal("CORE was not woken for a question addressed to it")
+	}
+	if hasWork("AGNT", f.teamID, agntID, agntToken) {
+		t.Fatal("AGNT was woken for a question addressed to CORE — a sibling's event leaked across")
+	}
+
+	// CORE reads its inbox: its cursor catches up to its head, exactly as check_inbox advances it.
+	pos, err := positions.Position(ctx, f.teamID, coreID, coreToken)
+	if err != nil {
+		t.Fatalf("core position before advancing: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO token_cursors (token_id, last_event_id) VALUES ($1, $2)
+		 ON CONFLICT (token_id) DO UPDATE SET last_event_id = EXCLUDED.last_event_id`,
+		coreToken, pos.Head,
+	); err != nil {
+		t.Fatalf("advancing CORE cursor: %v", err)
+	}
+	if hasWork("CORE", f.teamID, coreID, coreToken) {
+		t.Fatal("CORE reported work right after reading its inbox, before anyone wrote anything")
+	}
+
+	// CORE answers: the event is addressed to AGNT, the other party. This is CORE's OWN write.
+	if err := issues.WithTx(ctx, func(tx issuestore.Store) error {
+		return tx.AppendEvent(ctx, issuestore.Event{
+			TeamID:          f.teamID,
+			ProjectID:       coreID,
+			ActorProjectID:  coreID,
+			NotifyProjectID: agntID,
+			Kind:            issuestore.KindIssueAnswered,
+			SubjectID:       subject,
+		})
+	}); err != nil {
+		t.Fatalf("appending the answer event: %v", err)
+	}
+
+	// THE REGRESSION. With a team-wide head, CORE's own answer sat above CORE's cursor and the next
+	// probe reported work — the empty second wake. With a per-project head the answer lifted AGNT's
+	// head, not CORE's, so CORE has nothing.
+	if hasWork("CORE", f.teamID, coreID, coreToken) {
+		t.Fatal("CORE was woken by its own answer — the empty second wake FLWL-82 fixes")
+	}
+
+	// And the answer is not lost: it is waiting for AGNT.
+	if !hasWork("AGNT", f.teamID, agntID, agntToken) {
+		t.Fatal("AGNT was not woken for the answer addressed to it")
+	}
+}
+
+// insertProjectToken creates a project-scoped token and returns its id. The prefix is unique per call
+// so two tokens in one test never collide on the prefix unique index.
+func insertProjectToken(t *testing.T, db *sql.DB, teamID, projectID uuid.UUID, name string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	prefix := strings.ToLower(uuid.NewString()[:8]) + "tkn0"
+	if err := db.QueryRow(
+		`INSERT INTO tokens (team_id, project_id, name, prefix, secret_hash, scope)
+		 VALUES ($1, $2, $3, $4, 'test-hash', 'project') RETURNING id`,
+		teamID, projectID, name, prefix,
+	).Scan(&id); err != nil {
+		t.Fatalf("creating token %q: %v", name, err)
+	}
+	return id
 }

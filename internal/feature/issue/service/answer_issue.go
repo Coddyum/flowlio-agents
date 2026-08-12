@@ -4,8 +4,8 @@ package service
 //
 // | Élément         | Résumé                                                       | Ligne |
 // |-----------------|--------------------------------------------------------------|-------|
-// | service.Answer  | Appends a message to the thread and applies the transition     | 30    |
-// | kindFor         | Names the event after the state reached                        | 84    |
+// | service.Answer  | Appends a message to the thread and applies the transition     | 31    |
+// | kindFor         | Names the event after the state reached                        | 91    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -16,6 +16,7 @@ import (
 
 	"github.com/Coddyum/flowlio-agents/internal/core/wakepush"
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
+	"github.com/google/uuid"
 )
 
 // Answer appends a message to the thread and, when asked, closes the issue.
@@ -38,6 +39,7 @@ func (s *service) Answer(ctx context.Context, in AnswerInput) (Issue, error) {
 	}
 
 	var answered store.Issue
+	var other uuid.UUID
 	err := s.store.WithTx(ctx, func(tx store.Store) error {
 		var err error
 		answered, err = tx.Answer(ctx, store.Answer{
@@ -54,26 +56,31 @@ func (s *service) Answer(ctx context.Context, in AnswerInput) (Issue, error) {
 			return translateStore(err, "answer issue")
 		}
 
+		// The OTHER party — the one who did not just speak — is who the event must wake, and so is its
+		// notify target. The recipient answering wakes the author; the author following up wakes the
+		// recipient. Never the caller: keying the probe head on `other` is what stops the answering
+		// repo from waking itself for its own event.
+		other = answered.ProjectID
+		if in.Ref.CallerProjectID == answered.ProjectID {
+			other = answered.AuthorProjectID
+		}
+
 		return translateStore(tx.AppendEvent(ctx, store.Event{
-			TeamID:         in.Ref.TeamID,
-			ProjectID:      answered.ProjectID,
-			ActorProjectID: in.Ref.CallerProjectID,
-			Kind:           kindFor(answered.State),
-			SubjectID:      answered.ID,
+			TeamID:          in.Ref.TeamID,
+			ProjectID:       answered.ProjectID,
+			ActorProjectID:  in.Ref.CallerProjectID,
+			NotifyProjectID: other,
+			Kind:            kindFor(answered.State),
+			SubjectID:       answered.ID,
 		}), "answer event")
 	})
 	if err != nil {
 		return Issue{}, err
 	}
 
-	// Wake the OTHER party — the one who did not just speak. The recipient answering wakes the
-	// author (its question is answered); the author following up wakes the recipient (a new message
-	// awaits it). Signalling the caller's own repo would only wake the session that is already live
-	// (D55). Best effort — the ladder and the piggyback are the backstop.
-	other := answered.ProjectID
-	if in.Ref.CallerProjectID == answered.ProjectID {
-		other = answered.AuthorProjectID
-	}
+	// Push a wake to that same OTHER party's local waker, so a dead session there learns without
+	// waiting for a human (D55). Signalling the caller's own repo would only wake the session that is
+	// already live. Best effort — the ladder and the piggyback are the backstop.
 	wakepush.Signal(s.cache, in.Ref.TeamID, other)
 
 	return toIssue(answered), nil
