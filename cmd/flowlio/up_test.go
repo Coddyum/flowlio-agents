@@ -28,6 +28,10 @@ func TestUpPlanComposition(t *testing.T) {
 }
 
 func TestDetectMode(t *testing.T) {
+	// Isolate the config dir: with FLOWLIO_MODE unset, detectMode falls back to hostedLoggedIn,
+	// which reads $XDG_CONFIG_HOME/flowlio/hosted.json. Point it at an empty temp dir so a developer
+	// who has actually run `flowlio login` on this machine does not turn the default-mode case red.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FLOWLIO_MODE", "hosted")
 	if m, err := detectMode(); err != nil || m != modeHosted {
 		t.Errorf("FLOWLIO_MODE=hosted → mode=%v err=%v, want hosted", m, err)
