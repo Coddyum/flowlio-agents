@@ -4,12 +4,12 @@ package waker
 //
 // | Élément        | Résumé                                                        | Ligne |
 // |----------------|---------------------------------------------------------------|-------|
-// | Agent          | How to launch one configured agent, fresh or by resume           | 44    |
-// | Preset         | The built-in launch recipe for a known agent                    | 52    |
-// | Custom         | An arbitrary command template for an unknown agent               | 76    |
-// | Agent.Resumes  | Reports whether a wake with this session id resumes or goes fresh | 88    |
-// | Agent.LaunchArgv | Builds the argv for one wake, resuming when it can             | 97    |
-// | substitute     | Fills {session} and {prompt} into a template                    | 107   |
+// | Agent          | How to launch one configured agent, fresh or by resume           | 60    |
+// | Preset         | The built-in launch recipe for a known agent                    | 72    |
+// | Custom         | An arbitrary command template for an unknown agent               | 97    |
+// | Agent.Resumes  | Reports whether a wake with this session id resumes or goes fresh | 109   |
+// | Agent.LaunchArgv | Builds the argv for one wake, resuming when it can             | 118   |
+// | substitute     | Fills {session} and {prompt} into a template                    | 128   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -35,6 +35,22 @@ const WakePrompt = "You have inbox items — run check_inbox and act on them, th
 // `.mcp.json` (self-host) and flowlio.me (hosted) give the server: `flowlio-agents`.
 const claudeAllowedTools = "mcp__flowlio-agents"
 
+// claudeEffortArgs maps a rigour tier onto the model a woken Claude runs (FLWL-84, DESIGN-WAKE §14).
+// The whole point of the tier: a two-line answer to a trivial question does not need Opus, and this
+// is where the sender's declared rigour finally becomes a model — for Claude, and only Claude, the
+// one agent whose headless recipe FLWL-8 verified. codex/opencode carry no ladder yet (their Effort
+// map is nil, so nothing is injected and they launch at their own default), left for FLWL-85.
+//
+// Model aliases, not pinned ids: `haiku`/`sonnet`/`opus` track the current generation the way a
+// human's `claude --model opus` does, so the ladder does not rot as ids turn over. high and max both
+// map to opus today — max is the reserved rung for when effort also drives a thinking budget.
+var claudeEffortArgs = map[string][]string{
+	"low":      {"--model", "haiku"},
+	"standard": {"--model", "sonnet"},
+	"high":     {"--model", "opus"},
+	"max":      {"--model", "opus"},
+}
+
 // Agent is how to launch one configured agent.
 //
 // Command is the FRESH template, run in the repo directory; {prompt} is where the wake sentence
@@ -45,6 +61,10 @@ type Agent struct {
 	Name    string   `json:"name"`
 	Command []string `json:"command"`
 	Resume  []string `json:"resume,omitempty"`
+	// Effort maps a rigour tier (internal/pkg/effort) onto the extra argv that selects a model for it.
+	// Nil for an agent with no ladder, in which case a wake injects nothing and the agent launches at
+	// its own default. Only the Claude preset carries one today.
+	Effort map[string][]string `json:"-"`
 }
 
 // Preset yields the built-in launch recipe for a known agent, or false for an unknown name. The
@@ -60,6 +80,7 @@ func Preset(name string) (Agent, bool) {
 			Name:    "claude",
 			Command: []string{"claude", "-p", "{prompt}", "--allowedTools", claudeAllowedTools},
 			Resume:  []string{"claude", "-r", "{session}", "-p", "{prompt}", "--allowedTools", claudeAllowedTools},
+			Effort:  claudeEffortArgs,
 		}, true
 	case "codex":
 		return Agent{Name: "codex", Command: []string{"codex", "exec", "{prompt}"}}, true

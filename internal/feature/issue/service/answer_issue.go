@@ -5,7 +5,7 @@ package service
 // | Élément         | Résumé                                                       | Ligne |
 // |-----------------|--------------------------------------------------------------|-------|
 // | service.Answer  | Appends a message to the thread and applies the transition     | 31    |
-// | kindFor         | Names the event after the state reached                        | 91    |
+// | kindFor         | Names the event after the state reached                        | 94    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -81,7 +81,10 @@ func (s *service) Answer(ctx context.Context, in AnswerInput) (Issue, error) {
 	// Push a wake to that same OTHER party's local waker, so a dead session there learns without
 	// waiting for a human (D55). Signalling the caller's own repo would only wake the session that is
 	// already live. Best effort — the ladder and the piggyback are the backstop.
-	wakepush.Signal(s.cache, in.Ref.TeamID, other)
+	// The thread's tier, not a fresh one: a five-round exchange is one issue alternating states, so
+	// every wake of it runs at the rigour its author declared when opening it. answered carries the
+	// stored effort because Answer reads the issue (SELECT i.*) before it transitions.
+	wakepush.Signal(s.cache, in.Ref.TeamID, other, answered.Effort)
 
 	return toIssue(answered), nil
 }

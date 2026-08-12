@@ -7,7 +7,7 @@ package main
 // | main      | Entry point of the CLI: dispatch and exit code                        | 34    |
 // | run       | Routes the requested command to its implementation                    | 51    |
 // | usage     | Prints the help                                                       | 115   |
-// | newClient | Builds the API client from the local credentials or from the env      | 186   |
+// | newClient | Builds the API client from the local credentials or from the env      | 187   |
 //
 // Fin du sommaire.
 // =====================================================================

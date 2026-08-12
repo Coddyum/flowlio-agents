@@ -8,12 +8,12 @@ package service
 // | service          | Implementation, depending on the store interface              | 61    |
 // | New              | Creates the issue service                                     | 71    |
 // | Issue            | An issue as exposed by the API                                | 80    |
-// | Message          | A message of the thread, attributed to the project that wrote it | 91 |
-// | IssueDetail      | An issue together with its message thread                     | 101   |
-// | Ref              | Names CORE-34 for the caller, scope included                  | 111   |
-// | CreateIssueInput | Input for opening an issue towards a sibling project          | 120   |
-// | ListIssuesInput  | Criteria for reading the visible issues                       | 134   |
-// | AnswerInput      | A message to append to the thread, and an optional closing    | 148   |
+// | Message          | A message of the thread, attributed to the project that wrote it | 94 |
+// | IssueDetail      | An issue together with its message thread                     | 104   |
+// | Ref              | Names CORE-34 for the caller, scope included                  | 114   |
+// | CreateIssueInput | Input for opening an issue towards a sibling project          | 123   |
+// | ListIssuesInput  | Criteria for reading the visible issues                       | 141   |
+// | AnswerInput      | A message to append to the thread, and an optional closing    | 155   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -85,6 +85,9 @@ type Issue struct {
 	Peer      string     `json:"peer"`
 	UpdatedAt time.Time  `json:"updated_at"`
 	ClosedAt  *time.Time `json:"closed_at,omitempty"`
+	// Effort is the rigour tier the author declared, echoed back so a creator sees what registered.
+	// Omitted when unspecified — the receiver's waker treats absence as the standard tier.
+	Effort string `json:"effort,omitempty"`
 }
 
 // Message is an entry of the thread. The author is a PROJECT: this is a dialogue between two repos.
@@ -124,6 +127,10 @@ type CreateIssueInput struct {
 	ToProject string `json:"to_project"`
 	Title     string `json:"title"`
 	Body      string `json:"body"`
+	// Effort is the rigour tier the author declares for the answer — low, standard, high or max, or
+	// "" to leave it unspecified. It never names a model: the receiver maps the tier to its own agent
+	// and clamps it to its own ceiling (internal/pkg/effort, docs/DESIGN-WAKE.md §14).
+	Effort string `json:"effort,omitempty"`
 }
 
 // ListIssuesInput describes one read.

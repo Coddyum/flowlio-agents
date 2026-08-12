@@ -4,12 +4,14 @@ package store
 //
 // | Élément           | Résumé                                                      | Ligne |
 // |-------------------|-------------------------------------------------------------|-------|
-// | store.CreateIssue | Opens an issue towards a sibling project, number included     | 32    |
-// | store.IssueByRef  | Reads an issue the caller can see                             | 64    |
-// | store.ListIssues  | Lists the visible issues, filtered by role and by state       | 81    |
-// | store.Answer      | Appends a message and applies the state transition            | 124   |
-// | toIssue           | Projects a full row onto the domain type                      | 148   |
-// | fromNullTime      | Turns a nullable date read from the database into a pointer   | 167   |
+// | store.CreateIssue | Opens an issue towards a sibling project, number included     | 34    |
+// | store.IssueByRef  | Reads an issue the caller can see                             | 68    |
+// | store.ListIssues  | Lists the visible issues, filtered by role and by state       | 85    |
+// | store.Answer      | Appends a message and applies the state transition            | 128   |
+// | toIssue           | Projects a full row onto the domain type                      | 152   |
+// | fromNullTime      | Turns a nullable date read from the database into a pointer   | 172   |
+// | fromNullString    | Turns a nullable text column into a plain string               | 182   |
+// | toNullString      | Turns a plain string into a nullable column, "" becoming NULL   | 191   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -35,6 +37,7 @@ func (s *store) CreateIssue(ctx context.Context, in NewIssue) (Issue, error) {
 		AuthorProjectID: in.AuthorProjectID,
 		ToProjectKey:    in.ToProjectKey,
 		Title:           in.Title,
+		Effort:          toNullString(in.Effort),
 	})
 	if err != nil {
 		return Issue{}, translate(err, "create issue")
@@ -53,6 +56,7 @@ func (s *store) CreateIssue(ctx context.Context, in NewIssue) (Issue, error) {
 		CreatedAt:       row.CreatedAt,
 		UpdatedAt:       row.UpdatedAt,
 		ClosedAt:        fromNullTime(row.ClosedAt),
+		Effort:          fromNullString(row.Effort),
 	}, nil
 }
 
@@ -160,6 +164,7 @@ func toIssue(row database.GetIssueByRefRow, callerProjectID uuid.UUID) Issue {
 		CreatedAt:        row.CreatedAt,
 		UpdatedAt:        row.UpdatedAt,
 		ClosedAt:         fromNullTime(row.ClosedAt),
+		Effort:           fromNullString(row.Effort),
 	}
 }
 
@@ -170,4 +175,22 @@ func fromNullTime(t sql.NullTime) *time.Time {
 	}
 	value := t.Time
 	return &value
+}
+
+// fromNullString turns a nullable text column into a plain string, a NULL becoming "". The effort
+// tier is the only such column here: "" is its "unspecified", folded to standard downstream.
+func fromNullString(s sql.NullString) string {
+	if !s.Valid {
+		return ""
+	}
+	return s.String
+}
+
+// toNullString turns a plain string into a nullable column, "" becoming NULL. An empty effort must
+// reach the column as NULL, not as an empty string the CHECK would reject.
+func toNullString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
 }

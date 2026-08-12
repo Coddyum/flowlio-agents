@@ -398,3 +398,81 @@ func (q *Queries) ListUnblockedTasks(ctx context.Context, arg ListUnblockedTasks
 	}
 	return items, nil
 }
+
+const wakeActionable = `-- name: WakeActionable :one
+WITH actionable_issues AS (
+    SELECT i.id, i.effort
+    FROM issues i
+    WHERE i.team_id = $1
+      AND (
+          (i.project_id        = $2 AND i.state = 'open')
+          OR (i.author_project_id = $2 AND i.state = 'answered')
+      )
+      AND EXISTS (
+          SELECT 1 FROM events e
+          WHERE e.subject_type = 'issue' AND e.subject_id = i.id AND e.id > $3
+      )
+),
+unblocked AS (
+    SELECT 1
+    FROM (
+        SELECT dep.task_id
+        FROM task_dependencies dep
+        WHERE dep.project_id = $2 AND dep.released_at IS NOT NULL
+        GROUP BY dep.task_id
+    ) d
+    JOIN tasks t ON t.id = d.task_id AND t.team_id = $1 AND t.project_id = $2
+    WHERE t.archived_at IS NULL
+      AND t.status IN ('todo', 'blocked')
+      AND NOT EXISTS (
+          SELECT 1 FROM task_dependencies pending
+          WHERE pending.task_id = t.id AND pending.released_at IS NULL
+      )
+      AND EXISTS (
+          SELECT 1 FROM events e
+          WHERE e.subject_type = 'task' AND e.subject_id = t.id AND e.id > $3
+      )
+)
+SELECT
+    (EXISTS (SELECT 1 FROM actionable_issues) OR EXISTS (SELECT 1 FROM unblocked))::boolean AS actionable,
+    coalesce(max(CASE ai.effort
+        WHEN 'low' THEN 0 WHEN 'standard' THEN 1 WHEN 'high' THEN 2 WHEN 'max' THEN 3
+        ELSE 1 END), 1)::int AS effort_rank
+FROM actionable_issues ai
+`
+
+type WakeActionableParams struct {
+	TeamID    uuid.UUID `json:"team_id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	Cursor    int64     `json:"cursor"`
+}
+
+type WakeActionableRow struct {
+	Actionable bool  `json:"actionable"`
+	EffortRank int32 `json:"effort_rank"`
+}
+
+// WakeActionable answers the only two things a probe needs once head > cursor: is there NEW work
+// worth launching a full session for, and — if so — at what rigour tier.
+//
+// WHY THIS EXISTS AT ALL (FLWL-85). `head > cursor` means "an event I have not accounted for exists",
+// NOT "a question is open awaiting an answer". Events include issue.closed and, on a team-wide head,
+// a sibling's entire traffic — none of which is work for me. A wake is a FULL session boot, so a
+// probe that says "yes" on a non-actionable event burns real tokens in the void. This query is what
+// makes HasWork mean actionable work: the probe launches nothing when it returns actionable=false.
+//
+// Read ONLY on the has-work path (head > cursor), never on the idle poll, so the zero-SQL steady
+// state holds. After a noise bump the escalation ladder climbs to 6h, so this runs a handful of times
+// then rarely — an occasional indexed read, never a session.
+//
+// "Actionable NEW" is the buckets check_inbox flags with is_new, and only those: a new incoming
+// question still open, a new answer to a question I asked, or a task freshly unblocked. NOT
+// in_progress (my own parked work, no new-flag — it would wake me forever), NOT closed issues.
+// effort_rank is the max tier among the actionable ISSUES (tasks carry none), over a CASE that
+// mirrors internal/pkg/effort.Rank exactly (low 0 … max 3); a NULL tier counts as standard.
+func (q *Queries) WakeActionable(ctx context.Context, arg WakeActionableParams) (WakeActionableRow, error) {
+	row := q.db.QueryRowContext(ctx, wakeActionable, arg.TeamID, arg.ProjectID, arg.Cursor)
+	var i WakeActionableRow
+	err := row.Scan(&i.Actionable, &i.EffortRank)
+	return i, err
+}

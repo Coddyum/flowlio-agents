@@ -204,6 +204,20 @@ third-party text before learning which seal was authoritative. A fix costing zer
   neutralised. Harmless as long as the output is JSON; to be dealt with the day a TUI displays those
   bodies (FLWL-20).
 
+### The effort tier is data, and the clamp is why (FLWL-84)
+
+An issue's `effort` (`low…max`) lets a sender say how much rigour answering warrants. It never reaches
+the answering agent as an instruction — the **daemon** consumes it as a launch parameter before the
+agent boots, so it does not cross the framing seal and cannot change what the agent thinks, runs or
+discloses.
+
+What it *could* do is spend the receiver's quota: a hostile or careless sibling that pins `max` on
+every trivial issue drives up the model tier the receiver launches. So the tier is a **request the
+receiver clamps** to its own ceiling (`FLOWLIO_WAKE_MAX_EFFORT`) — sender proposes, receiver disposes.
+The clamp is the guarantee that a sibling's declared rigour can never lift a wake above the policy the
+operator set; it is not optional. This is the same posture as the framing: third-party input is data
+the receiver decides what to do with, never a command it must honour.
+
 ---
 
 ## Part 2 — Trust graph between repos

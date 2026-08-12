@@ -6,9 +6,9 @@ package waker
 // |-----------|--------------------------------------------------------------------|-------|
 // | Launcher  | Runs the agent argv in a directory and waits for it to exit          | 28    |
 // | Repo      | One repository the waker drives: where, how, and which session       | 35    |
-// | Launch    | Builds the argv and runs it, under the relaunch cap                  | 53    |
-// | Repo.argv | The agent argv for a session id, with ExtraArgs appended             | 74    |
-// | ProbeDelay | Turns a server-dictated next_probe_after into a sleep               | 81    |
+// | Launch    | Builds the argv and runs it, under the relaunch cap                  | 58    |
+// | Repo.argv | The agent argv for a session id, with ExtraArgs appended             | 79    |
+// | ProbeDelay | Turns a server-dictated next_probe_after into a sleep               | 91    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -43,6 +43,11 @@ type Repo struct {
 	// with the account token instead of an OAuth flow it cannot run headless (DESIGN-WAKE §6). Empty
 	// in self-host, where the repo's own `.mcp.json` already resolves to a local token.
 	ExtraArgs []string
+	// Effort is the rigour tier this wake launches at, already clamped to the daemon's ceiling
+	// (internal/pkg/effort). Set per launch like SessionID, because it varies with the work found.
+	// It selects the agent's model through Agent.Effort; an empty tier or an agent with no ladder
+	// injects nothing and the agent keeps its own default.
+	Effort string
 }
 
 // Launch builds the argv for a wake and runs it in the repo's directory, under the relaunch cap.
@@ -72,7 +77,12 @@ func Launch(ctx context.Context, cap *Cap, run Launcher, repo Repo, now time.Tim
 // `--mcp-config` among them, which a fallback that dropped it would launch an agent unable to reach
 // its inbox.
 func (r Repo) argv(sessionID string) []string {
-	return append(r.Agent.LaunchArgv(sessionID, WakePrompt), r.ExtraArgs...)
+	base := r.Agent.LaunchArgv(sessionID, WakePrompt)
+	// The model selection goes between the agent's own argv and the ExtraArgs, so a `--model` sits
+	// before the hosted `--mcp-config` exactly as a human would type it. A nil Effort map (an agent
+	// with no ladder) or an unlisted tier yields nil, appended as nothing.
+	base = append(base, r.Agent.Effort[r.Effort]...)
+	return append(base, r.ExtraArgs...)
 }
 
 // ProbeDelay turns the server's next_probe_after into a sleep, with a floor so a misread or missing

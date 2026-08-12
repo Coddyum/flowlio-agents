@@ -5,9 +5,9 @@ package store
 // | Élément  | Résumé                                                             | Ligne |
 // |----------|--------------------------------------------------------------------|-------|
 // | Position | The project relevance head and the token read cursor, as two integers | 32    |
-// | Store    | Cold read that seeds the probe when its cache is empty               | 38    |
-// | store    | Implementation backed by the sqlc-generated queries                  | 44    |
-// | New      | Creates the wake store                                              | 49    |
+// | Store    | Cold read that seeds the probe when its cache is empty               | 39    |
+// | store    | Implementation backed by the sqlc-generated queries                  | 50    |
+// | New      | Creates the wake store                                              | 55    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -34,10 +34,16 @@ type Position struct {
 	Cursor int64
 }
 
-// Store reads, on a cold cache only, the two integers the probe compares.
+// Store reads, on a cold cache only, the two integers the probe compares — and, when the journal has
+// moved, whether that movement is actionable work and at what tier.
 type Store interface {
 	// Position returns the project relevance head and the token cursor in a single query.
 	Position(ctx context.Context, teamID, projectID, tokenID uuid.UUID) (Position, error)
+	// Actionable answers whether there is NEW work worth launching a session for — a new incoming
+	// question, a new answer, a newly unblocked task — and the highest rigour tier among it. Read
+	// ONLY once the probe knows head > cursor, so it never touches the idle path (FLWL-85). cursor is
+	// the token's read position, the boundary "new" is measured from.
+	Actionable(ctx context.Context, teamID, projectID uuid.UUID, cursor int64) (actionable bool, effort string, err error)
 }
 
 // store backs the contract with the generated queries. No transaction: the probe only ever reads.

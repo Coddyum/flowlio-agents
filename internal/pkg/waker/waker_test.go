@@ -117,13 +117,13 @@ func TestBearerOK(t *testing.T) {
 // A wake with the secret is accepted and launches; without it, refused and silent. This is the §9
 // guard on the loopback endpoint.
 func TestListenerVerifiesTheSecret(t *testing.T) {
-	woke := make(chan struct{}, 1)
-	l := waker.NewListener("s3cr3t", func() { woke <- struct{}{} })
+	woke := make(chan string, 1)
+	l := waker.NewListener("s3cr3t", func(effort string) { woke <- effort })
 	srv := httptest.NewServer(l)
 	defer srv.Close()
 
 	post := func(auth string) int {
-		req, _ := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader(`{"project":"x"}`))
+		req, _ := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader(`{"project":"x","effort":"high"}`))
 		if auth != "" {
 			req.Header.Set("Authorization", auth)
 		}
@@ -139,7 +139,10 @@ func TestListenerVerifiesTheSecret(t *testing.T) {
 		t.Fatalf("valid wake code = %d, want 202", code)
 	}
 	select {
-	case <-woke:
+	case effort := <-woke:
+		if effort != "high" {
+			t.Errorf("listener passed effort %q, want %q from the body", effort, "high")
+		}
 	case <-time.After(time.Second):
 		t.Fatal("a valid wake did not launch")
 	}
@@ -259,6 +262,128 @@ func TestLaunchCarriesExtraArgsThroughTheFallback(t *testing.T) {
 		if !slices.Contains(a, "--mcp-config") || !slices.Contains(a, "--strict-mcp-config") {
 			t.Errorf("attempt %d dropped the extra args: %v", i, a)
 		}
+	}
+}
+
+// The effort tier selects the model: a woken Claude at a given tier carries the matching `--model`,
+// between its own argv and the ExtraArgs. This is where the sender's declared rigour finally becomes
+// a running model, and it rides on the resume attempt as well as its fresh fallback.
+func TestLaunchInjectsTheEffortModel(t *testing.T) {
+	base := time.Unix(3_000_000, 0)
+	cases := []struct {
+		tier      string
+		wantModel string
+	}{
+		{"low", "haiku"},
+		{"standard", "sonnet"},
+		{"high", "opus"},
+		{"max", "opus"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tier, func(t *testing.T) {
+			var got []string
+			run := func(_ context.Context, _ string, argv []string) error { got = argv; return nil }
+			repo := waker.Repo{Key: "CORE", Path: "/tmp/core", Effort: tc.tier}
+			repo.Agent, _ = waker.Preset("claude")
+
+			if _, err := waker.Launch(context.Background(), waker.NewCap(5, time.Minute), run, repo, base); err != nil {
+				t.Fatalf("launch: %v", err)
+			}
+			if i := slices.Index(got, "--model"); i < 0 || i+1 >= len(got) || got[i+1] != tc.wantModel {
+				t.Errorf("tier %q argv = %v, want a --model %s", tc.tier, got, tc.wantModel)
+			}
+		})
+	}
+}
+
+// An agent with no ladder (codex here) and a wake with no tier both inject nothing: the model is left
+// to the agent's own default, never forced.
+func TestLaunchInjectsNoModelWithoutALadderOrTier(t *testing.T) {
+	base := time.Unix(3_000_000, 0)
+	run := func(gotP *[]string) waker.Launcher {
+		return func(_ context.Context, _ string, argv []string) error { *gotP = argv; return nil }
+	}
+
+	// codex carries no Effort ladder: even a tier injects nothing.
+	var codexArgv []string
+	codex := waker.Repo{Key: "CORE", Path: "/tmp/core", Effort: "max"}
+	codex.Agent, _ = waker.Preset("codex")
+	if _, err := waker.Launch(context.Background(), waker.NewCap(5, time.Minute), run(&codexArgv), codex, base); err != nil {
+		t.Fatalf("codex launch: %v", err)
+	}
+	if slices.Contains(codexArgv, "--model") {
+		t.Errorf("codex has no ladder yet its argv carries a model: %v", codexArgv)
+	}
+
+	// claude with an empty tier: the daemon always clamps to a real tier before launch, but the argv
+	// builder must still be safe when handed "".
+	var claudeArgv []string
+	claude := waker.Repo{Key: "CORE", Path: "/tmp/core"} // Effort == ""
+	claude.Agent, _ = waker.Preset("claude")
+	if _, err := waker.Launch(context.Background(), waker.NewCap(5, time.Minute), run(&claudeArgv), claude, base); err != nil {
+		t.Fatalf("claude launch: %v", err)
+	}
+	if slices.Contains(claudeArgv, "--model") {
+		t.Errorf("an empty tier injected a model: %v", claudeArgv)
+	}
+}
+
+// The breaker suspends a repo whose launches keep failing, then lifts once the backoff elapses — the
+// FLWL-85 guard against retrying a wall (a session limit) every cadence for an hour.
+func TestCapBacksOffAfterConsecutiveFailures(t *testing.T) {
+	base := time.Unix(4_000_000, 0)
+	cap := waker.NewCap(100, time.Minute) // window wide open: the breaker is what we are testing
+	const repo = "CORE"
+
+	// The first failures under the threshold do not suspend: a blip must not halt a healthy repo.
+	for i := 0; i < 2; i++ {
+		if !cap.Allow(repo, base) {
+			t.Fatalf("failure %d suspended the repo before the threshold", i+1)
+		}
+		cap.RecordOutcome(repo, base, false)
+	}
+	// The third failure crosses the threshold and trips the backoff.
+	if !cap.Allow(repo, base) {
+		t.Fatal("the threshold failure was suppressed before it could be recorded")
+	}
+	cap.RecordOutcome(repo, base, false)
+	if cap.Allow(repo, base) {
+		t.Fatal("a repo past the failure threshold was allowed to launch — no backoff")
+	}
+	// The backoff lifts with time.
+	if !cap.Allow(repo, base.Add(2*time.Hour)) {
+		t.Fatal("the repo was still suspended long after its backoff should have elapsed")
+	}
+}
+
+// A success clears the failure run: a repo that recovers is not punished for old failures.
+func TestCapSuccessResetsTheBreaker(t *testing.T) {
+	base := time.Unix(4_000_000, 0)
+	cap := waker.NewCap(100, time.Minute)
+	const repo = "CORE"
+
+	for i := 0; i < 4; i++ {
+		cap.Allow(repo, base)
+		cap.RecordOutcome(repo, base, false)
+	}
+	cap.RecordOutcome(repo, base, true) // recovered
+	if !cap.Allow(repo, base) {
+		t.Fatal("a recovered repo is still suspended — success did not clear the breaker")
+	}
+}
+
+// Block suspends a repo outright for a fixed pause — the session-limit hard stop — and lifts after it.
+func TestCapBlockSuspendsForAFixedPause(t *testing.T) {
+	base := time.Unix(4_000_000, 0)
+	cap := waker.NewCap(100, time.Minute)
+	const repo = "CORE"
+
+	cap.Block(repo, base, 30*time.Minute)
+	if cap.Allow(repo, base.Add(10*time.Minute)) {
+		t.Fatal("a blocked repo launched inside its pause")
+	}
+	if !cap.Allow(repo, base.Add(31*time.Minute)) {
+		t.Fatal("a blocked repo was still suspended after its pause elapsed")
 	}
 }
 

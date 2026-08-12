@@ -4,13 +4,14 @@ package service
 //
 // | Élément          | Résumé                                                      | Ligne |
 // |------------------|-------------------------------------------------------------|-------|
-// | validateTitle    | Checks a title is neither empty nor oversized                 | 53    |
-// | validateBody     | Checks a message body is present and bounded                  | 68    |
-// | validateRole     | Checks a role belongs to the vocabulary                       | 80    |
-// | validateState    | Checks a state belongs to the vocabulary                      | 89    |
-// | validateScope    | Rejects an incomplete tenancy scope                           | 99    |
-// | clampLimit       | Brings a listing limit back within bounds                     | 107   |
-// | translateStore   | Turns a store error into a domain error                       | 122   |
+// | validateTitle    | Checks a title is neither empty nor oversized                 | 55    |
+// | validateBody     | Checks a message body is present and bounded                  | 70    |
+// | validateRole     | Checks a role belongs to the vocabulary                       | 82    |
+// | validateState    | Checks a state belongs to the vocabulary                      | 91    |
+// | validateEffort   | Checks a rigour tier belongs to the vocabulary                | 102   |
+// | validateScope    | Rejects an incomplete tenancy scope                           | 112   |
+// | clampLimit       | Brings a listing limit back within bounds                     | 120   |
+// | translateStore   | Turns a store error into a domain error                       | 135   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -25,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/Coddyum/flowlio-agents/internal/feature/issue/store"
+	"github.com/Coddyum/flowlio-agents/internal/pkg/effort"
 	"github.com/google/uuid"
 )
 
@@ -92,6 +94,17 @@ func validateState(state string) error {
 	}
 	return fmt.Errorf("%w: state %q (expected: %s)",
 		ErrInvalidInput, state, strings.Join(states, ", "))
+}
+
+// validateEffort checks the requested rigour tier. Empty means "unspecified", which the receiver
+// folds to standard: an author is never forced to declare one. The CHECK in migration 000016 is the
+// guarantee; this is the useful error the same way the others are.
+func validateEffort(tier string) error {
+	if tier == "" || effort.Valid(tier) {
+		return nil
+	}
+	return fmt.Errorf("%w: effort %q (expected: %s)",
+		ErrInvalidInput, tier, strings.Join([]string{effort.Low, effort.Standard, effort.High, effort.Max}, ", "))
 }
 
 // validateScope rejects an incomplete tenancy scope: a query filtered on a nil UUID protects

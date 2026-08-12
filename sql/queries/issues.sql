@@ -75,8 +75,11 @@ WITH claimed AS (
       )
     RETURNING p.id AS project_id, (p.next_number - 1)::bigint AS number
 )
-INSERT INTO issues (team_id, project_id, author_project_id, number, title, state)
-SELECT @team_id, c.project_id, @author_project_id, c.number, @title, 'open'
+-- effort is the author's declared rigour tier (internal/pkg/effort), or NULL when unspecified — the
+-- receiver folds NULL to standard. It is passed as sqlc.narg so an omitted tier stays NULL rather
+-- than an empty string the CHECK would reject.
+INSERT INTO issues (team_id, project_id, author_project_id, number, title, state, effort)
+SELECT @team_id, c.project_id, @author_project_id, c.number, @title, 'open', sqlc.narg('effort')::text
 FROM claimed c
 RETURNING *;
 

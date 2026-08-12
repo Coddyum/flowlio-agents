@@ -47,6 +47,10 @@ func (s *service) CreateIssue(ctx context.Context, in CreateIssueInput) (Issue, 
 	if err := validateBody(body); err != nil {
 		return Issue{}, err
 	}
+	tier := strings.TrimSpace(in.Effort)
+	if err := validateEffort(tier); err != nil {
+		return Issue{}, err
+	}
 
 	var created store.Issue
 	err := s.store.WithTx(ctx, func(tx store.Store) error {
@@ -57,6 +61,7 @@ func (s *service) CreateIssue(ctx context.Context, in CreateIssueInput) (Issue, 
 			ToProjectKey:    toProject,
 			Title:           title,
 			Body:            body,
+			Effort:          tier,
 		})
 		if err != nil {
 			return translateStore(err, "project "+toProject)
@@ -82,7 +87,7 @@ func (s *service) CreateIssue(ctx context.Context, in CreateIssueInput) (Issue, 
 	// A question just landed for the recipient: push a wake to its local waker, so a dead session
 	// there learns it has something to answer without waiting for a human (D55). Best effort — the
 	// escalation ladder and the piggyback are the backstop.
-	wakepush.Signal(s.cache, in.TeamID, created.ProjectID)
+	wakepush.Signal(s.cache, in.TeamID, created.ProjectID, created.Effort)
 
 	return toIssue(created), nil
 }

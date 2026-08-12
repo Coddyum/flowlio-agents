@@ -42,11 +42,11 @@ import (
 //
 // A repo with no core id cannot be polled — it was connected in self-host, or without `--id`. That
 // is a configuration gap named to stderr, not a launch in the dark.
-func pollRepo(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap, hosted hostedConfig) error {
+func pollRepo(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap, hosted hostedConfig, ceiling string) error {
 	if rf.RepoID == "" {
 		return errors.New("no core repository id — run `flowlio connect " + rf.Repo + " --id <id>` (from flowlio.me)")
 	}
-	launch, err := launchFor(ctx, rf, cap, hosted)
+	launch, err := launchFor(ctx, rf, cap, hosted, ceiling)
 	if err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ func pollRepo(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap, host
 
 // pollLoop probes on the server-dictated cadence until the context is cancelled. The delay between
 // probes is never the client's own: it is what probeOnce read from the last reply.
-func pollLoop(ctx context.Context, api *client.Client, repo, relay string, launch func()) {
+func pollLoop(ctx context.Context, api *client.Client, repo, relay string, launch func(effort string)) {
 	for {
 		delay := probeOnce(ctx, api, repo, relay, launch)
 		select {
@@ -77,15 +77,19 @@ func pollLoop(ctx context.Context, api *client.Client, repo, relay string, launc
 // A 429 means the client came back too soon: the wait is the Retry-After it carries. A transport or
 // upstream failure is a plain back-off — core or the engine may be briefly unreachable, which must
 // not become a busy loop.
-func probeOnce(ctx context.Context, api *client.Client, repo, relay string, launch func()) time.Duration {
+func probeOnce(ctx context.Context, api *client.Client, repo, relay string, launch func(effort string)) time.Duration {
 	var res struct {
-		HasWork        bool `json:"has_work"`
-		NextProbeAfter int  `json:"next_probe_after"`
+		HasWork        bool   `json:"has_work"`
+		NextProbeAfter int    `json:"next_probe_after"`
+		SuggestedEffort string `json:"suggested_effort"`
 	}
 	err := api.Do(ctx, http.MethodGet, relay, nil, &res)
 	if err == nil {
 		if res.HasWork {
-			launch()
+			// The engine's suggested tier reaches here verbatim through flowlio-core's relay; the daemon
+			// clamps it to its own ceiling inside launch. Absent (an engine that predates the field, or no
+			// pending work with a tier) launches at standard.
+			launch(res.SuggestedEffort)
 		}
 		return waker.ProbeDelay(res.NextProbeAfter)
 	}

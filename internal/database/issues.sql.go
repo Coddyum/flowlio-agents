@@ -151,7 +151,7 @@ WITH claimed AS (
     UPDATE projects p
     SET next_number = p.next_number + 1
     WHERE p.team_id = $1
-      AND p.key     = $4
+      AND p.key     = $5
       AND EXISTS (
           SELECT 1 FROM project_trust tr
           WHERE tr.team_id         = $1
@@ -160,17 +160,18 @@ WITH claimed AS (
       )
     RETURNING p.id AS project_id, (p.next_number - 1)::bigint AS number
 )
-INSERT INTO issues (team_id, project_id, author_project_id, number, title, state)
-SELECT $1, c.project_id, $2, c.number, $3, 'open'
+INSERT INTO issues (team_id, project_id, author_project_id, number, title, state, effort)
+SELECT $1, c.project_id, $2, c.number, $3, 'open', $4::text
 FROM claimed c
-RETURNING id, team_id, project_id, author_project_id, number, title, state, created_at, updated_at, closed_at
+RETURNING id, team_id, project_id, author_project_id, number, title, state, created_at, updated_at, closed_at, effort
 `
 
 type CreateIssueParams struct {
-	TeamID          uuid.UUID `json:"team_id"`
-	AuthorProjectID uuid.UUID `json:"author_project_id"`
-	Title           string    `json:"title"`
-	ToProjectKey    string    `json:"to_project_key"`
+	TeamID          uuid.UUID      `json:"team_id"`
+	AuthorProjectID uuid.UUID      `json:"author_project_id"`
+	Title           string         `json:"title"`
+	Effort          sql.NullString `json:"effort"`
+	ToProjectKey    string         `json:"to_project_key"`
 }
 
 // RÈGLE DE SCOPE DE CE FICHIER : team_id ET project_id, comme dans `tasks.sql`. C'est la première
@@ -237,11 +238,15 @@ type CreateIssueParams struct {
 // confiance ne ferme aucun fil) accepte déjà exactement ce résidu : une issue de plus dans un fil
 // ouvert. La garantie s'énonce donc « une paire non autorisée AU MOMENT OÙ SA TRANSACTION PREND
 // SON SNAPSHOT ne peut pas ouvrir d'issue ».
+// effort is the author's declared rigour tier (internal/pkg/effort), or NULL when unspecified — the
+// receiver folds NULL to standard. It is passed as sqlc.narg so an omitted tier stays NULL rather
+// than an empty string the CHECK would reject.
 func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue, error) {
 	row := q.db.QueryRowContext(ctx, createIssue,
 		arg.TeamID,
 		arg.AuthorProjectID,
 		arg.Title,
+		arg.Effort,
 		arg.ToProjectKey,
 	)
 	var i Issue
@@ -256,12 +261,13 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
+		&i.Effort,
 	)
 	return i, err
 }
 
 const getIssueByRef = `-- name: GetIssueByRef :one
-SELECT i.id, i.team_id, i.project_id, i.author_project_id, i.number, i.title, i.state, i.created_at, i.updated_at, i.closed_at, p.key AS project_key, a.key AS author_project_key
+SELECT i.id, i.team_id, i.project_id, i.author_project_id, i.number, i.title, i.state, i.created_at, i.updated_at, i.closed_at, i.effort, p.key AS project_key, a.key AS author_project_key
 FROM issues i
 JOIN projects p ON p.id = i.project_id        AND p.team_id = i.team_id
 JOIN projects a ON a.id = i.author_project_id AND a.team_id = i.team_id
@@ -279,18 +285,19 @@ type GetIssueByRefParams struct {
 }
 
 type GetIssueByRefRow struct {
-	ID               uuid.UUID    `json:"id"`
-	TeamID           uuid.UUID    `json:"team_id"`
-	ProjectID        uuid.UUID    `json:"project_id"`
-	AuthorProjectID  uuid.UUID    `json:"author_project_id"`
-	Number           int64        `json:"number"`
-	Title            string       `json:"title"`
-	State            IssueState   `json:"state"`
-	CreatedAt        time.Time    `json:"created_at"`
-	UpdatedAt        time.Time    `json:"updated_at"`
-	ClosedAt         sql.NullTime `json:"closed_at"`
-	ProjectKey       string       `json:"project_key"`
-	AuthorProjectKey string       `json:"author_project_key"`
+	ID               uuid.UUID      `json:"id"`
+	TeamID           uuid.UUID      `json:"team_id"`
+	ProjectID        uuid.UUID      `json:"project_id"`
+	AuthorProjectID  uuid.UUID      `json:"author_project_id"`
+	Number           int64          `json:"number"`
+	Title            string         `json:"title"`
+	State            IssueState     `json:"state"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+	ClosedAt         sql.NullTime   `json:"closed_at"`
+	Effort           sql.NullString `json:"effort"`
+	ProjectKey       string         `json:"project_key"`
+	AuthorProjectKey string         `json:"author_project_key"`
 }
 
 // GetIssueByRef résout CORE-34 pour un appelant donné. Le projet est désigné par sa CLÉ, jamais
@@ -314,6 +321,7 @@ func (q *Queries) GetIssueByRef(ctx context.Context, arg GetIssueByRefParams) (G
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
+		&i.Effort,
 		&i.ProjectKey,
 		&i.AuthorProjectKey,
 	)

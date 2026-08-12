@@ -4,12 +4,12 @@ package main
 //
 // | Élément       | Résumé                                                          | Ligne |
 // |---------------|-----------------------------------------------------------------|-------|
-// | runWaker      | Runs the waker in the mode's transport: push (self-host) or poll   | 58    |
-// | launchFor     | Builds one repo's launch closure, shared by both transports        | 117   |
-// | serveRepo     | Starts one repo's loopback listener and registers it              | 172   |
-// | registerLoop  | Registers with the engine and refreshes before the lease lapses   | 201   |
-// | resolveAgent  | Turns a repo's stored config into a launch recipe                 | 227   |
-// | plural        | The one-letter tail that keeps a count line grammatical           | 245   |
+// | runWaker      | Runs the waker in the mode's transport: push (self-host) or poll   | 64    |
+// | launchFor     | Builds one repo's launch closure, shared by both transports        | 124   |
+// | serveRepo     | Starts one repo's loopback listener and registers it              | 191   |
+// | registerLoop  | Registers with the engine and refreshes before the lease lapses   | 220   |
+// | resolveAgent  | Turns a repo's stored config into a launch recipe                 | 246   |
+// | plural        | The one-letter tail that keeps a count line grammatical           | 264   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -36,6 +36,7 @@ import (
 
 	"github.com/Coddyum/flowlio-agents/internal/pkg/client"
 	"github.com/Coddyum/flowlio-agents/internal/pkg/credentials"
+	effortpkg "github.com/Coddyum/flowlio-agents/internal/pkg/effort"
 	"github.com/Coddyum/flowlio-agents/internal/pkg/waker"
 )
 
@@ -47,6 +48,11 @@ const (
 	// leaseRefresh re-registers well inside the engine's 15-minute lease, so a lost refresh does not
 	// leave the repo unreachable for a full window.
 	leaseRefresh = 5 * time.Minute
+	// sessionLimitPause is how long a repo is held after its agent hit the account session limit.
+	// Retrying before then is certain to fail; a limit resets on its own, and a held repo tries again
+	// after this and re-holds if it is still limited — polling the wall every half hour, not every
+	// minute (FLWL-85).
+	sessionLimitPause = 30 * time.Minute
 )
 
 // runWaker starts the waker for every repository connected on this host, in the transport the mode
@@ -75,6 +81,7 @@ func runWaker(ctx context.Context, mode upMode) error {
 	}
 
 	cap := waker.NewCap(capLimit, capWindow)
+	ceiling := wakeCeiling()
 	served := 0
 	for _, rf := range repos {
 		if rf.Path == "" {
@@ -84,9 +91,9 @@ func runWaker(ctx context.Context, mode upMode) error {
 		}
 		var startErr error
 		if mode == modeHosted {
-			startErr = pollRepo(ctx, rf, cap, hosted)
+			startErr = pollRepo(ctx, rf, cap, hosted, ceiling)
 		} else {
-			startErr = serveRepo(ctx, rf, cap)
+			startErr = serveRepo(ctx, rf, cap, ceiling)
 		}
 		if startErr != nil {
 			fmt.Fprintf(os.Stderr, "flowlio waker: %s/%s not served: %v\n", rf.Project, rf.Repo, startErr)
@@ -114,7 +121,7 @@ func runWaker(ctx context.Context, mode upMode) error {
 // Claude session (for resume), and returns a function that runs the agent under the shared cap. It
 // is the one place the two transports — push and poll — share, so a wake means the same thing on
 // both.
-func launchFor(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap, hosted hostedConfig) (func(), error) {
+func launchFor(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap, hosted hostedConfig, ceiling string) (func(effort string), error) {
 	agent, err := resolveAgent(rf)
 	if err != nil {
 		return nil, err
@@ -144,21 +151,33 @@ func launchFor(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap, hos
 	}
 	launcher := newAgentLauncher(logPath)
 
-	return func() {
+	return func(effort string) {
 		// Read the session id AT LAUNCH, not once at startup: a resume points at a specific Claude
 		// session, and between two wakes that session can be replaced by a newer one (the SessionStart
 		// hook refiled it) or cleared entirely. A stale id baked in at startup meant the waker retried a
 		// dead session on every wake until it was restarted.
 		repo.SessionID = loadSession(rf)
+		// Clamp the tier the transport carried to this daemon's ceiling before it selects a model: the
+		// sender proposed, the receiver disposes (internal/pkg/effort). An empty tier folds to standard,
+		// so every wake picks a model deliberately rather than inheriting the human's interactive default.
+		repo.Effort = effortpkg.Clamp(effort, ceiling)
 		wakeLog(rf.Repo, "wake — launching %s", agent.Name)
 		start := time.Now()
 		launched, err := waker.Launch(ctx, cap, launcher, repo, start)
+		// Feed the outcome back into the breaker so a run of failures backs a repo off instead of
+		// retrying every cadence into a wall (FLWL-85). A session limit is a hard stop retrying cannot
+		// clear before it resets, so it earns a longer, explicit pause rather than the failure ramp.
 		switch {
+		case err != nil && sessionLimited(logPath):
+			cap.Block(rf.Repo, start, sessionLimitPause)
+			wakeLog(rf.Repo, "paused — account session limit reached, holding %s", sessionLimitPause)
 		case err != nil:
+			cap.RecordOutcome(rf.Repo, start, false)
 			wakeLog(rf.Repo, "failed — %v (log: %s)", err, logPath)
 		case !launched:
-			wakeLog(rf.Repo, "wake dropped — relaunch cap reached")
+			wakeLog(rf.Repo, "wake held — rate cap or failure backoff")
 		default:
+			cap.RecordOutcome(rf.Repo, start, true)
 			wakeLog(rf.Repo, "done — %s", time.Since(start).Round(time.Second))
 		}
 	}, nil
@@ -169,10 +188,10 @@ func launchFor(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap, hos
 // The listener binds 127.0.0.1:0 — the kernel picks a free port, which then composes the callback,
 // so two repos never fight over one number. The launch runs the configured agent in the repo's
 // directory, under the shared cap.
-func serveRepo(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap) error {
+func serveRepo(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap, ceiling string) error {
 	// Self-host: no account link, and the repo's own `.mcp.json` resolves to a local token, so there
 	// is no launch-time MCP config to write. An empty hostedConfig says exactly that.
-	launch, err := launchFor(ctx, rf, cap, hostedConfig{})
+	launch, err := launchFor(ctx, rf, cap, hostedConfig{}, ceiling)
 	if err != nil {
 		return err
 	}
