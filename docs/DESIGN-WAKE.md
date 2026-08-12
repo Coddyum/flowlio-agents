@@ -167,6 +167,16 @@ flowlio                # runs the waker only, connected to prod
 - **Free.** The waker is the same program the self-host user runs; hosted simply omits the engine.
   A paying customer is not asked to rent a box — they run one small local process, the same gesture
   as any background agent.
+- **How the woken agent authenticates the MCP.** A hosted repo's committed `.mcp.json` points Claude
+  at the remote engine surface and leaves auth to an OAuth flow — which a `claude -p` the waker
+  launches cannot run (no browser). So for a hosted Claude the waker writes a second, host-local MCP
+  config beside the credential (`repos/hosted/<id>.mcp.json`, 0600) carrying the account token in an
+  `Authorization` header, and launches with `--mcp-config <that> --strict-mcp-config` so Claude loads
+  THAT server and ignores the repo's OAuth one. The account token is the same one `flowlio login`
+  filed and the waker already presents to the relay; `?repo=<id>` scopes it, exactly as the relay
+  does. Interactive sessions in the repo never read this file and keep using OAuth. The file is
+  rewritten on every launch, so a rotated token or a moved address takes effect on the next wake. It
+  lives in `cmd/flowlio/waker_mcp.go`.
 
 > **Explicitly out of scope, and it stays out:** we never run the customer’s agent on our infra
 > (“managed execution”). That would drag their code, their credentials and the liability onto us —

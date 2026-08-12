@@ -230,6 +230,38 @@ func TestLaunchDoesNotRetryAFreshFailure(t *testing.T) {
 	}
 }
 
+// ExtraArgs (the hosted `--mcp-config` flags) ride on BOTH the resume attempt and its fresh
+// fallback: a fallback that dropped them would launch an agent that cannot authenticate its inbox.
+func TestLaunchCarriesExtraArgsThroughTheFallback(t *testing.T) {
+	base := time.Unix(3_000_000, 0)
+	cap := waker.NewCap(5, time.Minute)
+	var argvs [][]string
+	run := func(_ context.Context, _ string, argv []string) error {
+		argvs = append(argvs, argv)
+		if len(argvs) == 1 {
+			return errors.New("resume dead")
+		}
+		return nil
+	}
+	repo := waker.Repo{
+		Key: "CORE", Path: "/tmp/core", SessionID: "s",
+		ExtraArgs: []string{"--mcp-config", "/x", "--strict-mcp-config"},
+	}
+	repo.Agent, _ = waker.Preset("claude")
+
+	if _, err := waker.Launch(context.Background(), cap, run, repo, base); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if len(argvs) != 2 {
+		t.Fatalf("ran %d times, want 2 (resume then fresh)", len(argvs))
+	}
+	for i, a := range argvs {
+		if !slices.Contains(a, "--mcp-config") || !slices.Contains(a, "--strict-mcp-config") {
+			t.Errorf("attempt %d dropped the extra args: %v", i, a)
+		}
+	}
+}
+
 func TestProbeDelayHasAFloor(t *testing.T) {
 	if got := waker.ProbeDelay(0); got != 30*time.Second {
 		t.Errorf("ProbeDelay(0) = %s, want 30s floor", got)

@@ -4,8 +4,8 @@ package main
 //
 // | Élément    | Résumé                                                            | Ligne |
 // |------------|-------------------------------------------------------------------|-------|
-// | pollRepo   | Starts the hosted poll loop for one repository, against core        | 40    |
-// | pollLoop   | Probes on the server-dictated cadence until interrupted             | 61    |
+// | pollRepo   | Starts the hosted poll loop for one repository, against core        | 45    |
+// | pollLoop   | Probes on the server-dictated cadence until interrupted             | 63    |
 // | probeOnce  | One probe of core's relay: launch on work, return the next delay    | 80    |
 //
 // Fin du sommaire.
@@ -46,7 +46,7 @@ func pollRepo(ctx context.Context, rf credentials.RepoFile, cap *waker.Cap, host
 	if rf.RepoID == "" {
 		return errors.New("no core repository id — run `flowlio connect " + rf.Repo + " --id <id>` (from flowlio.me)")
 	}
-	launch, err := launchFor(ctx, rf, cap)
+	launch, err := launchFor(ctx, rf, cap, hosted)
 	if err != nil {
 		return err
 	}
