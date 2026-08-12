@@ -2,20 +2,13 @@ package credentials
 
 // SOMMAIRE (lire en premier, sauter directement au bon passage)
 //
-// | Élément     | Résumé                                                            | Ligne |
-// |-------------|-------------------------------------------------------------------|-------|
-// | RepoFile    | What one repository needs in order to reach its own board           | 60    |
-// | reposDir    | Directory holding every repository credential of this host          | 76    |
-// | safeSegment | Refuses a name that would compose a path out of that directory      | 90    |
-// | RepoPath    | Path of one repository's credential file, names normalised          | 105   |
-// | RepoRecordPath   | On-disk path of a full record: hosted keys by id, not by key   | 129   |
-// | hostedRecordPath | Composes <project>/<repo-id>.json for a hosted record          | 140   |
-// | LoadRepo    | Reads one repository's credential file                              | 158   |
-// | SaveRepo    | Writes it in 0600, with its names normalised                        | 185   |
-// | DeleteRepo  | Removes one, for a repository that no longer exists server-side     | 223   |
-// | ListRepos   | Every repository credential on this host, project then repo         | 246   |
-// | normaliseProject | Lower-cases a project slug, the one spelling that is stored    | 301   |
-// | normaliseRepo    | Upper-cases a repo key, the one spelling that is stored        | 303   |
+// | Élément    | Résumé                                                             | Ligne |
+// |------------|--------------------------------------------------------------------|-------|
+// | RepoFile   | What one repository needs in order to reach its own board            | 51    |
+// | LoadRepo   | Reads one repository's credential file                              | 68    |
+// | SaveRepo   | Writes it in 0600, with its names normalised                        | 95    |
+// | DeleteRepo | Removes one, for a repository that no longer exists server-side      | 133   |
+// | ListRepos  | Every repository credential on this host, project then repo          | 156   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -35,6 +28,8 @@ package credentials
 // which froze the address a repository was initialised against: a repo set up against the Docker
 // stack kept calling :42058 forever, even when the API had moved. Here it is host-local state,
 // rewritten by `flowlio connect`, and no longer something a teammate inherits by cloning.
+//
+// Where a record's file lives — and why a hosted one is keyed by its core id — is repo_path.go.
 
 import (
 	"encoding/json"
@@ -43,11 +38,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
-
-// reposDirName is the sub-directory holding one file per repository.
-const reposDirName = "repos"
 
 // RepoFile is what one repository needs in order to reach its own board: where the API is, who it
 // is, and the secret that proves it.
@@ -70,87 +61,6 @@ type RepoFile struct {
 	// point straight at the engine; it is set in hosted, where the token lives in flowlio-core and
 	// this id is all the local machine holds to name the repository (DESIGN-WAKE §6).
 	RepoID string `json:"repo_id,omitempty"`
-}
-
-// reposDir yields the directory holding every repository credential of this host.
-func reposDir() (string, error) {
-	base, err := dir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, reposDirName), nil
-}
-
-// safeSegment refuses a name that would compose a path outside reposDir.
-//
-// The names come from a command line, and a repo key of `../../..` would otherwise have RepoPath
-// hand a caller a path to somewhere else entirely — then have SaveRepo write a token there. The
-// check is cheap and it is the only thing standing between a typo and a file written outside the
-// configuration directory.
-func safeSegment(kind, name string) error {
-	if name == "" {
-		return fmt.Errorf("credentials: %s is empty", kind)
-	}
-	if name != filepath.Base(name) || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
-		return fmt.Errorf("credentials: %s %q is not a plain name", kind, name)
-	}
-	return nil
-}
-
-// RepoPath yields $XDG_CONFIG_HOME/flowlio/repos/<project>/<REPO>.json.
-//
-// The repo key is upper-cased and the project slug lower-cased BEFORE the path is composed.
-// Without it, `API.json` and `api.json` coexist on a case-sensitive filesystem while being the same
-// repository everywhere else, and the second one written is the only one anything ever finds.
-func RepoPath(project, repo string) (string, error) {
-	project, repo = normaliseProject(project), normaliseRepo(repo)
-	if err := safeSegment("project", project); err != nil {
-		return "", err
-	}
-	if err := safeSegment("repo", repo); err != nil {
-		return "", err
-	}
-
-	base, err := reposDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, project, repo+".json"), nil
-}
-
-// RepoRecordPath yields the on-disk path of a full record, which is NOT always <project>/<REPO>.json.
-//
-// A hosted record — one carrying a RepoID — is filed under that id, never under its key. A hosted
-// machine holds no project slug: every hosted repo sits under the one "hosted" directory, so two
-// projects that each called a repo CORE would otherwise write the SAME hosted/CORE.json, and the
-// second `flowlio connect --id` would silently bury the first (seen in the field on 2026-08-12). The
-// id is the one name a hosted machine has that is unique per repository, so it is what keys the file.
-// A self-host record keeps the readable <project>/<REPO>.json, resolved through RepoPath.
-func RepoRecordPath(f RepoFile) (string, error) {
-	if f.RepoID != "" {
-		return hostedRecordPath(f.Project, f.RepoID)
-	}
-	return RepoPath(f.Project, f.Repo)
-}
-
-// hostedRecordPath composes <project>/<repo-id>.json. The id is a UUID kept verbatim — never
-// upper-cased the way a key is: a hosted record is read by content and never re-derived from its
-// name, so the spelling only has to survive a filesystem round-trip, and safeSegment is the one check
-// that still bears on it.
-func hostedRecordPath(project, repoID string) (string, error) {
-	project = normaliseProject(project)
-	if err := safeSegment("project", project); err != nil {
-		return "", err
-	}
-	if err := safeSegment("repo id", repoID); err != nil {
-		return "", err
-	}
-
-	base, err := reposDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, project, repoID+".json"), nil
 }
 
 // LoadRepo reads one repository's credentials. Yields ErrNotFound when that repository has never
@@ -294,10 +204,3 @@ func ListRepos() ([]RepoFile, error) {
 	})
 	return out, nil
 }
-
-// normaliseProject and normaliseRepo carry the one spelling rule of this package: a project slug is
-// lower-case, a repo key is upper-case. Everything that composes a path or writes a file goes
-// through them, so a caller never has to remember which is which.
-func normaliseProject(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
-
-func normaliseRepo(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
