@@ -4,11 +4,12 @@ package waker
 //
 // | Élément        | Résumé                                                        | Ligne |
 // |----------------|---------------------------------------------------------------|-------|
-// | Agent          | How to launch one configured agent, fresh or by resume           | 43    |
-// | Preset         | The built-in launch recipe for a known agent                    | 51    |
-// | Custom         | An arbitrary command template for an unknown agent               | 75    |
-// | Agent.LaunchArgv | Builds the argv for one wake, resuming when it can             | 88    |
-// | substitute     | Fills {session} and {prompt} into a template                    | 98    |
+// | Agent          | How to launch one configured agent, fresh or by resume           | 44    |
+// | Preset         | The built-in launch recipe for a known agent                    | 52    |
+// | Custom         | An arbitrary command template for an unknown agent               | 76    |
+// | Agent.Resumes  | Reports whether a wake with this session id resumes or goes fresh | 88    |
+// | Agent.LaunchArgv | Builds the argv for one wake, resuming when it can             | 97    |
+// | substitute     | Fills {session} and {prompt} into a template                    | 107   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -80,13 +81,21 @@ func Custom(template string) (Agent, bool) {
 	return Agent{Name: "custom", Command: fields}, true
 }
 
+// Resumes reports whether a wake with this session id resumes rather than launches fresh: the agent
+// supports resume (Resume set) and a live session id is known. It is the one condition LaunchArgv
+// branches on, exported so Launch can read it — a launch that failed while resuming can still fall
+// back to a fresh one, and only Resumes knows a resume was even attempted.
+func (a Agent) Resumes(sessionID string) bool {
+	return len(a.Resume) > 0 && strings.TrimSpace(sessionID) != ""
+}
+
 // LaunchArgv builds the argv for one wake.
 //
 // It resumes when it can — the agent supports it (Resume set) and a live session id is known — and
 // launches fresh otherwise. The two paths are the whole of §4.2: the same waker drives Claude back
 // into its dead session and starts codex cold, from one configuration.
 func (a Agent) LaunchArgv(sessionID, prompt string) []string {
-	if len(a.Resume) > 0 && strings.TrimSpace(sessionID) != "" {
+	if a.Resumes(sessionID) {
 		return substitute(a.Resume, sessionID, prompt)
 	}
 	return substitute(a.Command, "", prompt)
