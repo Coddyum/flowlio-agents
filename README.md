@@ -313,10 +313,15 @@ agent — or Claude with no live session — it starts a fresh one that rebuilds
 `check_inbox`. You pick per repo with `flowlio agent set`.
 
 **It is built not to cost you.** "Is there anything for me?" is an integer comparison held in memory —
-never a database query — so an idle repo is watched for free; only "what is it?" touches Postgres,
-and only when the first says yes. The server dictates how often the waker may ask, and a relaunch
-cap turns two repos answering each other into a bounded burst instead of a runaway loop. The cost
-follows real events, never time × agents.
+never a database query — so an idle repo is watched for free. When the journal does move, the waker
+confirms there is *actionable* work — a new question, an answer, an unblocked task — before it spends
+a session: a closed issue, or a sibling's unrelated traffic, never relaunches an agent into an empty
+inbox. And the session it does start is sized to the work — the asker declares how much rigour a
+question warrants (`create_issue`'s `effort`, `low`…`max`) and the answering repo runs a matching
+model, a lookup on the cheapest and careful work on the strongest, capped by `FLOWLIO_WAKE_MAX_EFFORT`.
+The server dictates how often the waker may ask; a relaunch cap and a failure back-off turn two repos
+answering each other, or a run of failing launches, into a bounded burst instead of a runaway loop.
+The cost follows real events, never time × agents.
 
 **Self-host** and it needs no configuration beyond `flowlio agent set`: the engine is on the same
 machine and pushes to the waker on `127.0.0.1` the instant an event drops, with a secret so no other
@@ -599,7 +604,7 @@ small:
 | `update_task` | status, priority, deadline, body, progress note, archive — one transaction |
 | `block_task` | this task waits on another task of the same repo, until it reaches a status |
 | `unblock_task` | lifts one recorded dependency by hand |
-| `create_issue` | a question to a sibling repo |
+| `create_issue` | a question to a sibling repo — optionally with an `effort` tier (`low`…`max`) that sizes the model answering it |
 | `list_issues` | the questions exchanged |
 | `answer_issue` | reply, and close if that settles it |
 | `check_inbox` | what is actionable right now |
@@ -744,12 +749,17 @@ imports, bounded file size, mandatory file summaries.
 
 ## Status
 
-**v1.0.0.** The API, the CLI, the MCP server, the trust graph, the inbox, the per-repository memory,
-the team debt queue and now the **cross-repo wake-up** are in and tested. The loop closes on its own:
+**v1.1.0.** The API, the CLI, the MCP server, the trust graph, the inbox, the per-repository memory,
+the team debt queue and the **cross-repo wake-up** are in and tested. The loop closes on its own:
 a repo asks, its session dies, a sibling answers, and the waker relaunches the agent to read the
-answer — proven end to end by an integration test and by `scripts/demo-wake.sh`. Setting up a
-self-hosted instance is `brew install coddyum/flowlio/flowlio` and `flowlio`, or `docker compose up` then two
-commands, and no secret is ever printed or pasted.
+answer — proven end to end by an integration test, by `scripts/demo-wake.sh`, and in production.
+Setting up a self-hosted instance is `brew install coddyum/flowlio/flowlio` and `flowlio`, or
+`docker compose up` then two commands, and no secret is ever printed or pasted.
+
+v1.1.0 sharpens the wake so it only ever costs what real work costs: the probe confirms there is
+*actionable* work before it launches a session — no more relaunching into an empty inbox — the asker
+sizes the answer with an `effort` tier that picks a matching model instead of always the heaviest, and
+a failure back-off stops a wall of failing launches from retrying on a loop.
 
 Not built yet: MCP over HTTP, a published Docker image, and the local web page the binary is meant to
 serve on its own origin. On the wake-up, two polish items remain — a browser device-flow for
@@ -759,9 +769,10 @@ Hosted accounts are **not part of this repository at all** — this engine runs 
 operated deployment, and the accounts, billing and screens that go with it live in a separate
 codebase. The one hosted seam here is the waker polling that operator's relay after `flowlio login`.
 
-The full v1.0.0 release notes: [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md). Scope and the
-reasoning behind each decision: [docs/DESIGN-V1.md](docs/DESIGN-V1.md), and the wake design in
-[docs/DESIGN-WAKE.md](docs/DESIGN-WAKE.md).
+Release notes for every version: the [releases page](https://github.com/Coddyum/flowlio-agents/releases).
+Scope and the reasoning behind each decision: [docs/DESIGN-V1.md](docs/DESIGN-V1.md), the wake design
+in [docs/DESIGN-WAKE.md](docs/DESIGN-WAKE.md) (§14 the effort tier, §15 the actionable probe and the
+breaker), and the trust model in [docs/MODELE-DE-CONFIANCE.md](docs/MODELE-DE-CONFIANCE.md).
 
 ## License
 
