@@ -192,6 +192,13 @@ func ListRepos() ([]RepoFile, error) {
 			if err := json.Unmarshal(raw, &f); err != nil {
 				continue
 			}
+			// A .json that is not a record. Sidecars share this directory and this extension — the
+			// launch-time MCP config `<id>.mcp.json` most of all — and decode into a RepoFile with every
+			// field empty. A real record always carries a Repo (SaveRepo requires it), so an empty Repo
+			// is not ours; listing it would make the waker skip a phantom `/` with no filed path.
+			if f.Repo == "" {
+				continue
+			}
 			out = append(out, f)
 		}
 	}
