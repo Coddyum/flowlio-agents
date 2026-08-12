@@ -4,16 +4,18 @@ package credentials
 //
 // | Élément     | Résumé                                                            | Ligne |
 // |-------------|-------------------------------------------------------------------|-------|
-// | RepoFile    | What one repository needs in order to reach its own board           | 58    |
-// | reposDir    | Directory holding every repository credential of this host          | 69    |
-// | safeSegment | Refuses a name that would compose a path out of that directory      | 83    |
-// | RepoPath    | Path of one repository's credential file, names normalised          | 98    |
-// | LoadRepo    | Reads one repository's credential file                              | 116   |
-// | SaveRepo    | Writes it in 0600, with its names normalised                        | 143   |
-// | DeleteRepo  | Removes one, for a repository that no longer exists server-side     | 174   |
-// | ListRepos   | Every repository credential on this host, project then repo         | 197   |
-// | normaliseProject | Lower-cases a project slug, the one spelling that is stored    | 245   |
-// | normaliseRepo    | Upper-cases a repo key, the one spelling that is stored        | 247   |
+// | RepoFile    | What one repository needs in order to reach its own board           | 60    |
+// | reposDir    | Directory holding every repository credential of this host          | 76    |
+// | safeSegment | Refuses a name that would compose a path out of that directory      | 90    |
+// | RepoPath    | Path of one repository's credential file, names normalised          | 105   |
+// | RepoRecordPath   | On-disk path of a full record: hosted keys by id, not by key   | 129   |
+// | hostedRecordPath | Composes <project>/<repo-id>.json for a hosted record          | 140   |
+// | LoadRepo    | Reads one repository's credential file                              | 158   |
+// | SaveRepo    | Writes it in 0600, with its names normalised                        | 185   |
+// | DeleteRepo  | Removes one, for a repository that no longer exists server-side     | 223   |
+// | ListRepos   | Every repository credential on this host, project then repo         | 246   |
+// | normaliseProject | Lower-cases a project slug, the one spelling that is stored    | 301   |
+// | normaliseRepo    | Upper-cases a repo key, the one spelling that is stored        | 303   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -116,6 +118,41 @@ func RepoPath(project, repo string) (string, error) {
 	return filepath.Join(base, project, repo+".json"), nil
 }
 
+// RepoRecordPath yields the on-disk path of a full record, which is NOT always <project>/<REPO>.json.
+//
+// A hosted record — one carrying a RepoID — is filed under that id, never under its key. A hosted
+// machine holds no project slug: every hosted repo sits under the one "hosted" directory, so two
+// projects that each called a repo CORE would otherwise write the SAME hosted/CORE.json, and the
+// second `flowlio connect --id` would silently bury the first (seen in the field on 2026-08-12). The
+// id is the one name a hosted machine has that is unique per repository, so it is what keys the file.
+// A self-host record keeps the readable <project>/<REPO>.json, resolved through RepoPath.
+func RepoRecordPath(f RepoFile) (string, error) {
+	if f.RepoID != "" {
+		return hostedRecordPath(f.Project, f.RepoID)
+	}
+	return RepoPath(f.Project, f.Repo)
+}
+
+// hostedRecordPath composes <project>/<repo-id>.json. The id is a UUID kept verbatim — never
+// upper-cased the way a key is: a hosted record is read by content and never re-derived from its
+// name, so the spelling only has to survive a filesystem round-trip, and safeSegment is the one check
+// that still bears on it.
+func hostedRecordPath(project, repoID string) (string, error) {
+	project = normaliseProject(project)
+	if err := safeSegment("project", project); err != nil {
+		return "", err
+	}
+	if err := safeSegment("repo id", repoID); err != nil {
+		return "", err
+	}
+
+	base, err := reposDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, project, repoID+".json"), nil
+}
+
 // LoadRepo reads one repository's credentials. Yields ErrNotFound when that repository has never
 // been set up on this host — the normal case before `flowlio setup`, not a run-time error.
 func LoadRepo(project, repo string) (RepoFile, error) {
@@ -148,7 +185,7 @@ func LoadRepo(project, repo string) (RepoFile, error) {
 func SaveRepo(f RepoFile) (string, error) {
 	f.Project, f.Repo = normaliseProject(f.Project), normaliseRepo(f.Repo)
 
-	path, err := RepoPath(f.Project, f.Repo)
+	path, err := RepoRecordPath(f)
 	if err != nil {
 		return "", err
 	}
@@ -233,9 +270,16 @@ func ListRepos() ([]RepoFile, error) {
 			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 				continue
 			}
-			repo := strings.TrimSuffix(entry.Name(), ".json")
-			f, err := LoadRepo(project.Name(), repo)
+			// Read the file by its own bytes rather than re-derive a key from its name and hand it back
+			// to LoadRepo: a hosted record is filed under its id, and LoadRepo would upper-case that id
+			// into a name no file carries. The record's Project/Repo fields are the authority here, not
+			// the filename — which is exactly why a hosted id in the filename changes nothing downstream.
+			raw, err := os.ReadFile(filepath.Join(base, project.Name(), entry.Name()))
 			if err != nil {
+				continue
+			}
+			var f RepoFile
+			if err := json.Unmarshal(raw, &f); err != nil {
 				continue
 			}
 			out = append(out, f)
