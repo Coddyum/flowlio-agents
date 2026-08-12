@@ -9,7 +9,7 @@ package main
 // | prop            | Builds a JSON schema property                                  | 69    |
 // | enumProp        | Builds a property constrained to a set of values                | 78    |
 // | tools           | The twelve exposed tools, and nothing more                      | 88    |
-// | toolsListResult | The tools/list response                                        | 281   |
+// | toolsListResult | The tools/list response                                        | 285   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -214,13 +214,17 @@ func tools() []toolDef {
 		{
 			Name: "answer_issue",
 			Description: "Appends a message to an issue's thread, and closes it if close is true. " +
-				"This is the only way to answer, and the only way to close. A message is required " +
-				"even to close: without a reason, the other side does not know why.",
+				"This is the only way to answer, and the only way to close. When you answer a " +
+				"sibling's question, leave close off: your reply reaches the asker through their " +
+				"inbox only while the issue is open, so closing as you answer hides it from them. " +
+				"Close only an issue you opened, once its answer has settled it. A message is " +
+				"required even to close: without a reason, the other side does not know why.",
 			InputSchema: object(map[string]any{
 				"ref": prop("string",
 					"Reference of the issue, for example CORE-34."),
-				"body":  prop("string", "The message, in markdown."),
-				"close": prop("boolean", "Closes the issue. Closing is final."),
+				"body": prop("string", "The message, in markdown."),
+				"close": prop("boolean", "Closes the issue. Closing is final, and is the asker's "+
+					"gesture: do not close a question you are answering, only one you opened."),
 			}, "ref", "body"),
 		},
 		{

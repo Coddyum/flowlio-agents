@@ -42,7 +42,7 @@ const (
 	//
 	// It has to match the heading of the markdown, and a test says so: a version that disagreed with
 	// the one written in the text is worse than no version at all, because both look authoritative.
-	Version = "2"
+	Version = "3"
 
 	// WorkflowPath is where `flowlio connect` writes the prompt, relative to the repository root.
 	//
