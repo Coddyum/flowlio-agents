@@ -33,7 +33,7 @@ type services struct {
 // probe and the cache — it only ever sees the closure.
 func NewServices(q *database.Queries, c cache.Cache) module.CoreServices {
 	wakeState := func(p auth.Principal) (bool, bool) {
-		head, headWarm := probe.Head(c, p.TeamID)
+		head, headWarm := probe.Head(c, p.TeamID, p.ProjectID)
 		cursor, cursorWarm := probe.Cursor(c, p.TokenID)
 		if !headWarm || !cursorWarm {
 			return false, false

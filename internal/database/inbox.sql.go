@@ -37,13 +37,15 @@ const inboxCursor = `-- name: InboxCursor :one
 SELECT
     coalesce((SELECT c.last_event_id FROM token_cursors c WHERE c.token_id = $1), 0)::bigint
         AS last_event_id,
-    coalesce((SELECT max(e.id) FROM events e WHERE e.team_id = $2), 0)::bigint
+    coalesce((SELECT max(e.id) FROM events e
+              WHERE e.team_id = $2 AND e.notify_project_id = $3), 0)::bigint
         AS head_event_id
 `
 
 type InboxCursorParams struct {
-	TokenID uuid.UUID `json:"token_id"`
-	TeamID  uuid.UUID `json:"team_id"`
+	TokenID   uuid.UUID `json:"token_id"`
+	TeamID    uuid.UUID `json:"team_id"`
+	ProjectID uuid.UUID `json:"project_id"`
 }
 
 type InboxCursorRow struct {
@@ -57,11 +59,16 @@ type InboxCursorRow struct {
 //
 // Le journal n'est jamais lu par un prédicat propre : il est atteint par EXISTS sur un sujet déjà
 // scopé. Il n'existe donc aucune query capable de lire l'activité d'un projet tiers.
-// InboxCursor lit le curseur du token ET la tête du journal de la team en une fois. La tête est
-// capturée AVANT le calcul des seaux : tout événement créé pendant l'appel restera `new` au
-// prochain tour.
+// InboxCursor reads the token cursor AND the head of what is addressed to this project, in one call.
+// The head is captured BEFORE the buckets are computed: any event created during the call stays `new`
+// on the next round.
+//
+// The head is a PER-PROJECT relevance head, not the team's activity: max(id) among the events whose
+// notify_project_id is this project — the ones that should actually wake it. A repo answering an issue
+// writes an event addressed to the OTHER party, so its own answer never lifts its own head, and the
+// probe stops waking it for its own writes.
 func (q *Queries) InboxCursor(ctx context.Context, arg InboxCursorParams) (InboxCursorRow, error) {
-	row := q.db.QueryRowContext(ctx, inboxCursor, arg.TokenID, arg.TeamID)
+	row := q.db.QueryRowContext(ctx, inboxCursor, arg.TokenID, arg.TeamID, arg.ProjectID)
 	var i InboxCursorRow
 	err := row.Scan(&i.LastEventID, &i.HeadEventID)
 	return i, err

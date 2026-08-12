@@ -35,7 +35,7 @@ import (
 // 429 — and no work is even looked at. Otherwise the ladder advances (climb on empty, snap to rung 0
 // on an event) and the interval it now dictates rides back in NextProbeAfter.
 func (s *service) Probe(ctx context.Context, in ProbeInput) (ProbeResult, error) {
-	if in.TeamID == uuid.Nil || in.TokenID == uuid.Nil {
+	if in.TeamID == uuid.Nil || in.ProjectID == uuid.Nil || in.TokenID == uuid.Nil {
 		return ProbeResult{}, fmt.Errorf("%w: incomplete probe scope", ErrInvalidInput)
 	}
 
@@ -60,16 +60,16 @@ func (s *service) Probe(ctx context.Context, in ProbeInput) (ProbeResult, error)
 // hasWork answers the one comparison, from memory when it can. Cold cache: one read seeds both, so
 // every later probe of this token and team is free again.
 func (s *service) hasWork(ctx context.Context, in ProbeInput) (bool, error) {
-	head, headWarm := probe.Head(s.cache, in.TeamID)
+	head, headWarm := probe.Head(s.cache, in.TeamID, in.ProjectID)
 	cursor, cursorWarm := probe.Cursor(s.cache, in.TokenID)
 	if headWarm && cursorWarm {
 		return head > cursor, nil
 	}
 
-	pos, err := s.store.Position(ctx, in.TeamID, in.TokenID)
+	pos, err := s.store.Position(ctx, in.TeamID, in.ProjectID, in.TokenID)
 	if err != nil {
 		return false, fmt.Errorf("wake service: probe: %w", err)
 	}
-	probe.Seed(s.cache, in.TeamID, in.TokenID, pos.Head, pos.Cursor)
+	probe.Seed(s.cache, in.TeamID, in.ProjectID, in.TokenID, pos.Head, pos.Cursor)
 	return pos.Head > pos.Cursor, nil
 }

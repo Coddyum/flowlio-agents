@@ -14,7 +14,7 @@ import (
 // never reached — but the service needs a store to build.
 type fakeStore struct{ pos store.Position }
 
-func (f fakeStore) Position(context.Context, uuid.UUID, uuid.UUID) (store.Position, error) {
+func (f fakeStore) Position(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (store.Position, error) {
 	return f.pos, nil
 }
 
@@ -83,8 +83,8 @@ func TestProbeThrottlesTheTooSoonClient(t *testing.T) {
 	svc, c, setNow := newService(t, base)
 
 	_ = c
-	team, token := uuid.New(), uuid.New()
-	in := ProbeInput{TeamID: team, TokenID: token}
+	team, project, token := uuid.New(), uuid.New(), uuid.New()
+	in := ProbeInput{TeamID: team, ProjectID: project, TokenID: token}
 	// The fake store reports head == cursor (no work); the first probe cold-reads it and warms the
 	// cache, so the throttle path that follows is exercised on a warm compare.
 

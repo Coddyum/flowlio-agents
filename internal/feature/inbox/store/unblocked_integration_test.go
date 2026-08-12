@@ -118,8 +118,8 @@ func TestUnblockedNewFlagFollowsTheCursor(t *testing.T) {
 
 	var eventID int64
 	if err := db.QueryRow(
-		`INSERT INTO events (team_id, project_id, actor_project_id, kind, subject_type, subject_id)
-		 VALUES ($1, $2, $2, 'task.unblocked', 'task', $3) RETURNING id`,
+		`INSERT INTO events (team_id, project_id, actor_project_id, notify_project_id, kind, subject_type, subject_id)
+		 VALUES ($1, $2, $2, $2, 'task.unblocked', 'task', $3) RETURNING id`,
 		f.teamID, f.core, freed,
 	).Scan(&eventID); err != nil {
 		t.Fatalf("journalling: %v", err)

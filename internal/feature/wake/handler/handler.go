@@ -7,9 +7,9 @@ package handler
 // | Handler           | HTTP adapter of the wake feature                             | 30    |
 // | New               | Creates the wake handler                                    | 35    |
 // | Handler.Probe     | Answers "is there anything past my cursor?" from the token   | 44    |
-// | Handler.Register  | Records the local waker's callback and secret under a lease  | 82    |
-// | Handler.writeJSON | Serialises the response before committing the status         | 112   |
-// | errorBody         | Single shape of every error response                        | 134   |
+// | Handler.Register  | Records the local waker's callback and secret under a lease  | 83    |
+// | Handler.writeJSON | Serialises the response before committing the status         | 113   |
+// | errorBody         | Single shape of every error response                        | 135   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -43,15 +43,16 @@ func New(svc service.Service) *Handler {
 // from memory whenever it can.
 func (h *Handler) Probe(w http.ResponseWriter, r *http.Request) {
 	p, ok := auth.FromContext(r.Context())
-	if !ok || p.Scope != auth.ScopeProject || p.TeamID == uuid.Nil || p.TokenID == uuid.Nil {
+	if !ok || p.Scope != auth.ScopeProject || p.TeamID == uuid.Nil || p.ProjectID == uuid.Nil || p.TokenID == uuid.Nil {
 		log.Printf("wake handler: route without a project token: %s %s", r.Method, r.URL.Path)
 		h.writeJSON(w, http.StatusForbidden, errorBody{Error: "forbidden"})
 		return
 	}
 
 	result, err := h.svc.Probe(r.Context(), service.ProbeInput{
-		TeamID:  p.TeamID,
-		TokenID: p.TokenID,
+		TeamID:    p.TeamID,
+		ProjectID: p.ProjectID,
+		TokenID:   p.TokenID,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidInput) {

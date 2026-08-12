@@ -6,12 +6,12 @@ package store
 // |------------------------|---------------------------------------------------------|-------|
 // | store.ProjectKey       | Resolves the key of the token's project                   | 29    |
 // | store.Cursor           | Reads the token cursor and the head of the journal        | 45    |
-// | store.IncomingOpen     | The incoming questions waiting for an answer              | 60    |
-// | store.OutgoingAnswered | My questions that got an answer                           | 88    |
-// | store.InProgressTasks  | My tasks in progress, sign of an interrupted session      | 116   |
-// | store.UnblockedTasks   | My tasks no internal dependency blocks any more           | 143   |
-// | store.Advance          | Moves the token cursor forward, never backwards           | 172   |
-// | translate              | Brings a database error back to a domain error            | 180   |
+// | store.IncomingOpen     | The incoming questions waiting for an answer              | 61    |
+// | store.OutgoingAnswered | My questions that got an answer                           | 89    |
+// | store.InProgressTasks  | My tasks in progress, sign of an interrupted session      | 117   |
+// | store.UnblockedTasks   | My tasks no internal dependency blocks any more           | 144   |
+// | store.Advance          | Moves the token cursor forward, never backwards           | 173   |
+// | translate              | Brings a database error back to a domain error            | 181   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -44,8 +44,9 @@ func (s *store) ProjectKey(ctx context.Context, teamID, projectID uuid.UUID) (st
 // painless.
 func (s *store) Cursor(ctx context.Context, sc Scope) (Cursor, error) {
 	row, err := s.q.InboxCursor(ctx, database.InboxCursorParams{
-		TokenID: sc.TokenID,
-		TeamID:  sc.TeamID,
+		TokenID:   sc.TokenID,
+		TeamID:    sc.TeamID,
+		ProjectID: sc.ProjectID,
 	})
 	if err != nil {
 		return Cursor{}, translate(err, "cursor")

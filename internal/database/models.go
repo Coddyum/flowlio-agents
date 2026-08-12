@@ -272,14 +272,15 @@ func (ns NullTokenScope) Value() (driver.Value, error) {
 }
 
 type Event struct {
-	ID             int64        `json:"id"`
-	TeamID         uuid.UUID    `json:"team_id"`
-	ProjectID      uuid.UUID    `json:"project_id"`
-	ActorProjectID uuid.UUID    `json:"actor_project_id"`
-	Kind           string       `json:"kind"`
-	SubjectType    EventSubject `json:"subject_type"`
-	SubjectID      uuid.UUID    `json:"subject_id"`
-	CreatedAt      time.Time    `json:"created_at"`
+	ID              int64        `json:"id"`
+	TeamID          uuid.UUID    `json:"team_id"`
+	ProjectID       uuid.UUID    `json:"project_id"`
+	ActorProjectID  uuid.UUID    `json:"actor_project_id"`
+	Kind            string       `json:"kind"`
+	SubjectType     EventSubject `json:"subject_type"`
+	SubjectID       uuid.UUID    `json:"subject_id"`
+	CreatedAt       time.Time    `json:"created_at"`
+	NotifyProjectID uuid.UUID    `json:"notify_project_id"`
 }
 
 type Issue struct {

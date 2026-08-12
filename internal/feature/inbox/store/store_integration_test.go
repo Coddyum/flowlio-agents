@@ -114,8 +114,8 @@ func openIssue(t *testing.T, f fixture, from, to uuid.UUID, title, state, body s
 	}
 
 	if _, err := f.db.Exec(
-		`INSERT INTO events (team_id, project_id, actor_project_id, kind, subject_type, subject_id)
-		 VALUES ($1, $2, $3, 'issue.opened', 'issue', $4)`,
+		`INSERT INTO events (team_id, project_id, actor_project_id, notify_project_id, kind, subject_type, subject_id)
+		 VALUES ($1, $2, $3, $2, 'issue.opened', 'issue', $4)`,
 		f.teamID, to, from, issueID,
 	); err != nil {
 		t.Fatalf("event: %v", err)

@@ -4,13 +4,13 @@ package service
 //
 // | Élément      | Résumé                                                         | Ligne |
 // |--------------|---------------------------------------------------------------|-------|
-// | Service      | The one question the waker asks: is there anything past my cursor | 43    |
-// | service      | Implementation over the probe cache and a cold-read store        | 53    |
-// | New          | Creates the wake service                                        | 62    |
-// | ProbeInput   | Scope of one probe, entirely taken from the token                | 68    |
-// | ProbeResult  | The probe's answer: work or not                                   | 80    |
-// | RegisterInput | A waker's registration: scope from the token, callback + secret | 88    |
-// | RegisterResult | The lease window handed back to the waker                       | 96    |
+// | Service      | The one question the waker asks: is there anything past my cursor | 44    |
+// | service      | Implementation over the probe cache and a cold-read store        | 54    |
+// | New          | Creates the wake service                                        | 63    |
+// | ProbeInput   | Scope of one probe, entirely taken from the token                | 70    |
+// | ProbeResult  | The probe's answer: work or not                                   | 83    |
+// | RegisterInput | A waker's registration: scope from the token, callback + secret | 91    |
+// | RegisterResult | The lease window handed back to the waker                       | 99    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -18,9 +18,10 @@ package service
 // CONTRACT ONLY — the implementation lives in probe.go.
 //
 // WHY A PROBE AND NOT check_inbox. Asking "is there anything?" must not cost what asking "what is
-// it?" costs. The probe is an integer-vs-integer compare held in memory — the team journal head
-// against the token cursor — and touches Postgres only to seed itself once on a cold cache (D55,
-// docs/DESIGN-WAKE.md §3). check_inbox stays the 6-query call, fired only when the probe says yes.
+// it?" costs. The probe is an integer-vs-integer compare held in memory — the project's relevance
+// head (the latest event addressed to it) against the token cursor — and touches Postgres only to
+// seed itself once on a cold cache (D55, docs/DESIGN-WAKE.md §3). check_inbox stays the 6-query call,
+// fired only when the probe says yes.
 //
 // This is what lets a waker sit on a dead agent's behalf without cost following time × agents: an
 // empty probe is free, so polling an idle repo forever is free.
@@ -41,7 +42,7 @@ var ErrInvalidInput = errors.New("wake: invalid input")
 // Service answers the question a waker repeats on a sleeping agent's behalf, and records where that
 // waker can be pushed to.
 type Service interface {
-	// Probe compares the team journal head with the token cursor. Free in steady state.
+	// Probe compares the project's relevance head with the token cursor. Free in steady state.
 	Probe(ctx context.Context, in ProbeInput) (ProbeResult, error)
 	// Register records the local waker's callback and secret under a lease, so the engine can push
 	// a wake the instant an event drops. Called again, it refreshes the lease.
@@ -63,11 +64,13 @@ func New(st store.Store, c cache.Cache) Service {
 	return &service{store: st, cache: c, now: time.Now}
 }
 
-// ProbeInput carries the scope of one probe. Both fields come from the token: like check_inbox, the
-// call has no agent-supplied parameter.
+// ProbeInput carries the scope of one probe. Every field comes from the token: like check_inbox, the
+// call has no agent-supplied parameter. ProjectID selects the relevance head to compare against —
+// the events addressed to this project, not the team's whole activity.
 type ProbeInput struct {
-	TeamID  uuid.UUID `json:"-"`
-	TokenID uuid.UUID `json:"-"`
+	TeamID    uuid.UUID `json:"-"`
+	ProjectID uuid.UUID `json:"-"`
+	TokenID   uuid.UUID `json:"-"`
 }
 
 // ProbeResult is the probe's answer.
