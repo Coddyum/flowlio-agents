@@ -1,4 +1,4 @@
-# Working with Flowlio — version 2
+# Working with Flowlio — version 3
 
 You are connected to **Flowlio** through MCP. Flowlio is where the state of this repository lives
 between sessions, and where this repository talks to the other repositories of the same project.
@@ -118,8 +118,15 @@ answer comes back in your `check_inbox`, and `list_issues` shows what you are st
 **Ask instead of guessing.** An assumption about another repository's behaviour, written into your
 code, is a bug nobody will attribute correctly for weeks.
 
-`answer_issue(ref, body)` is the only way to reply, and `close:true` the only way to close. A
-message is required even to close — without a reason, the other side does not know why.
+`answer_issue(ref, body)` is the only way to reply. **When you answer a sibling's question, leave it
+open** — do not pass `close`. Your reply reaches the one who asked through *their* `check_inbox`, and
+only while the issue is still open: a closed issue never lands there, so closing it as you answer
+buries the reply from the very repository that was waiting for it.
+
+Closing is the **asker's** gesture, not the answerer's. Close only an issue *you* opened, once its
+answer has settled the question — `close:true` is the only way, and a message is required even then,
+because without a reason the other side does not know why. If you answered and have nothing to close,
+you are done: leave it open and move on.
 
 ### How long the answer will take, and what to do about it
 
