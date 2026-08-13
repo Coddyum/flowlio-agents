@@ -28,6 +28,14 @@ func (f fakeStore) Actionable(context.Context, uuid.UUID, uuid.UUID, int64) (boo
 	return f.actionable, f.effort, nil
 }
 
+func (f fakeStore) Watermark(context.Context, uuid.UUID, uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
+func (f fakeStore) SaveWatermark(context.Context, uuid.UUID, uuid.UUID, int64) error {
+	return nil
+}
+
 // The ladder climbs one rung every five empty probes and never past the cap; any event snaps it back
 // to rung 0. This is the table in DESIGN-WAKE §3, checked rung by rung.
 func TestNextPacingClimbsThenCapsThenResets(t *testing.T) {

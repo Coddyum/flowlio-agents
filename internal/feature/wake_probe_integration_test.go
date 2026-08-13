@@ -575,6 +575,94 @@ func TestProbeWakesForSeenButUnansweredIssue(t *testing.T) {
 	}
 }
 
+// TestProbeSuppressionSurvivesAColdCache is the regression for FLWL-90: the re-wake suppression must
+// outlive the process. The watermark lived only in the in-process cache, so a hosted engine that
+// Render spins down between polls (or a fresh replica) cold-started with watermark 0 and re-decided
+// ALL standing work on every poll — re-waking a repo for the same open issue forever. Persisting the
+// watermark (000017) fixes it: a cold cache reads the last decided head from Postgres, not 0.
+//
+// The scenario:
+//   - AGNT opens a question to CORE   → an open issue addressed to CORE, unanswered standing work
+//   - a first probe                   → HasWork=true, and it persists the watermark it decided on
+//   - the cache is DROPPED (a restart / spin-down): a brand-new, cold cache
+//   - a second probe, fresh token     → HasWork=false: the durable watermark is read back, not
+//                                        defaulted to 0 — the void-loop stays closed across a restart
+//   - a NEW event on the issue        → HasWork=true again from a cold cache: suppression covers only
+//                                        what was already decided, never new work
+func TestProbeSuppressionSurvivesAColdCache(t *testing.T) {
+	db, f := newFixture(t)
+	ctx := context.Background()
+
+	var agntID uuid.UUID
+	if err := db.QueryRow(
+		"INSERT INTO projects (team_id, key, name) VALUES ($1, 'AGNT', 'Project AGNT') RETURNING id",
+		f.teamID,
+	).Scan(&agntID); err != nil {
+		t.Fatalf("creating project AGNT: %v", err)
+	}
+	coreID := f.projectID
+
+	// An open question addressed to CORE, and the event that names it: unanswered standing work, the
+	// exact shape that re-woke CORE on every cold poll before FLWL-90.
+	var issueID uuid.UUID
+	if err := db.QueryRow(
+		`INSERT INTO issues (team_id, project_id, author_project_id, number, title, state)
+		 VALUES ($1, $2, $3, 1, 'a standing unanswered question', 'open') RETURNING id`,
+		f.teamID, coreID, agntID,
+	).Scan(&issueID); err != nil {
+		t.Fatalf("inserting the open issue: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO events (team_id, project_id, actor_project_id, notify_project_id, kind, subject_type, subject_id)
+		 VALUES ($1, $2, $3, $2, 'issue.opened', 'issue', $4)`,
+		f.teamID, coreID, agntID, issueID,
+	); err != nil {
+		t.Fatalf("inserting the opening event: %v", err)
+	}
+
+	positions := wakestore.New(database.New(db))
+
+	// First probe, its own cache: it finds the open issue and persists the watermark it decided on.
+	svc1 := wakeservice.New(positions, cache.NewMemory(time.Hour, time.Hour))
+	r, err := svc1.Probe(ctx, wakeservice.ProbeInput{TeamID: f.teamID, ProjectID: coreID, TokenID: insertProjectToken(t, db, f.teamID, coreID, "core")})
+	if err != nil {
+		t.Fatalf("first probe: %v", err)
+	}
+	if !r.HasWork {
+		t.Fatal("the first probe did not wake for an open issue addressed to CORE")
+	}
+
+	// THE RESTART. A brand-new cold cache, exactly as a spun-down engine or a fresh replica starts, and
+	// a fresh token so the escalation ladder cannot be what silences this probe. Before FLWL-90 the
+	// cold watermark read 0 and re-decided the still-open issue → HasWork=true, the perpetual wake.
+	svc2 := wakeservice.New(positions, cache.NewMemory(time.Hour, time.Hour))
+	r, err = svc2.Probe(ctx, wakeservice.ProbeInput{TeamID: f.teamID, ProjectID: coreID, TokenID: insertProjectToken(t, db, f.teamID, coreID, "core2")})
+	if err != nil {
+		t.Fatalf("second probe after a cold restart: %v", err)
+	}
+	if r.HasWork {
+		t.Fatal("a cold-started probe re-woke for the same standing issue — FLWL-90 regressed, the watermark is not durable")
+	}
+
+	// A genuinely NEW event still wakes from a cold cache: the durable watermark suppresses only what
+	// was already decided, never new work. AGNT posts a follow-up; its event id is above the watermark.
+	if _, err := db.Exec(
+		`INSERT INTO events (team_id, project_id, actor_project_id, notify_project_id, kind, subject_type, subject_id)
+		 VALUES ($1, $2, $3, $2, 'issue.message', 'issue', $4)`,
+		f.teamID, coreID, agntID, issueID,
+	); err != nil {
+		t.Fatalf("inserting the follow-up event: %v", err)
+	}
+	svc3 := wakeservice.New(positions, cache.NewMemory(time.Hour, time.Hour))
+	r, err = svc3.Probe(ctx, wakeservice.ProbeInput{TeamID: f.teamID, ProjectID: coreID, TokenID: insertProjectToken(t, db, f.teamID, coreID, "core3")})
+	if err != nil {
+		t.Fatalf("third probe: %v", err)
+	}
+	if !r.HasWork {
+		t.Fatal("a new event did not lift the head above the durable watermark — the fix over-suppresses")
+	}
+}
+
 // insertProjectToken creates a project-scoped token and returns its id. The prefix is unique per call
 // so two tokens in one test never collide on the prefix unique index.
 func insertProjectToken(t *testing.T, db *sql.DB, teamID, projectID uuid.UUID, name string) uuid.UUID {

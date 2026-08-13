@@ -398,3 +398,10 @@ type TokenCursor struct {
 	LastEventID int64     `json:"last_event_id"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
+
+type WakeWatermark struct {
+	TeamID    uuid.UUID `json:"team_id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	Head      int64     `json:"head"`
+	UpdatedAt time.Time `json:"updated_at"`
+}

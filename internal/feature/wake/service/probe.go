@@ -4,8 +4,9 @@ package service
 //
 // | Élément         | Résumé                                                       | Ligne |
 // |-----------------|--------------------------------------------------------------|-------|
-// | service.Probe | Gates on movement past the watermark, confirms work, dictates cadence | 52 |
-// | service.head  | The project relevance head, from memory or one cold read              | 103 |
+// | service.Probe     | Gates on movement past the watermark, confirms work, dictates cadence | 53 |
+// | service.head      | The project relevance head, from memory or one cold read             | 108 |
+// | service.watermark | The wake watermark, from memory or the durable store on a cold cache | 126 |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -66,9 +67,10 @@ func (s *service) Probe(ctx context.Context, in ProbeInput) (ProbeResult, error)
 	if err != nil {
 		return ProbeResult{}, err
 	}
-	// A cold watermark reads as 0: the probe re-decides all standing work once and advances it, erring
-	// towards a wake rather than a miss after a restart.
-	watermark, _ := probe.Wake(s.cache, in.TeamID, in.ProjectID)
+	watermark, err := s.watermark(ctx, in)
+	if err != nil {
+		return ProbeResult{}, err
+	}
 
 	// Step 2: confirm the movement is actionable before it becomes a launch, measuring "new" from the
 	// watermark. On a clean read — actionable or not — advance the watermark to the head just decided
@@ -82,6 +84,11 @@ func (s *service) Probe(ctx context.Context, in ProbeInput) (ProbeResult, error)
 			hasWork = actionable
 			tier = effort
 			probe.RecordWake(s.cache, in.TeamID, in.ProjectID, head)
+			// Persist the decision so a spun-down or restarted engine does not re-decide this standing
+			// work (FLWL-90). Best-effort: the in-memory RecordWake above already suppresses re-wake for
+			// the life of this process, so a failed write costs at most one re-decision after a cold
+			// start — the pre-000017 behaviour, never a lost launch. The launch must not hinge on it.
+			_ = s.store.SaveWatermark(ctx, in.TeamID, in.ProjectID, head)
 		}
 	}
 
@@ -97,9 +104,7 @@ func (s *service) Probe(ctx context.Context, in ProbeInput) (ProbeResult, error)
 
 // head answers the project relevance head from memory when it can, and from one cold read otherwise.
 // The cold read seeds both probe scalars it touches — the head and the piggyback cursor — so every
-// later probe of this project answers from memory, the zero-SQL steady state D55 protects. The wake
-// watermark is not seeded from the database on purpose: it is the probe's own decision log, not a
-// durable position, and a cold miss correctly re-decides standing work once.
+// later probe of this project answers from memory, the zero-SQL steady state D55 protects.
 func (s *service) head(ctx context.Context, in ProbeInput) (int64, error) {
 	if h, warm := probe.Head(s.cache, in.TeamID, in.ProjectID); warm {
 		return h, nil
@@ -110,4 +115,22 @@ func (s *service) head(ctx context.Context, in ProbeInput) (int64, error) {
 	}
 	probe.Seed(s.cache, in.TeamID, in.ProjectID, in.TokenID, pos.Head, pos.Cursor)
 	return pos.Head, nil
+}
+
+// watermark answers the wake watermark from memory when warm, and from the durable store on a cold
+// cache — the head the probe last decided on. Seeding it from Postgres (000017) is what makes the
+// FLWL-85/86 re-wake suppression survive a spun-down or restarted engine: a cold miss would otherwise
+// read 0 and re-decide ALL standing work on every poll, re-waking a repo for any open or answered
+// issue (FLWL-90). The cold read seeds the cache, so later probes answer from memory and the idle
+// poll stays zero-SQL.
+func (s *service) watermark(ctx context.Context, in ProbeInput) (int64, error) {
+	if w, warm := probe.Wake(s.cache, in.TeamID, in.ProjectID); warm {
+		return w, nil
+	}
+	w, err := s.store.Watermark(ctx, in.TeamID, in.ProjectID)
+	if err != nil {
+		return 0, fmt.Errorf("wake service: probe: %w", err)
+	}
+	probe.RecordWake(s.cache, in.TeamID, in.ProjectID, w)
+	return w, nil
 }
