@@ -332,6 +332,18 @@ CREATE TABLE public.tokens (
 
 
 --
+-- Name: wake_watermarks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.wake_watermarks (
+    team_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    head bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: events events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -505,6 +517,14 @@ ALTER TABLE ONLY public.tokens
 
 ALTER TABLE ONLY public.tokens
     ADD CONSTRAINT tokens_prefix_key UNIQUE (prefix);
+
+
+--
+-- Name: wake_watermarks wake_watermarks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wake_watermarks
+    ADD CONSTRAINT wake_watermarks_pkey PRIMARY KEY (team_id, project_id);
 
 
 --
@@ -797,6 +817,14 @@ ALTER TABLE ONLY public.tasks
 
 ALTER TABLE ONLY public.token_cursors
     ADD CONSTRAINT token_cursors_token_id_fkey FOREIGN KEY (token_id) REFERENCES public.tokens(id) ON DELETE CASCADE;
+
+
+--
+-- Name: wake_watermarks wake_watermarks_project_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wake_watermarks
+    ADD CONSTRAINT wake_watermarks_project_fk FOREIGN KEY (project_id, team_id) REFERENCES public.projects(id, team_id) ON DELETE CASCADE;
 
 
 --
