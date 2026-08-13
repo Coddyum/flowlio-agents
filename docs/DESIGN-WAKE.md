@@ -239,7 +239,8 @@ issue lands for repo X
 | **Server-dictated cadence** | `next_probe_after` + `429`. A daemon misconfigured to 1 s cannot cost the day. |
 | **Lease** | An unrefreshed session registration expires; a crashed agent stops costing on its own. |
 | **Zero-SQL probe, tested** | Integration test counts queries, stays at zero across 100 empty probes; removing the cache turns it red. |
-| **Actionable gate on the probe** (FLWL-85) | `head > cursor` means "the journal moved", not "there is work". A wake is a full session boot, so the probe confirms **new actionable work** before it says yes — never a launch for a closed issue or a sibling's traffic. §15. |
+| **Actionable gate on the probe** (FLWL-85) | `head > watermark` means "the journal moved", not "there is work". A wake is a full session boot, so the probe confirms **new actionable work** before it says yes — never a launch for a closed issue or a sibling's traffic. §15. |
+| **Wake watermark, not the read cursor** (FLWL-86) | The gate rides a per-project **wake watermark** the probe alone advances, never the token's inbox cursor which `check_inbox` moves on a mere read. Gating on the cursor left an issue an agent *looked at without answering* unwakeable — the exact inverse of FLWL-85. §16. |
 | **Failure circuit-breaker** (FLWL-85) | The window bounds a burst, not a wall: a repo whose launches keep failing was retried every cadence for an hour into the account session limit. Consecutive failures now earn an exponential backoff; a recognised session limit blocks the repo outright. §15. |
 
 ---
@@ -351,7 +352,8 @@ head, a sibling's entire traffic. The old comment "a wasted wake is cheap" was f
 session. The fix is a **two-step probe**:
 
 1. cheap gate — `head > cursor`? Zero SQL when idle (unchanged; D55's 100-empty-probes test stays
-   green).
+   green). (The boundary later became the wake watermark, not the cursor — §16 — but the two-step
+   shape and its cost model are as written here.)
 2. only when the gate passes — one indexed read: is there **new actionable work** (a new incoming open
    issue, a new answer to mine, a newly unblocked task; **not** `in_progress`, **not** `closed`)? No ⇒
    `HasWork=false`, **no launch**. The read runs only on the has-work path, and the ladder climbs on a
@@ -368,3 +370,37 @@ session limit (`sessionLimited` reads the agent-log tail) blocks the repo for a 
 **Delivery caveat.** Both fixes live in the engine and the daemon binary. The hosted engine is pinned
 per image and lags (D29, FLWL-83): until an image can fetch the current binary, prod keeps the
 team-wide head, and the hosted waker stays down.
+
+## 16. The gate rides a wake watermark, not the read cursor (FLWL-86)
+
+2026-08-13: the inverse of §15. An incoming issue sat open ~10 min on a session Maxence had launched,
+and the waker never relaunched an agent for it — restarting `flowlio` changed nothing.
+
+**The wake decision rode the inbox read cursor.** The gate was `head > cursor` and the confirming read
+measured "new" from that same `cursor` — `token_cursors.last_event_id`. But `check_inbox` advances the
+cursor on a **mere read** (`inbox/service/check.go` → `Advance`). So the instant any session, manual or
+woken, looked at the inbox without answering, the cursor sat at the head, the open issue's event was no
+longer "new", and the gate went false **forever** — the issue never woke anyone again. It is the exact
+mirror of FLWL-85: that card stopped waking on movement-that-is-not-work; this one stopped
+work-that-was-merely-looked-at from ever waking.
+
+**The fix: a per-project wake watermark, decoupled from the cursor.** A third probe scalar
+(`internal/core/probe`, alongside the head and the cursor), it is the head the probe last made a launch
+decision on. The gate becomes `head > watermark`; the confirming read measures "new" from the
+watermark; on a clean actionable read the watermark advances to the head just decided on. Two things it
+must both hold, and does:
+
+- **A looked-at issue still wakes.** `check_inbox` advances the cursor, never the watermark — only the
+  probe advances the watermark — so a session that read an open issue without answering leaves the
+  watermark behind it, and the waker relaunches to finish the work.
+- **The void-loop FLWL-85 closed stays closed.** The watermark advances the moment the probe decides
+  to wake, so the *same* standing work does not relaunch every probe; a new event lifts the head above
+  the watermark and earns a fresh wake. Loop-safety no longer depends on the woken agent successfully
+  running `check_inbox` — before, an agent that crashed before that call left the cursor unmoved and
+  looped.
+
+The watermark is in-cache and non-durable, like the pacing ladder: a cold engine reads it as 0 and
+re-decides standing work once (a bounded burst on restart, erring towards a wake, never a miss). The
+**piggyback** (`core/services.go`) keeps comparing `head > cursor`: nudging an *active* agent to
+re-read its inbox is a different question from deciding to boot a *dead* one, and the cursor is right
+for the first. Same delivery caveat as §15: engine-side, so it reaches hosted only once FLWL-83 lifts.

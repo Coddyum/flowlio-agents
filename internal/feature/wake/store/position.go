@@ -5,7 +5,7 @@ package store
 // | Élément             | Résumé                                                       | Ligne |
 // |---------------------|--------------------------------------------------------------|-------|
 // | store.Position   | Reads the project head and the token cursor in one query          | 31    |
-// | store.Actionable | Whether the journal's movement is new actionable work, and its tier | 52    |
+// | store.Actionable | Whether the journal's movement is new actionable work, and its tier | 54    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -40,20 +40,22 @@ func (s *store) Position(ctx context.Context, teamID, projectID, tokenID uuid.UU
 	return Position{Head: row.HeadEventID, Cursor: row.LastEventID}, nil
 }
 
-// Actionable answers whether the journal's movement past the cursor is NEW work worth a session — a
-// new incoming question still open, a new answer to one of mine, or a newly unblocked task — and the
-// highest rigour tier among the issues in it (FLWL-85).
+// Actionable answers whether the journal's movement past the watermark is NEW work worth a session —
+// a new incoming question still open, a new answer to one of mine, or a newly unblocked task — and
+// the highest rigour tier among the issues in it (FLWL-85).
 //
-// It is read ONLY once the probe already knows head > cursor, so it never runs on the idle poll the
-// zero-SQL model protects: one indexed read at the instant a launch is being decided. Returning
+// It is read ONLY once the probe already knows head > watermark, so it never runs on the idle poll
+// the zero-SQL model protects: one indexed read at the instant a launch is being decided. Returning
 // actionable=false is what stops a full session boot for a closed-issue event or a sibling's
-// traffic. The tier comes back as a rank because the tiers do not order as strings; effort.FromRank
-// turns it into a name, and an absent tier already read as standard's rank in SQL.
-func (s *store) Actionable(ctx context.Context, teamID, projectID uuid.UUID, cursor int64) (bool, string, error) {
+// traffic. The boundary is the wake watermark, not the token's read cursor, so an issue an agent
+// looked at without answering is still counted new (FLWL-86). The tier comes back as a rank because
+// the tiers do not order as strings; effort.FromRank turns it into a name, and an absent tier already
+// read as standard's rank in SQL.
+func (s *store) Actionable(ctx context.Context, teamID, projectID uuid.UUID, watermark int64) (bool, string, error) {
 	row, err := s.q.WakeActionable(ctx, database.WakeActionableParams{
 		TeamID:    teamID,
 		ProjectID: projectID,
-		Cursor:    cursor,
+		Cursor:    watermark,
 	})
 	if err != nil {
 		return false, "", fmt.Errorf("wake store: actionable: %w", err)

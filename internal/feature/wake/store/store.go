@@ -6,8 +6,8 @@ package store
 // |----------|--------------------------------------------------------------------|-------|
 // | Position | The project relevance head and the token read cursor, as two integers | 32    |
 // | Store    | Cold read that seeds the probe when its cache is empty               | 39    |
-// | store    | Implementation backed by the sqlc-generated queries                  | 50    |
-// | New      | Creates the wake store                                              | 55    |
+// | store    | Implementation backed by the sqlc-generated queries                  | 51    |
+// | New      | Creates the wake store                                              | 56    |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -41,9 +41,10 @@ type Store interface {
 	Position(ctx context.Context, teamID, projectID, tokenID uuid.UUID) (Position, error)
 	// Actionable answers whether there is NEW work worth launching a session for — a new incoming
 	// question, a new answer, a newly unblocked task — and the highest rigour tier among it. Read
-	// ONLY once the probe knows head > cursor, so it never touches the idle path (FLWL-85). cursor is
-	// the token's read position, the boundary "new" is measured from.
-	Actionable(ctx context.Context, teamID, projectID uuid.UUID, cursor int64) (actionable bool, effort string, err error)
+	// ONLY once the probe knows head > watermark, so it never touches the idle path (FLWL-85).
+	// watermark is the head the probe last decided on — NOT the token's read cursor — so a looked-at
+	// but unanswered issue is still "new" here (FLWL-86): it is the boundary "new" is measured from.
+	Actionable(ctx context.Context, teamID, projectID uuid.UUID, watermark int64) (actionable bool, effort string, err error)
 }
 
 // store backs the contract with the generated queries. No transaction: the probe only ever reads.
