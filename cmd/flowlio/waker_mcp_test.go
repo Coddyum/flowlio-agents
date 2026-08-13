@@ -43,7 +43,7 @@ func TestWriteHostedMCPConfig(t *testing.T) {
 
 	s, ok := doc.MCPServers["flowlio-agents"]
 	if !ok {
-		t.Fatal("no flowlio-agents server — --allowedTools mcp__flowlio-agents would find nothing")
+		t.Fatal("no flowlio-agents server — the woken Claude would have no inbox to read")
 	}
 	if s.Type != "http" {
 		t.Errorf("type = %q, want http", s.Type)

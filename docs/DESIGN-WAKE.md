@@ -404,3 +404,33 @@ re-decides standing work once (a bounded burst on restart, erring towards a wake
 **piggyback** (`core/services.go`) keeps comparing `head > cursor`: nudging an *active* agent to
 re-read its inbox is a different question from deciding to boot a *dead* one, and the cursor is right
 for the first. Same delivery caveat as §15: engine-side, so it reaches hosted only once FLWL-83 lifts.
+
+## 17. The woken agent must be able to ACT, not only answer (FLWL-87)
+
+2026-08-13, right after §16 made the wake fire: the waker relaunched Claude for an open issue, the run
+exited clean (`done — 1m22s`), and nothing happened — no answer, no code. The agent log told the
+story: *"the edit tool keeps getting denied — no permission granted for that file."*
+
+**The launch pre-approved the MCP server and nothing else.** The Claude preset ran
+`claude -p … --allowedTools mcp__flowlio-agents`. A `-p` session is non-interactive: it cannot approve
+a tool at the prompt, and `--allowedTools` was the *whole* allow-list. So the woken agent could
+`check_inbox` and `answer_issue` over MCP, but every `Edit` / `Write` / `Bash` was denied. An issue
+that asks for a code change — most of them — stalls on the first write. The `WakePrompt` says "act on
+them", a promise the launch could not keep.
+
+**The fix: the woken Claude runs `--permission-mode bypassPermissions`.** Closing the loop with no
+human means the agent must act on the repo exactly as an AFK interactive agent would — edit files, run
+the build, commit. Half-autonomy (answer but not implement) is not the product.
+
+**Why this is safe, and where the real guard is.** The guard was never the permission scope — it is
+that anything a *sibling* repo wrote reaches the agent sealed as untrusted DATA
+(`cmd/flowlio/mcp_untrusted.go`, `docs/MODELE-DE-CONFIANCE.md`, the indistinguishable-refusal design).
+A hostile issue cannot become an instruction, so it cannot turn this autonomy into an injected
+command whatever the permission mode. Narrowing tools bought nothing against that threat and broke the
+product against the ordinary one (the repo's own real work). The autonomy is the same a human grants
+an agent they leave running; the untrusted seal is what makes leaving *this* one running safe.
+
+**Delivery — waker-side, not engine-side.** Unlike §15/§16, this lives in the local `flowlio` binary
+(`internal/pkg/waker`), not the engine. It reaches a user through `brew upgrade flowlio` (the tap
+builds from the source tarball, present as soon as the tag is pushed), **not** a flowlio-core
+redeploy. Shipped in v1.1.2 alongside the §16 engine fix.

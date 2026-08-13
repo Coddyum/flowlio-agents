@@ -749,7 +749,7 @@ imports, bounded file size, mandatory file summaries.
 
 ## Status
 
-**v1.1.1.** The API, the CLI, the MCP server, the trust graph, the inbox, the per-repository memory,
+**v1.1.2.** The API, the CLI, the MCP server, the trust graph, the inbox, the per-repository memory,
 the team debt queue and the **cross-repo wake-up** are in and tested. The loop closes on its own:
 a repo asks, its session dies, a sibling answers, and the waker relaunches the agent to read the
 answer — proven end to end by an integration test, by `scripts/demo-wake.sh`, and in production.
@@ -766,6 +766,12 @@ never wake anyone again, because the wake gate rode the inbox read cursor that `
 on a mere read. The gate now rides a dedicated per-project watermark the probe alone moves, so the
 waker relaunches to finish standing work — without reopening v1.1.0's empty-inbox loop.
 
+v1.1.2 lets that relaunched agent actually *do* the work: a woken Claude ran headless with only the
+Flowlio MCP tools pre-approved, so it could answer an issue but every file edit or shell command was
+denied — it stalled the moment a task needed code. It now runs with full permissions, the same
+autonomy an unattended interactive agent has; the guard is unchanged — a sibling's text always reaches
+it sealed as untrusted data, never an instruction.
+
 Not built yet: MCP over HTTP, a published Docker image, and the local web page the binary is meant to
 serve on its own origin. On the wake-up, two polish items remain — a browser device-flow for
 `flowlio login` (a pasted token works today) and an always-on `flowlio waker install` service.
@@ -777,7 +783,7 @@ codebase. The one hosted seam here is the waker polling that operator's relay af
 Release notes for every version: the [releases page](https://github.com/Coddyum/flowlio-agents/releases).
 Scope and the reasoning behind each decision: [docs/DESIGN-V1.md](docs/DESIGN-V1.md), the wake design
 in [docs/DESIGN-WAKE.md](docs/DESIGN-WAKE.md) (§14 the effort tier, §15 the actionable probe and the
-breaker, §16 the wake watermark), and the trust model in
+breaker, §16 the wake watermark, §17 the woken agent's autonomy), and the trust model in
 [docs/MODELE-DE-CONFIANCE.md](docs/MODELE-DE-CONFIANCE.md).
 
 ## License

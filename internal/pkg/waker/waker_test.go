@@ -20,13 +20,13 @@ func TestLaunchArgv(t *testing.T) {
 	codex, _ := waker.Preset("codex")
 
 	resume := claude.LaunchArgv("sess-123", "GO")
-	wantResume := []string{"claude", "-r", "sess-123", "-p", "GO", "--allowedTools", "mcp__flowlio-agents"}
+	wantResume := []string{"claude", "-r", "sess-123", "-p", "GO", "--permission-mode", "bypassPermissions"}
 	if strings.Join(resume, " ") != strings.Join(wantResume, " ") {
 		t.Errorf("claude resume argv = %v, want %v", resume, wantResume)
 	}
 
 	fresh := claude.LaunchArgv("", "GO")
-	wantFresh := []string{"claude", "-p", "GO", "--allowedTools", "mcp__flowlio-agents"}
+	wantFresh := []string{"claude", "-p", "GO", "--permission-mode", "bypassPermissions"}
 	if strings.Join(fresh, " ") != strings.Join(wantFresh, " ") {
 		t.Errorf("claude fresh argv = %v, want %v", fresh, wantFresh)
 	}
