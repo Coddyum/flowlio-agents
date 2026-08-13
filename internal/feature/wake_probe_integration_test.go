@@ -479,6 +479,102 @@ func assertNoWakeButMoved(t *testing.T, ctx context.Context, db *sql.DB, teamID,
 	}
 }
 
+// TestProbeWakesForSeenButUnansweredIssue is the regression for FLWL-86, the exact inverse of the
+// FLWL-85 fault above: the waker must relaunch for an open issue an agent LOOKED at without answering.
+//
+// The reported incident: an incoming issue sat open ~10 min on a session Maxence had launched, and the
+// waker never relaunched an agent for it. The cause was that the wake decision rode the token's read
+// cursor — which check_inbox advances on a mere read — so once the session read the inbox, the issue's
+// event sat at or below the cursor and the gate `head > cursor` went false forever. The fix anchors the
+// gate on a per-project WAKE WATERMARK the probe alone advances, decoupled from the read cursor.
+//
+// The scenario, driven through the real chain:
+//   - AGNT opens a question to CORE   → an open issue addressed to CORE, with its naming event
+//   - CORE's token reads its inbox    → its cursor catches the head (the "looked but did not answer" step)
+//   - CORE's probe                    → STILL HasWork=true (the fix; the old cursor gate said false here)
+//   - a second probe, fresh token     → HasWork=false: the watermark advanced, so the same standing
+//                                        work does not relaunch every probe — the void-loop stays closed
+func TestProbeWakesForSeenButUnansweredIssue(t *testing.T) {
+	db, f := newFixture(t)
+	ctx := context.Background()
+
+	// AGNT, the author; CORE (f.projectID), the recipient that owes the answer.
+	var agntID uuid.UUID
+	if err := db.QueryRow(
+		"INSERT INTO projects (team_id, key, name) VALUES ($1, 'AGNT', 'Project AGNT') RETURNING id",
+		f.teamID,
+	).Scan(&agntID); err != nil {
+		t.Fatalf("creating project AGNT: %v", err)
+	}
+	coreID := f.projectID
+
+	// An open question addressed to CORE, and the event that names it — the shape a real create_issue
+	// leaves behind, and what the confirming read joins against.
+	var issueID uuid.UUID
+	if err := db.QueryRow(
+		`INSERT INTO issues (team_id, project_id, author_project_id, number, title, state)
+		 VALUES ($1, $2, $3, 1, 'a question I have not answered', 'open') RETURNING id`,
+		f.teamID, coreID, agntID,
+	).Scan(&issueID); err != nil {
+		t.Fatalf("inserting the open issue: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO events (team_id, project_id, actor_project_id, notify_project_id, kind, subject_type, subject_id)
+		 VALUES ($1, $2, $3, $2, 'issue.opened', 'issue', $4)`,
+		f.teamID, coreID, agntID, issueID,
+	); err != nil {
+		t.Fatalf("inserting the opening event: %v", err)
+	}
+
+	c := cache.NewMemory(time.Hour, time.Hour)
+	positions := wakestore.New(database.New(db))
+	wsvc := wakeservice.New(positions, c)
+	coreToken := insertProjectToken(t, db, f.teamID, coreID, "core")
+
+	// CORE's session reads its inbox without answering: its cursor catches its head, exactly as
+	// check_inbox advances it. This is the step that used to make the issue unwakeable.
+	pos, err := positions.Position(ctx, f.teamID, coreID, coreToken)
+	if err != nil {
+		t.Fatalf("position before advancing: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO token_cursors (token_id, last_event_id) VALUES ($1, $2)
+		 ON CONFLICT (token_id) DO UPDATE SET last_event_id = EXCLUDED.last_event_id`,
+		coreToken, pos.Head,
+	); err != nil {
+		t.Fatalf("advancing CORE cursor: %v", err)
+	}
+	after, err := positions.Position(ctx, f.teamID, coreID, coreToken)
+	if err != nil {
+		t.Fatalf("position after advancing: %v", err)
+	}
+	if after.Head != after.Cursor {
+		t.Fatalf("cursor did not reach head (%d vs %d) — the test is not exercising the seen-issue gate", after.Cursor, after.Head)
+	}
+
+	// THE FIX. The cursor is at the head, so the old `head > cursor` gate would say "no work". The
+	// watermark gate still wakes: the open issue is unanswered work the probe has not decided on.
+	r, err := wsvc.Probe(ctx, wakeservice.ProbeInput{TeamID: f.teamID, ProjectID: coreID, TokenID: coreToken})
+	if err != nil {
+		t.Fatalf("probe of the seen-but-unanswered issue: %v", err)
+	}
+	if !r.HasWork {
+		t.Fatal("the probe did not wake for an open issue the agent had looked at without answering — FLWL-86 regressed")
+	}
+
+	// NO VOID-LOOP. The first probe advanced the watermark to the head it decided on, so a second probe
+	// — a fresh token to sidestep the escalation ladder, sharing the per-project watermark — finds
+	// nothing new and launches nothing. Only a new event would lift the head above the watermark again.
+	fresh := insertProjectToken(t, db, f.teamID, coreID, "core2")
+	r, err = wsvc.Probe(ctx, wakeservice.ProbeInput{TeamID: f.teamID, ProjectID: coreID, TokenID: fresh})
+	if err != nil {
+		t.Fatalf("second probe: %v", err)
+	}
+	if r.HasWork {
+		t.Fatal("the same standing issue woke a second time with no new event — the FLWL-85 void-loop reopened")
+	}
+}
+
 // insertProjectToken creates a project-scoped token and returns its id. The prefix is unique per call
 // so two tokens in one test never collide on the prefix unique index.
 func insertProjectToken(t *testing.T, db *sql.DB, teamID, projectID uuid.UUID, name string) uuid.UUID {

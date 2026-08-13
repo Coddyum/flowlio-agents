@@ -749,7 +749,7 @@ imports, bounded file size, mandatory file summaries.
 
 ## Status
 
-**v1.1.0.** The API, the CLI, the MCP server, the trust graph, the inbox, the per-repository memory,
+**v1.1.1.** The API, the CLI, the MCP server, the trust graph, the inbox, the per-repository memory,
 the team debt queue and the **cross-repo wake-up** are in and tested. The loop closes on its own:
 a repo asks, its session dies, a sibling answers, and the waker relaunches the agent to read the
 answer — proven end to end by an integration test, by `scripts/demo-wake.sh`, and in production.
@@ -760,6 +760,11 @@ v1.1.0 sharpens the wake so it only ever costs what real work costs: the probe c
 *actionable* work before it launches a session — no more relaunching into an empty inbox — the asker
 sizes the answer with an `effort` tier that picks a matching model instead of always the heaviest, and
 a failure back-off stops a wall of failing launches from retrying on a loop.
+
+v1.1.1 fixes the mirror of that fault: an open issue an agent had *looked at without answering* could
+never wake anyone again, because the wake gate rode the inbox read cursor that `check_inbox` advances
+on a mere read. The gate now rides a dedicated per-project watermark the probe alone moves, so the
+waker relaunches to finish standing work — without reopening v1.1.0's empty-inbox loop.
 
 Not built yet: MCP over HTTP, a published Docker image, and the local web page the binary is meant to
 serve on its own origin. On the wake-up, two polish items remain — a browser device-flow for
@@ -772,7 +777,8 @@ codebase. The one hosted seam here is the waker polling that operator's relay af
 Release notes for every version: the [releases page](https://github.com/Coddyum/flowlio-agents/releases).
 Scope and the reasoning behind each decision: [docs/DESIGN-V1.md](docs/DESIGN-V1.md), the wake design
 in [docs/DESIGN-WAKE.md](docs/DESIGN-WAKE.md) (§14 the effort tier, §15 the actionable probe and the
-breaker), and the trust model in [docs/MODELE-DE-CONFIANCE.md](docs/MODELE-DE-CONFIANCE.md).
+breaker, §16 the wake watermark), and the trust model in
+[docs/MODELE-DE-CONFIANCE.md](docs/MODELE-DE-CONFIANCE.md).
 
 ## License
 
