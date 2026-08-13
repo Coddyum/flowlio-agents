@@ -4,12 +4,12 @@ package waker
 //
 // | Élément        | Résumé                                                        | Ligne |
 // |----------------|---------------------------------------------------------------|-------|
-// | Agent          | How to launch one configured agent, fresh or by resume           | 60    |
-// | Preset         | The built-in launch recipe for a known agent                    | 72    |
-// | Custom         | An arbitrary command template for an unknown agent               | 97    |
-// | Agent.Resumes  | Reports whether a wake with this session id resumes or goes fresh | 109   |
-// | Agent.LaunchArgv | Builds the argv for one wake, resuming when it can             | 118   |
-// | substitute     | Fills {session} and {prompt} into a template                    | 128   |
+// | Agent          | How to launch one configured agent, fresh or by resume           | 67    |
+// | Preset         | The built-in launch recipe for a known agent                    | 79    |
+// | Custom         | An arbitrary command template for an unknown agent               | 105   |
+// | Agent.Resumes  | Reports whether a wake with this session id resumes or goes fresh | 117   |
+// | Agent.LaunchArgv | Builds the argv for one wake, resuming when it can             | 126   |
+// | substitute     | Fills {session} and {prompt} into a template                    | 136   |
 //
 // Fin du sommaire.
 // =====================================================================
@@ -29,11 +29,18 @@ import "strings"
 // not describe the work — check_inbox does that — it only tells the agent to look.
 const WakePrompt = "You have inbox items — run check_inbox and act on them, then stop."
 
-// claudeAllowedTools names the MCP server whose tools a woken Claude may call without a prompt. The
-// whole server is scoped in, so check_inbox and every answer/read tool it needs is granted, and
-// nothing else is — a wake never silently gains file writes or shell. The name matches the one the
-// `.mcp.json` (self-host) and flowlio.me (hosted) give the server: `flowlio-agents`.
-const claudeAllowedTools = "mcp__flowlio-agents"
+// claudePermissionMode is the permission posture a woken Claude runs under. A `-p` session is
+// non-interactive: it cannot approve a tool at the prompt. The earlier posture pre-approved ONLY the
+// Flowlio MCP server, which left the woken agent able to read the inbox and answer over MCP but
+// blocked the instant it needed to edit a file or run a command — so it stopped without doing the
+// work (observed on WEB-13, 2026-08-13: "the edit tool keeps getting denied"). Closing the loop with
+// no human means the woken agent must ACT on the repo, not only answer, so it runs with permissions
+// bypassed — the same autonomy an AFK interactive agent is given.
+//
+// The guardrail is NOT the permission scope: it is that a sibling repo's text reaches the agent
+// sealed as untrusted DATA (cmd/flowlio/mcp_untrusted.go, docs/MODELE-DE-CONFIANCE.md), so a hostile
+// issue cannot turn this autonomy into an injected command. Chosen by Maxence on 2026-08-13 (FLWL-87).
+const claudePermissionMode = "bypassPermissions"
 
 // claudeEffortArgs maps a rigour tier onto the model a woken Claude runs (FLWL-84, DESIGN-WAKE §14).
 // The whole point of the tier: a two-line answer to a trivial question does not need Opus, and this
@@ -72,14 +79,15 @@ type Agent struct {
 func Preset(name string) (Agent, bool) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "claude":
-		// --allowedTools pre-approves the Flowlio MCP tools: a `-p` session is non-interactive and
-		// cannot approve a tool at the prompt, so without this the woken agent is launched and then
-		// blocked on its very first call to check_inbox. Scoped to this one server, so the wake grants
-		// nothing beyond reading the inbox and answering — never file writes or shell.
+		// --permission-mode bypassPermissions lets the woken agent act on the repo — answer over MCP,
+		// edit files, run the build — instead of stalling on its first write in a `-p` session it cannot
+		// approve interactively. See claudePermissionMode: the untrusted seal, not the permission scope,
+		// is the guardrail. The MCP server is loaded by --mcp-config (hosted) or the repo .mcp.json
+		// (self-host), and bypass grants its tools like any other.
 		return Agent{
 			Name:    "claude",
-			Command: []string{"claude", "-p", "{prompt}", "--allowedTools", claudeAllowedTools},
-			Resume:  []string{"claude", "-r", "{session}", "-p", "{prompt}", "--allowedTools", claudeAllowedTools},
+			Command: []string{"claude", "-p", "{prompt}", "--permission-mode", claudePermissionMode},
+			Resume:  []string{"claude", "-r", "{session}", "-p", "{prompt}", "--permission-mode", claudePermissionMode},
 			Effort:  claudeEffortArgs,
 		}, true
 	case "codex":
